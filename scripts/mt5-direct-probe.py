@@ -532,8 +532,13 @@ def manage_trend_and_manual_positions(mt5, active_symbol, pos_list, candles_m5, 
     for p in existing:
         magic = int(getattr(p, "magic", 0) or 0)
         # Do not touch another EA's positions, including on the same symbol.
-        if magic != 270715 and not (magic == 0 and adopt_manual):
+        comment = str(getattr(p, "comment", "") or "").upper()
+        is_v6_owned = magic == 270715 and (
+            comment.startswith("V6_") or "XAUUSD_AI_MASTER_V6" in comment or comment.startswith("DCA_PLUS")
+        )
+        if not is_v6_owned and not (magic == 0 and adopt_manual):
             continue
+        is_sideway = "BOT_2_SIDEWAY" in comment
         managed += 1
         key = str(int(p.ticket))
         item = dict(state.get(key, {}))
@@ -587,7 +592,7 @@ def manage_trend_and_manual_positions(mt5, active_symbol, pos_list, candles_m5, 
                 actions.append(mod["message"])
                 sl, at_be = be, True
 
-        if at_be:
+        if at_be and not is_sideway:
             candidates = []
             if enable_trail:
                 candidate = trail_stop(side, entry, current, sl, recent_m5, item["peak"])
