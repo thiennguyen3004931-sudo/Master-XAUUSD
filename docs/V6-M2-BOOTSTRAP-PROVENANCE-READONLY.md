@@ -1,6 +1,6 @@
 # V6 / Master-XAUUSD — M2 bootstrap provenance is blocked (read-only resolution)
 
-**Status: intentionally BLOCKED as of 2026-11-09.** The PR `fix/v6-entry-structural-sl-trailing-20261109` remains **DRAFT**. The private production/provenance gate **must not pass** until the proper target repository has verifiable ancestry and an operator-approved attestation.
+**Legacy M2 result: BLOCKED, but NOT_APPLICABLE_TO_V6 by operator scope decision on 2026-11-09.** `Master-XAUUSD` is a separate V6 repository, not the attested legacy private core. PR #1 remains **DRAFT** pending independent V6 acceptance. Legacy M2 must never be relabeled PASS or used as proof that V6 is production-ready.
 
 ## Evidence observed on PR #1
 
@@ -34,3 +34,11 @@ A failed `cat-file` or `merge-base` is **expected evidence of missing ancestry**
 4. Rerun the unchanged gate after the reviewed provenance evidence has been added. A green V6 offline test does **not** equal an M3 private production acceptance or a broker-trade authorization.
 
 **No API credentials, secrets, registration tokens, LIVE broker interactions or deployment are required for this investigation.**
+
+## Operator decision and workflow scope (2026-11-09)
+
+The operator waived **confirmation of the legacy M2 bootstrap** for the independent public V6 repository. This is **LEGACY_M2_NOT_APPLICABLE_TO_V6**, not M2 PASS or M3 production acceptance. In `Master-XAUUSD`, `.github/workflows/private-master-core-ci.yml` is now **manual-only**: it does not run automatically for V6 pull requests. If manually dispatched, the original M2/M3 verifier remains fail-closed and will continue to disclose the genuine repository mismatch. The legacy private repository is unaffected.
+
+V6 release/merge acceptance remains separate: source-only exact-head checks, MT5 DEMO lifecycle and managed-position regression, realistic walk-forward with costs, and explicit operating-machine deployment review. No LIVE permission, broker mutation, token revocation, or production rollout is conferred by de-scoping legacy M2.
+
+The public `.runtime` cleanup was merged on `main` in commit `3c7f91994d0d4dbe5f473036d5844ae581c3d941`; rotation of historically exposed Telegram credentials and a local `.runtime` backup before checkout remain independent manual requirements.
