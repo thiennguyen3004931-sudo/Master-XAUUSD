@@ -63,7 +63,7 @@ export function initializeEmptyOperatorTokenLedger(path: string): void {
   closeSync(fd);
   let db: DatabaseSyncInstance | null = null;
   try {
-    db = new DatabaseSync(path);
+    db = openDatabaseSync(path);
     db.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
@@ -93,7 +93,7 @@ export class OperatorSqliteCustomerTokenLedger implements CustomerApiTokenLifecy
     assertExistingFile(path);
     let db: DatabaseSyncInstance | null = null;
     try {
-      db = new DatabaseSync(path);
+      db = openDatabaseSync(path);
       const row = db.prepare("SELECT version FROM token_ledger_schema WHERE name = 'token_lifecycle'").get() as
         | { version: unknown } | undefined;
       if (!row || row.version !== 1) throw new Error("OPERATOR_LEDGER_SCHEMA_INVALID");
