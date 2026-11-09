@@ -213,6 +213,35 @@ let strategyProposals = [
 
 const TELEGRAM_CONFIG_FILE = path.join(RUNTIME_DIR, "telegram-config.json");
 const SHARED_STATE_FILE = path.join(RUNTIME_DIR, "shared-bot-state.json");
+// Restore user parameters only. NEVER restore automatic trading or DCA authorization.
+try {
+  const saved = JSON.parse(fs.readFileSync(SHARED_STATE_FILE, "utf8"));
+  const allowedModes = new Set([
+    "AUTO_REGIME", "SEMI_AUTO_TREND", "BOT_1_TREND", "BOT_2_SIDEWAY",
+    "BOT_3_SWEEP", "BOT_4_SWEEP_DCA_PLUS", "LIQUIDITY_SWEEP_AND_TREND"
+  ]);
+  const oldBot = saved?.autoBotState || {};
+  const oldDca = saved?.positiveDcaConfig || {};
+  if (allowedModes.has(oldBot.strategyMode)) autoBotState.strategyMode = oldBot.strategyMode;
+  for (const field of ["volume", "slDistance", "tpDistance", "minConfidence"]) {
+    if (Number.isFinite(Number(oldBot[field])) && Number(oldBot[field]) > 0) {
+      autoBotState[field] = Number(oldBot[field]);
+    }
+  }
+  if (Number.isInteger(Number(oldDca.maxLayers)) && Number(oldDca.maxLayers) >= 1 && Number(oldDca.maxLayers) <= 3) {
+    positiveDcaConfig.maxLayers = Number(oldDca.maxLayers);
+  }
+  if (Number.isFinite(Number(oldDca.stepDistance)) && Number(oldDca.stepDistance) > 0) {
+    positiveDcaConfig.stepDistance = Number(oldDca.stepDistance);
+  }
+  if (Number.isFinite(Number(oldDca.lotMultiplier)) && Number(oldDca.lotMultiplier) > 0 && Number(oldDca.lotMultiplier) <= 1) {
+    positiveDcaConfig.lotMultiplier = Number(oldDca.lotMultiplier);
+  }
+} catch {}
+autoBotState.enabled = false;
+autoBotState.lastActionTime = 0;
+positiveDcaConfig.enabled = false;
+positiveDcaConfig.lastDcaTime = 0;
 
 let syncRevision = 1;
 let lastSyncAction = {
