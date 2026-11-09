@@ -1,10 +1,12 @@
-# V6 direct MT5 strategy, SL and trailing upgrade — review / DEMO only
+# V6 direct MT5 strategy, SL and trailing upgrade — source integration; REAL remains disabled
 
 This document covers **scripts/xauusd-standalone-server.mjs** and **scripts/mt5-direct-probe.py**. It does not change the legacy Phase7B/Phase7C controller implementation.
 
+**Source-only merge decision (2026-11-09):** The repository owner explicitly waived MT5 DEMO as a **pre-merge condition for integrating the trading mechanism into `main`**. This waiver does not supply missing DEMO / broker evidence, authorize REAL orders, or warrant profitability. Existing fail-closed REAL trade restrictions remain active. Production rollout and real-account acceptance are separate decisions.
+
 ## Hard release gates
 
-- **Do not deploy this PR on a LIVE account.** It is a draft until Windows MT5 DEMO E2E, regression review and broker-execution acceptance. V6 direct broker actions reject REAL account entry/DCA. The standalone Web account switch does not arm LIVE.
+- **Do not deploy this code on a LIVE account.** Source-only merging may proceed at the owner's instruction without MT5 DEMO E2E, but Windows broker execution / lifecycle and independent acceptance remain **unverified**. V6 direct broker actions reject REAL account entry, DCA, close, BE and SL/TP management. The standalone Web account switch does not arm LIVE.
 - The control API is fail-closed without \`ZIQ_V6_CONTROL_TOKEN\`. Enter the control secret in the standalone Web UI once per browser tab (session storage), and **only access the trading UI over localhost or a protected HTTPS/VPN connection**.
 - The old checked-in Telegram bot token was removed from source in this branch. **Revoke/rotate the previously exposed token**; rewriting source does not invalidate the existing token or erase Git history. Check previously tracked \`.runtime\` files for credentials, and never put fresh secrets in Git.
 - The release is not a profitability claim. Static dashboard samples are illustrative, not a verified MT5 tick replay.
@@ -61,7 +63,7 @@ python -m unittest discover -s tests -p 'test_v6_*.py' -v
 node --check scripts/xauusd-standalone-server.mjs
 \`\`\`
 
-Next, on Windows MT5 DEMO, verify:
+For broker-execution acceptance (not required for the owner-authorized source-only merge), the following checks remain **unverified** and should be verified on Windows MT5 DEMO before any REAL authorization:
 1. Each mode allows only its intended entries, with no duplicate M15 trade on restart.
 2. When structure requires >10 price units, no order is sent.
 3. BUY and SELL initial SL/TP use correct broker-side Bid/Ask, stops, lot step and risk caps.
