@@ -13,6 +13,9 @@ import os
 import json
 import time
 import subprocess
+from pathlib import Path
+from math import isfinite
+from xauusd_v6_trade_rules import evaluate_entry, structural_stop, trail_stop, peak_profit_stop, closed
 
 def ensure_mt5_installed():
     try:
@@ -354,79 +357,38 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
 
 
 def calc_structural_sl_6_to_8(candles_m15, candles_m5, side, entry_price):
-    """
-    Tính khoảng cách Stop Loss theo đáy/đỉnh cấu trúc gần nhất trên M5/M15,
-    giới hạn chuẩn trong biên độ 6.0 đến 8.0 giá theo đề xuất của người dùng.
-    """
-    is_buy = str(side).upper() == "BUY"
-    ref_candles = candles_m5[-10:] if (candles_m5 and len(candles_m5) >= 6) else (candles_m15[-6:] if candles_m15 else [])
-    if ref_candles:
-        if is_buy:
-            swing_low = min(c[2] for c in ref_candles)
-            raw_dist = (entry_price - swing_low) + 0.4
-        else:
-            swing_high = max(c[1] for c in ref_candles)
-            raw_dist = (swing_high - entry_price) + 0.4
-        clamped_dist = max(6.0, min(8.0, round(raw_dist, 2)))
-    else:
-        clamped_dist = 6.8
-    return clamped_dist
+    """Return the genuine structural stop distance or None; never clamp a too-wide stop."""
+    stop = structural_stop(side, entry_price, candles_m5, candles_m15)
+    return round(abs(entry_price - stop), 2) if stop is not None else None
 
 
 def calc_structural_sl_and_sr_tp(candles_m5, candles_m15, candles_h1, candles_h4, side, entry_price, fallback_sl_dist=6.8, fallback_tp_dist=16.0):
-    """
-    Tính đồng thời:
-    1. Stop Loss (SL) theo đáy/đỉnh cấu trúc M5/M15 trong biên 6.0 – 8.0 giá.
-    2. Take Profit (TP) đặt trực tiếp tại vùng Kháng cự (cho BUY) hoặc Hỗ trợ (cho SELL) mạnh của khung lớn H1/H4.
-    """
-    is_buy = str(side).upper() == "BUY"
-    sl_dist = calc_structural_sl_6_to_8(candles_m15, candles_m5, side, entry_price)
-    sl_price = round(entry_price - sl_dist if is_buy else entry_price + sl_dist, 2)
-    sl_reason = f"SL cấu trúc M5/M15 ({sl_dist:.2f} giá)"
-
-    # Tìm các mốc Kháng cự (Đỉnh H1/H4) hoặc Hỗ trợ (Đáy H1/H4) thực tế
-    min_tp_dist = max(10.0, round(sl_dist * 1.6, 2))
-    tp_price = round(entry_price + fallback_tp_dist if is_buy else entry_price - fallback_tp_dist, 2)
-    tp_reason = f"Vùng cản H1/H4 (+{fallback_tp_dist:.2f} giá)"
-
-    h1_pool = candles_h1[-24:] if candles_h1 else []
-    h4_pool = candles_h4[-24:] if candles_h4 else []
-
-    if is_buy:
-        sr_candidates = []
-        if h1_pool:
-            sr_candidates.extend([c[1] for c in h1_pool if c[1] >= entry_price + min_tp_dist])
-        if h4_pool:
-            sr_candidates.extend([c[1] for c in h4_pool if c[1] >= entry_price + min_tp_dist])
-        if sr_candidates:
-            # Chọn vùng kháng cự mạnh hợp lệ gần nhất (>= 1.6R) trừ lùi 0.25$ để dễ khớp lệnh trước tường cản
-            target_sr = min(sr_candidates)
-            tp_price = round(target_sr - 0.25, 2)
-            tp_dist_actual = round(tp_price - entry_price, 2)
-            tp_reason = f"Kháng cự mạnh H1/H4 tại {tp_price} (+{tp_dist_actual} giá)"
-        else:
-            # Nếu giá đang ở vùng đỉnh mới, lấy biên độ sóng H1/H4 chiếu lên (Fibonacci 1.618x SL cấu trúc)
-            proj_dist = round(max(12.5, sl_dist * 2.2), 2)
-            tp_price = round(entry_price + proj_dist, 2)
-            tp_reason = f"Cản mở rộng H1/H4 2.2R tại {tp_price} (+{proj_dist} giá)"
+    """Manual order: structural invalidation, real H1/H4 target, minimum 1.6R."""
+    sl = structural_stop(side, entry_price, candles_m5, candles_m15)
+    if sl is None:
+        return None
+    sl_dist = round(abs(entry_price - sl), 2)
+    h1 = closed(candles_h1)
+    h4 = closed(candles_h4)
+    min_rr = 1.6
+    if side == "BUY":
+        nearby = sorted(b[1] for b in h1[-24:] + h4[-18:] if b[1] > entry_price + 0.25)
+        if nearby and nearby[0] - entry_price < min_rr * sl_dist + 0.25:
+            return None
+        tp = round(nearby[0] - 0.25 if nearby else entry_price + max(float(fallback_tp_dist), sl_dist * 2.2), 2)
+        rr = (tp - entry_price) / sl_dist
     else:
-        sr_candidates = []
-        if h1_pool:
-            sr_candidates.extend([c[2] for c in h1_pool if c[2] <= entry_price - min_tp_dist])
-        if h4_pool:
-            sr_candidates.extend([c[2] for c in h4_pool if c[2] <= entry_price - min_tp_dist])
-        if sr_candidates:
-            target_sr = max(sr_candidates)
-            tp_price = round(target_sr + 0.25, 2)
-            tp_dist_actual = round(entry_price - tp_price, 2)
-            tp_reason = f"Hỗ trợ mạnh H1/H4 tại {tp_price} (-{tp_dist_actual} giá)"
-        else:
-            proj_dist = round(max(12.5, sl_dist * 2.2), 2)
-            tp_price = round(entry_price - proj_dist, 2)
-            tp_reason = f"Hỗ trợ mở rộng H1/H4 2.2R tại {tp_price} (-{proj_dist} giá)"
-
-    tp_dist_final = round(abs(tp_price - entry_price), 2)
-    return sl_dist, sl_price, sl_reason, tp_dist_final, tp_price, tp_reason
+        nearby = sorted((b[2] for b in h1[-24:] + h4[-18:] if b[2] < entry_price - 0.25), reverse=True)
+        if nearby and entry_price - nearby[0] < min_rr * sl_dist + 0.25:
+            return None
+        tp = round(nearby[0] + 0.25 if nearby else entry_price - max(float(fallback_tp_dist), sl_dist * 2.2), 2)
+        rr = (entry_price - tp) / sl_dist
+    if rr < min_rr:
+        return None
+    return (
+        sl_dist, sl, "SL behind confirmed M5 swing (6-10 price units; no invalid clamping)",
+        round(abs(tp - entry_price), 2), tp, "Confirmed H1/H4 S/R or 2.2R fallback"
+    )
 
 def find_m5_structural_trail_sl(candles_m5, side, current_price, open_price):
     """
@@ -526,130 +488,141 @@ def modify_position_sl_tp(mt5, pos, new_sl, new_tp, reason_label=""):
         }
     return {"ok": False, "changed": False, "message": f"Chưa thể cập nhật SL/TP lệnh #{pos.ticket}."}
 
+MANAGER_STATE_FILE = Path(__file__).resolve().parent.parent / ".runtime" / "v6-position-manager-state.json"
+
+
+def _load_manager_state():
+    try:
+        return json.loads(MANAGER_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_manager_state(state):
+    MANAGER_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = MANAGER_STATE_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temporary, MANAGER_STATE_FILE)
+
+
 def manage_trend_and_manual_positions(mt5, active_symbol, pos_list, candles_m5, candles_m15, candles_h1, candles_h4, mtf_analysis, mgmt_cfg):
-    """
-    QUẢN LÝ LỆNH TOÀN DIỆN (CHO CẢ LỆNH BOT TREND, LỆNH DCA DƯƠNG & LỆNH NGƯỜI DÙNG VÀO TAY BÁN TỰ ĐỘNG):
-    1. Tiếp quản lệnh vào tay (Semi-Auto Adoption): Nếu lệnh chưa có SL (sl == 0) và người dùng chọn chế độ
-       tự đặt SL cấu trúc, tự động đặt SL theo cấu trúc 6–8 giá và TP tại vùng cản mạnh H4 (hoặc giữ SL/TP người dùng đã đặt).
-    2. Khi lệnh đạt tỷ lệ R:R = 1:1 (lãi >= khoảng SL ban đầu, mặc định 6–8 giá): Tự động dời SL về Hòa vốn (BE ± 0.25 giá).
-    3. Sau khi đã qua mốc 1R (đã kéo BE):
-       - Dời SL từ từ lên theo cấu trúc Đáy/Đỉnh M5 (M5 Structural Trailing) để gồng trend xa nhất có thể.
-       - Cơ chế chống giật cây M15 biến động mạnh (M15 Fast-Move Spike Protection): Nếu cây nến M15 hiện tại biến động mạnh
-         (biên độ nến M15 >= 5.5 giá hoặc lệnh đang lãi sâu >= 12 giá), tự động dời SL bám sát cách ĐỈNH CAO NHẤT (High Peak)
-         đúng 10.0 giá (BUY) hoặc cách ĐÁY THẤP NHẤT (Low Peak) đúng 10.0 giá (SELL) nếu tốt hơn SL hiện tại!
-    4. Tại vùng Kháng cự / Hỗ trợ mạnh của khung lớn (H1/H4):
-       - Khi giá chạm vùng cản mạnh H1 và lệnh đang có lãi > 1R, tự động chốt một phần (50% khối lượng) nếu khối lượng >= 0.02 lot,
-         và mở rộng/dời TP của phần còn lại lên vùng Kháng cự / Hỗ trợ mới của khung H4 để gồng tối đa sóng!
-    """
-    sym_positions = [p for p in pos_list if str(getattr(p, "symbol", "")) == active_symbol]
-    if not sym_positions:
-        return {"managedCount": 0, "actions": [], "summary": "Chưa có vị thế đang mở để quản lý."}
-
+    """Persist original R, peak and partial status per ticket; only tighten stops."""
+    existing = [p for p in pos_list if str(getattr(p, "symbol", "")) == active_symbol]
+    state = _load_manager_state()
     actions = []
-    spike_trail_dist = float(mgmt_cfg.get("m15SpikeTrailDist") or 10.0)
-    use_structural_sl = bool(mgmt_cfg.get("useStructuralSl68", True))
-    enable_m5_trail = bool(mgmt_cfg.get("enableM5StructuralTrail", True))
-    enable_partial_sr = bool(mgmt_cfg.get("enablePartialCloseAtSr", True))
+    managed = 0
+    recent_m5 = closed(candles_m5)
+    recent_m15 = closed(candles_m15)
+    recent_h1 = closed(candles_h1)
+    recent_h4 = closed(candles_h4)
+    h1_high = max((b[1] for b in recent_h1[-12:]), default=0.0)
+    h1_low = min((b[2] for b in recent_h1[-12:]), default=0.0)
+    h4_high = max((b[1] for b in recent_h4[-16:]), default=0.0)
+    h4_low = min((b[2] for b in recent_h4[-16:]), default=0.0)
+    spike_dist = max(5.0, float(mgmt_cfg.get("m15SpikeTrailDist") or 10.0))
+    enable_trail = bool(mgmt_cfg.get("enableM5StructuralTrail", True))
+    enable_partial = bool(mgmt_cfg.get("enablePartialCloseAtSr", True))
+    adopt_manual = bool(mgmt_cfg.get("semiAutoAdoptManual", False))
 
-    # Lấy mốc cản H1 và H4 từ mtf_analysis
-    h1_high = max((c[1] for c in candles_h1[-12:]), default=0.0) if candles_h1 else 0.0
-    h1_low = min((c[2] for c in candles_h1[-12:]), default=0.0) if candles_h1 else 0.0
-    h4_high = max((c[1] for c in candles_h4[-16:]), default=0.0) if candles_h4 else 0.0
-    h4_low = min((c[2] for c in candles_h4[-16:]), default=0.0) if candles_h4 else 0.0
+    active_tickets = {str(int(getattr(p, "ticket", 0))) for p in existing}
+    for key in list(state):
+        if key not in active_tickets:
+            del state[key]
 
-    cur_m15_range = abs(candles_m15[-1][1] - candles_m15[-1][2]) if candles_m15 else 0.0
-    cur_m15_high = candles_m15[-1][1] if candles_m15 else 0.0
-    cur_m15_low = candles_m15[-1][2] if candles_m15 else 0.0
+    for p in existing:
+        magic = int(getattr(p, "magic", 0) or 0)
+        # Do not touch another EA's positions, including on the same symbol.
+        if magic != 270715 and not (magic == 0 and adopt_manual):
+            continue
+        managed += 1
+        key = str(int(p.ticket))
+        item = dict(state.get(key, {}))
+        side = "BUY" if int(p.type) == 0 else "SELL"
+        buy = side == "BUY"
+        entry = float(p.price_open)
+        current = float(p.price_current)
+        sl = float(getattr(p, "sl", 0.0) or 0.0)
+        tp = float(getattr(p, "tp", 0.0) or 0.0)
+        favorable = current - entry if buy else entry - current
+        entry_time_ms = int(getattr(p, "time", 0) or 0) * 1000
 
-    for p in sym_positions:
-        is_buy = int(getattr(p, "type", 0)) == 0
-        side = "BUY" if is_buy else "SELL"
-        open_p = float(getattr(p, "price_open", 0.0))
-        cur_p = float(getattr(p, "price_current", 0.0))
-        cur_sl = float(getattr(p, "sl", 0.0) or 0.0)
-        cur_tp = float(getattr(p, "tp", 0.0) or 0.0)
-        favorable = (cur_p - open_p) if is_buy else (open_p - cur_p)
+        if "initialR" not in item and sl > 0:
+            raw = entry - sl if buy else sl - entry
+            if 0.1 < raw <= 30.0:
+                item["initialR"] = round(raw, 4)
 
-        # 1. Nếu là lệnh vào tay chưa đặt SL (cur_sl <= 0) và bật chế độ Bán tự động / Cấu trúc 6-8 giá
-        if cur_sl <= 0 and use_structural_sl:
-            sl_dist = calc_structural_sl_6_to_8(candles_m15, candles_m5, side, open_p)
-            init_sl = round(open_p - sl_dist if is_buy else open_p + sl_dist, 2)
-            init_tp = cur_tp
-            if init_tp <= 0 and h4_high > 0 and h4_low > 0:
-                init_tp = round(max(open_p + sl_dist * 2.2, h4_high) if is_buy else min(open_p - sl_dist * 2.2, h4_low), 2)
-            mod_res = modify_position_sl_tp(mt5, p, init_sl, init_tp, f"Tự động bảo vệ lệnh vào tay bằng SL cấu trúc {sl_dist} giá")
-            if mod_res.get("changed"):
-                actions.append(mod_res["message"])
-                cur_sl = init_sl
-                cur_tp = init_tp
+        seen_prices = [current]
+        if entry_time_ms:
+            for candle in recent_m15:
+                if int(candle[4]) >= entry_time_ms:
+                    seen_prices.append(float(candle[1] if buy else candle[2]))
+        old_peak = float(item.get("peak", entry))
+        item["peak"] = max([entry, old_peak] + seen_prices) if buy else min([entry, old_peak] + seen_prices)
+        state[key] = item
 
-        # Tính khoảng rủi ro 1R của lệnh (nếu SL đã kéo lên trên Entry thì 1R mặc định tính theo biên cấu trúc 6.5 giá)
-        if cur_sl > 0:
-            raw_risk = (open_p - cur_sl) if is_buy else (cur_sl - open_p)
-            one_r_dist = raw_risk if (4.0 <= raw_risk <= 12.0) else 6.5
-        else:
-            one_r_dist = 6.5
+        if sl <= 0:
+            if magic == 0 and not adopt_manual:
+                continue
+            stop = structural_stop(side, entry, candles_m5, candles_m15)
+            if stop is None:
+                actions.append(f"Ticket {key}: missing SL; structural invalidation is too wide or unavailable")
+                continue
+            attached_tp = tp
+            if attached_tp <= 0 and h4_high and h4_low:
+                attached_tp = round(max(entry + abs(entry - stop) * 2.2, h4_high) if buy else min(entry - abs(entry - stop) * 2.2, h4_low), 2)
+            mod = modify_position_sl_tp(mt5, p, stop, attached_tp, "Attach valid structural SL")
+            if not mod.get("changed"):
+                actions.append(f"Ticket {key}: could not attach protective SL")
+                continue
+            actions.append(mod["message"])
+            sl, tp = stop, attached_tp
+            item["initialR"] = round(abs(entry - sl), 4)
 
-        at_be = is_position_at_breakeven(p)
+        initial_r = float(item.get("initialR", 0.0) or 0.0)
+        at_be = (sl >= entry if buy else sl <= entry) if sl > 0 else False
+        if initial_r > 0 and not at_be and favorable >= initial_r:
+            be = round(entry + (0.25 if buy else -0.25), 2)
+            mod = modify_position_sl_tp(mt5, p, be, tp, "Reached initial 1R; move to BE")
+            if mod.get("changed"):
+                actions.append(mod["message"])
+                sl, at_be = be, True
 
-        # 2. Khi đạt R:R = 1:1 (favorable >= one_r_dist) -> Kéo SL về Hòa vốn (BE ± 0.25 giá)
-        if not at_be and favorable >= one_r_dist:
-            be_price = round(open_p + (0.25 if is_buy else -0.25), 2)
-            mod_be = modify_position_sl_tp(mt5, p, be_price, cur_tp, f"Đạt R:R 1:1 (+{favorable:.2f} giá) → Tự động kéo SL về Hòa vốn (BE)")
-            if mod_be.get("changed"):
-                actions.append(mod_be["message"])
-                cur_sl = be_price
-                at_be = True
-
-        # 3. Sau khi đã kéo BE: Nâng dần SL theo cấu trúc M5 + Cơ chế khóa cách đỉnh 10 giá khi cây M15 biến động mạnh
         if at_be:
-            best_new_sl = cur_sl
-            trail_reason = ""
+            candidates = []
+            if enable_trail:
+                candidate = trail_stop(side, entry, current, sl, recent_m5, item["peak"])
+                if candidate is not None:
+                    candidates.append((candidate, "Confirmed M5 swing trailing"))
+            last_m15_range = recent_m15[-1][1] - recent_m15[-1][2] if recent_m15 else 0.0
+            peak_gain = item["peak"] - entry if buy else entry - item["peak"]
+            if last_m15_range >= 5.5 or (initial_r > 0 and peak_gain >= initial_r + spike_dist):
+                candidate = peak_profit_stop(side, entry, current, sl, item["peak"], spike_dist)
+                if candidate is not None:
+                    candidates.append((candidate, "Lifetime ticket peak profit lock"))
+            if candidates:
+                best_sl, reason = (max(candidates, key=lambda c: c[0]) if buy else min(candidates, key=lambda c: c[0]))
+                mod = modify_position_sl_tp(mt5, p, best_sl, tp, reason)
+                if mod.get("changed"):
+                    actions.append(mod["message"])
+                    sl = best_sl
 
-            # (a) Nâng SL từ từ theo đáy/đỉnh cấu trúc M5
-            if enable_m5_trail:
-                m5_sl = find_m5_structural_trail_sl(candles_m5, side, cur_p, open_p)
-                if m5_sl is not None:
-                    if (is_buy and m5_sl > best_new_sl + 0.15) or (not is_buy and (best_new_sl <= 0 or m5_sl < best_new_sl - 0.15)):
-                        best_new_sl = m5_sl
-                        trail_reason = f"Nâng SL từ từ theo cấu trúc M5 ({m5_sl})"
-
-            # (b) Cơ chế cây M15 biến động mạnh: Dời SL cách 10 giá tính từ giá Đỉnh/Đáy cao nhất của đợt sóng
-            peak_high = max(cur_p, cur_m15_high, max((c[1] for c in candles_m15[-3:]), default=cur_p)) if candles_m15 else cur_p
-            peak_low = min(cur_p, cur_m15_low, min((c[2] for c in candles_m15[-3:]), default=cur_p)) if candles_m15 else cur_p
-            peak_excursion = (peak_high - open_p) if is_buy else (open_p - peak_low)
-
-            if cur_m15_range >= 5.5 or peak_excursion >= (one_r_dist + spike_trail_dist):
-                spike_sl = round((peak_high - spike_trail_dist) if is_buy else (peak_low + spike_trail_dist), 2)
-                if is_buy and spike_sl > open_p + 0.25 and spike_sl > best_new_sl + 0.15 and spike_sl < cur_p - 0.8:
-                    best_new_sl = spike_sl
-                    trail_reason = f"Biến động mạnh M15 (Đỉnh {peak_high:.2f}) → Khóa SL cách đỉnh {spike_trail_dist} giá ({spike_sl})"
-                elif not is_buy and spike_sl < open_p - 0.25 and (best_new_sl <= 0 or spike_sl < best_new_sl - 0.15) and spike_sl > cur_p + 0.8:
-                    best_new_sl = spike_sl
-                    trail_reason = f"Biến động mạnh M15 (Đáy {peak_low:.2f}) → Khóa SL cách đáy {spike_trail_dist} giá ({spike_sl})"
-
-            if trail_reason and abs(best_new_sl - cur_sl) >= 0.15:
-                mod_tr = modify_position_sl_tp(mt5, p, best_new_sl, cur_tp, trail_reason)
-                if mod_tr.get("changed"):
-                    actions.append(mod_tr["message"])
-                    cur_sl = best_new_sl
-
-            # 4. Tại vùng Kháng cự / Hỗ trợ mạnh của khung lớn (H1/H4): Chốt một phần và dời TP tới cản khung lớn mới
-            if enable_partial_sr and favorable >= one_r_dist * 1.2:
-                near_h1_sr = (is_buy and h1_high > 0 and cur_p >= h1_high - 1.5) or (not is_buy and h1_low > 0 and cur_p <= h1_low + 1.5)
-                if near_h1_sr and float(getattr(p, "volume", 0.0)) >= 0.02:
-                    p_res = partial_close_position(mt5, p, close_ratio=0.5)
-                    if p_res.get("ok"):
-                        actions.append(p_res["message"])
-                        # Mở rộng TP phần còn lại lên vùng cản H4 mới xa hơn
-                        new_h4_tp = round(max(h4_high, cur_p + 12.0) if is_buy else min(h4_low, cur_p - 12.0), 2)
-                        if abs(new_h4_tp - cur_tp) > 1.0:
-                            modify_position_sl_tp(mt5, p, cur_sl, new_h4_tp, "Nâng TP phần gồng còn lại tới vùng cản H4 mới")
-
+            near_h1 = (buy and h1_high > 0 and current >= h1_high - 1.5) or (not buy and h1_low > 0 and current <= h1_low + 1.5)
+            if enable_partial and not item.get("partialH1Attempted") and initial_r > 0 and favorable >= 1.2 * initial_r and near_h1:
+                # Save BEFORE sending: a lost broker response must never double-partial.
+                item["partialH1Attempted"] = True
+                _save_manager_state(state)
+                result = partial_close_position(mt5, p, close_ratio=0.5)
+                actions.append(result.get("message", f"Ticket {key}: partial close attempted"))
+                if result.get("ok") and h4_high > 0 and h4_low > 0:
+                    new_tp = round(max(h4_high, current + 12.0) if buy else min(h4_low, current - 12.0), 2)
+                    if (new_tp > tp + 1.0 if buy else new_tp < tp - 1.0):
+                        mod = modify_position_sl_tp(mt5, p, sl, new_tp, "Extend runner TP toward H4")
+                        if mod.get("changed"):
+                            actions.append(mod["message"])
+    _save_manager_state(state)
     return {
-        "managedCount": len(sym_positions),
-        "actions": actions,
-        "summary": " | ".join(actions) if actions else f"Đang quản lý {len(sym_positions)} lệnh theo quy tắc: SL 6–8 giá → Đạt 1R kéo BE → Trailing cấu trúc M5 & Khóa đỉnh M15 cách {spike_trail_dist} giá."
+        "managedCount": managed, "actions": actions,
+        "summary": " | ".join(actions) if actions else f"Managing {managed} owned positions; no broker modification needed"
     }
 
 def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V6"):
@@ -670,7 +643,12 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
 
     digits = int(getattr(sym_info, "digits", 2))
     vol_min = float(getattr(sym_info, "volume_min", 0.01))
-    volume = max(vol_min, volume)
+    volume_step = float(getattr(sym_info, "volume_step", 0.01) or 0.01)
+    volume_max = float(getattr(sym_info, "volume_max", 0.0) or 0.0)
+    if volume < vol_min or (volume_max > 0 and volume > volume_max):
+        return {"ok": False, "message": "Lot outside broker volume bounds; never increase requested risk"}
+    if abs(round(volume / volume_step) * volume_step - volume) > 1e-7:
+        return {"ok": False, "message": "Lot is not compatible with broker volume step"}
 
     is_buy = side == "BUY"
     price = float(tick.ask if is_buy else tick.bid)
@@ -685,6 +663,47 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
     else:
         tp = round(price + tp_points_price if is_buy else price - tp_points_price, digits) if tp_points_price > 0 else 0.0
 
+    if side not in ("BUY", "SELL") or not (sl > 0 and tp > 0):
+        return {"ok": False, "message": "Invalid order side / missing broker SL or TP"}
+    point = float(getattr(sym_info, "point", 0.01) or 0.01)
+    stops_gap = max(point, float(getattr(sym_info, "trade_stops_level", 0) or 0) * point)
+    spread_points = (float(tick.ask) - float(tick.bid)) / point
+    quote_age = time.time() - float(getattr(tick, "time", 0) or 0)
+    max_spread = float(order_cfg.get("maxSpreadPoints", 65))
+    if not (0 <= quote_age <= 20 and 0 <= spread_points <= max_spread):
+        return {"ok": False, "message": "Stale quote or spread exceeds maximum"}
+    if (is_buy and not (sl < float(tick.bid) - stops_gap and tp > float(tick.ask) + stops_gap)) or (
+        not is_buy and not (sl > float(tick.ask) + stops_gap and tp < float(tick.bid) - stops_gap)
+    ):
+        return {"ok": False, "message": "SL/TP violates market direction or broker stop distance"}
+    account = mt5.account_info()
+    if account is None or float(getattr(account, "equity", 0) or 0) <= 0:
+        return {"ok": False, "message": "Cannot verify positive account equity"}
+    calc = getattr(mt5, "order_calc_profit", None)
+    if not callable(calc):
+        return {"ok": False, "message": "Broker risk-calculation API unavailable"}
+    order_type = int(getattr(mt5, "ORDER_TYPE_BUY", 0) if is_buy else getattr(mt5, "ORDER_TYPE_SELL", 1))
+    expected_at_sl = calc(order_type, active_symbol, volume, price, sl)
+    if expected_at_sl is None or not isfinite(float(expected_at_sl)):
+        return {"ok": False, "message": "Broker cannot price the SL risk"}
+    equity = float(account.equity)
+    new_risk = max(0.0, -float(expected_at_sl)) * 1.05
+    per_trade_pct = max(0.0, min(1.0, float(order_cfg.get("maxRiskPercent", 0.5))))
+    max_total_pct = max(0.0, min(2.0, float(order_cfg.get("maxPortfolioRiskPercent", 1.5))))
+    if new_risk > equity * per_trade_pct / 100:
+        return {"ok": False, "message": "Rejected: requested lot exceeds per-order equity risk cap"}
+    open_risk = 0.0
+    for existing in (mt5.positions_get() or []):
+        old_sl = float(getattr(existing, "sl", 0) or 0)
+        if old_sl <= 0:
+            return {"ok": False, "message": "An existing position has no SL; new orders blocked"}
+        old_type = int(existing.type)
+        old_profit = calc(old_type, str(existing.symbol), float(existing.volume), float(existing.price_open), old_sl)
+        if old_profit is None or not isfinite(float(old_profit)):
+            return {"ok": False, "message": "Cannot compute portfolio SL risk"}
+        open_risk += max(0.0, -float(old_profit)) * 1.05
+    if (open_risk + new_risk) > equity * max_total_pct / 100:
+        return {"ok": False, "message": "Rejected: portfolio equity risk limit"}
     req = {
         "action": int(getattr(mt5, "TRADE_ACTION_DEAL", 1)),
         "symbol": active_symbol,
@@ -786,7 +805,7 @@ def is_position_at_breakeven(pos):
         return sl_p <= open_p
 
 
-def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysis, dca_cfg, force_manual=False):
+def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysis, dca_cfg, force_manual=False, execute=False):
     """
     LOGIC DCA DƯƠNG CHUẨN THEO ĐIỀU KIỆN LOẠI BOT (POSITIVE DCA BY BOT SIGNAL AFTER BREAK-EVEN):
     1. Lệnh đầu (và các lệnh đang mở) phải ĐANG DƯƠNG (profit > 0).
@@ -845,11 +864,16 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
     # Bước 1: Kiểm tra xem lệnh trước đó ĐÃ KÉO SL VỀ BE (Hòa vốn) hay chưa
     all_at_be = all(is_position_at_breakeven(p) for p in sym_positions)
     if not all_at_be:
-        if favorable_dist >= be_trigger_dist or force_manual:
+        if execute and favorable_dist >= be_trigger_dist:
             for old_p in sym_positions:
                 if not is_position_at_breakeven(old_p):
-                    move_sl_to_breakeven(mt5, int(getattr(old_p, "ticket", 0)))
-            all_at_be = True
+                    result = move_sl_to_breakeven(mt5, int(getattr(old_p, "ticket", 0)))
+                    if not result.get("ok"):
+                        return {"eligible": False, "executed": False, "reason": "Broker rejected BE on an earlier layer"}
+            current_positions = mt5.positions_get(symbol=active_symbol) or []
+            all_at_be = bool(current_positions) and len(current_positions) == len(sym_positions) and all(is_position_at_breakeven(p) for p in current_positions)
+            if not all_at_be:
+                return {"eligible": False, "executed": False, "reason": "Could not confirm BE on every layer from broker"}
         else:
             return {
                 "eligible": False,
@@ -865,7 +889,7 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
     min_conf = float(dca_cfg.get("minConfidence") or 82)
     bot_ok, bot_reason = check_bot_signal_for_mode(live_analysis, strategy_mode, side, min_conf)
 
-    if not bot_ok and not force_manual:
+    if not bot_ok:
         return {
             "eligible": False,
             "executed": False,
@@ -874,7 +898,7 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
         }
 
     # Tránh nhồi trùng 2 lệnh tại cùng một mức giá (yêu cầu cách lệnh trước tối thiểu 1.2 giá)
-    if favorable_dist < 1.2 and not force_manual:
+    if favorable_dist < max(1.2, be_trigger_dist):
         return {
             "eligible": False,
             "executed": False,
@@ -882,7 +906,7 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
             "reason": f"Đã có tín hiệu Bot ({bot_reason}) nhưng giá hiện tại ({cur_price}) còn quá sát lệnh vừa mở ({last_entry})."
         }
 
-    if not dca_cfg.get("enabled", False) and not force_manual:
+    if not dca_cfg.get("enabled", False):
         return {
             "eligible": True,
             "executed": False,
@@ -890,14 +914,19 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
             "reason": f"ĐỦ ĐIỀU KIỆN DCA DƯƠNG TẦNG #{current_dca_layers + 1} (Lệnh đầu đã kéo BE + {bot_reason}), nhưng công tắc DCA Dương đang TẮT."
         }
 
-    # Đảm bảo toàn bộ lệnh cũ đã khóa SL về BE trước khi gửi lệnh DCA Dương
-    for old_p in sym_positions:
-        move_sl_to_breakeven(mt5, int(getattr(old_p, "ticket", 0)))
+    if not execute:
+        return {"eligible": True, "executed": False, "currentLayers": current_dca_layers,
+                "reason": "Eligible for DCA; preview only (no broker action)"}
+    confirmed = mt5.positions_get(symbol=active_symbol) or []
+    if len(confirmed) != len(sym_positions) or not all(is_position_at_breakeven(p) for p in confirmed):
+        return {"eligible": False, "executed": False, "reason": "DCA blocked: broker BE not confirmed"}
 
     base_vol = float(getattr(base_pos, "volume", 0.02))
     mult = float(dca_cfg.get("lotMultiplier") or 0.5)
     next_layer_num = current_dca_layers + 1
-    dca_vol = max(0.01, round(base_vol * (mult ** next_layer_num), 2))
+    dca_vol = round(base_vol * (mult ** next_layer_num), 2)
+    if dca_vol <= 0:
+        return {"eligible": False, "executed": False, "reason": "Next DCA volume below tradable step; skip layer"}
 
     # Đặt SL và TP của lệnh DCA Dương theo đúng quy tắc lệnh đầu của Bot (SL cấu trúc 6–8 giá hoặc theo lệnh đầu)
     base_open = float(getattr(base_pos, "price_open", cur_price))
@@ -919,6 +948,8 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
             "volume": dca_vol,
             "slDistance": dca_sl_dist,
             "tpDistance": dca_tp_dist,
+            "maxRiskPercent": 0.5,
+            "maxPortfolioRiskPercent": 1.5,
         },
         comment_tag=f"DCA_PLUS_L{next_layer_num}_{side}"
     )
@@ -1053,38 +1084,66 @@ def main():
     preferred_symbol = str(cfg.get("brokerSymbol") or "XAUUSD.G").strip()
     active_symbol, available_gold_symbols = resolve_gold_symbol(mt5, preferred_symbol)
 
-    candles_m5 = fetch_tf_candles(mt5, active_symbol, mt5.TIMEFRAME_M5, 30)
-    candles = fetch_tf_candles(mt5, active_symbol, mt5.TIMEFRAME_M15, 24)
-    candles_h1 = fetch_tf_candles(mt5, active_symbol, mt5.TIMEFRAME_H1, 40)
-    candles_h4 = fetch_tf_candles(mt5, active_symbol, mt5.TIMEFRAME_H4, 40)
+    candles_m5 = fetch_tf_candles(mt5, active_symbol, mt5.TIMEFRAME_M5, 60)
+    candles = fetch_tf_candles(mt5, active_symbol, mt5.TIMEFRAME_M15, 60)
+    candles_h1 = fetch_tf_candles(mt5, active_symbol, mt5.TIMEFRAME_H1, 60)
+    candles_h4 = fetch_tf_candles(mt5, active_symbol, mt5.TIMEFRAME_H4, 60)
 
     live_analysis = analyze_live_candles(candles)
+    tick_for_signal = mt5.symbol_info_tick(active_symbol)
+    signal_bid = float(getattr(tick_for_signal, "bid", 0.0) or 0.0)
+    signal_ask = float(getattr(tick_for_signal, "ask", 0.0) or 0.0)
+    signal_mode = str(cfg.get("strategyMode") or "AUTO_REGIME")
+    entry_signal = evaluate_entry(
+        candles_m5, candles, candles_h1, candles_h4, signal_bid, signal_ask,
+        signal_mode, cfg.get("minConfidence", 85)
+    )
     raw_positions = mt5.positions_get() or []
 
     action_result = None
     if action == "order":
-        sl_mode = str(cfg.get("slMode") or ("FIXED_CUSTOM" if cfg.get("forceFixedSlTp") else "STRUCTURAL_6_8")).upper()
-        if sl_mode != "FIXED_CUSTOM":
-            tick_now = mt5.symbol_info_tick(active_symbol)
-            side_req = str(cfg.get("side", "BUY")).upper()
-            entry_est = float(tick_now.ask if side_req == "BUY" else tick_now.bid) if tick_now else 4678.96
-            sl_d, sl_p, sl_rsn, tp_d, tp_p, tp_rsn = calc_structural_sl_and_sr_tp(
-                candles_m5, candles, candles_h1, candles_h4, side_req, entry_est,
-                float(cfg.get("slDistance") or 6.8), float(cfg.get("tpDistance") or 16.0)
-            )
-            cfg["slDistance"] = sl_d
-            cfg["tpDistance"] = tp_d
-            cfg["explicitSlPrice"] = sl_p
-            cfg["explicitTpPrice"] = tp_p
-            cfg["slReason"] = sl_rsn
-            cfg["tpReason"] = tp_rsn
+        manual = cfg.get("manualOrder") is True
+        request_side = str(cfg.get("side", "WAIT")).upper()
+        if request_side not in ("BUY", "SELL"):
+            action_result = {"ok": False, "message": "BUY/SELL direction required"}
+        elif not manual and (
+            not entry_signal.get("allowed")
+            or entry_signal.get("side") != request_side
+            or int(entry_signal.get("closedM15Time", 0)) != int(cfg.get("closedM15Time", -1))
+        ):
+            action_result = {"ok": False, "message": "Entry blocked: latest closed M15 plan/mode no longer agrees"}
+        elif not manual and (
+            len(candles) < 2 or time.time() * 1000 - int(candles[-2][4]) > 30 * 60 * 1000
+        ):
+            action_result = {"ok": False, "message": "Entry blocked: stale M15 candle"}
         else:
-            cfg["slReason"] = f"SL cố định ({cfg.get('slDistance', 6.8)} giá)"
-            cfg["tpReason"] = f"TP cố định ({cfg.get('tpDistance', 16.0)} giá)"
-        if not cfg.get("entryReason") and live_analysis:
-            cfg["entryReason"] = f"{live_analysis.get('patternName', 'Tín hiệu M15')} — {live_analysis.get('reason', '')} (Tin cậy {live_analysis.get('confidence', 86)}%)"
-        action_result = execute_order(mt5, active_symbol, cfg)
-        raw_positions = mt5.positions_get() or []
+            sl_mode = str(cfg.get("slMode") or "STRUCTURAL_6_8").upper()
+            if not manual:
+                cfg["explicitSlPrice"] = entry_signal["sl"]
+                cfg["explicitTpPrice"] = entry_signal["tp"]
+                cfg["entryReason"] = entry_signal["reason"]
+                cfg["slReason"] = "Confirmed structural stop, never clipped inside swing"
+                cfg["tpReason"] = "Per-strategy RR and H1/H4 or range target"
+            elif sl_mode != "FIXED_CUSTOM":
+                tick_now = mt5.symbol_info_tick(active_symbol)
+                if tick_now is None:
+                    action_result = {"ok": False, "message": "Missing quote for structural stop"}
+                else:
+                    entry_est = float(tick_now.ask if request_side == "BUY" else tick_now.bid)
+                    plan = calc_structural_sl_and_sr_tp(
+                        candles_m5, candles, candles_h1, candles_h4, request_side, entry_est,
+                        float(cfg.get("slDistance") or 6.8), float(cfg.get("tpDistance") or 16.0)
+                    )
+                    if plan is None:
+                        action_result = {"ok": False, "message": "Structural SL too wide or S/R gives insufficient R:R; order rejected"}
+                    else:
+                        cfg["slDistance"], cfg["explicitSlPrice"], cfg["slReason"], cfg["tpDistance"], cfg["explicitTpPrice"], cfg["tpReason"] = plan
+            if action_result is None:
+                cfg["side"] = request_side
+                action_result = execute_order(mt5, active_symbol, cfg)
+            raw_positions = mt5.positions_get() or []
+
+
     elif action == "close":
         action_result = close_position_by_ticket(mt5, cfg.get("ticket"))
         raw_positions = mt5.positions_get() or []
@@ -1098,7 +1157,8 @@ def main():
             raw_positions,
             live_analysis,
             cfg.get("positiveDcaConfig") or {"enabled": True, "maxLayers": 2, "stepDistance": 4.5, "lotMultiplier": 0.5},
-            force_manual=bool(cfg.get("forceManual", False))
+            force_manual=bool(cfg.get("forceManual", False)),
+            execute=True
         )
         action_result = {
             "ok": bool(dca_res.get("executed")),
@@ -1109,7 +1169,7 @@ def main():
 
     # Tự động quản lý lệnh theo cơ chế Bot Trend (SL 6-8 giá -> Đạt 1R kéo BE -> Trailing M5 -> Khóa đỉnh M15 cách 10 giá -> Chốt 1 phần tại cản H1/H4) cho cả lệnh Bot và lệnh vào tay (Bán tự động)
     trend_management_status = None
-    if cfg.get("autoManageBe", True) or action == "manage_positions":
+    if action == "manage_positions":
         trend_management_status = manage_trend_and_manual_positions(
             mt5,
             active_symbol,
@@ -1132,7 +1192,8 @@ def main():
         raw_positions,
         live_analysis,
         cfg.get("positiveDcaConfig") or {"enabled": False, "maxLayers": 2, "stepDistance": 4.5, "lotMultiplier": 0.5},
-        force_manual=False
+        force_manual=False,
+        execute=False
     )
 
     tick = mt5.symbol_info_tick(active_symbol)
@@ -1275,6 +1336,7 @@ def main():
         "ask": round(ask, 2),
         "spreadPoints": spread_points,
         "liveAnalysis": live_analysis,
+        "entrySignal": entry_signal,
         "mtfAnalysis": analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles, live_analysis, bid if bid > 0 else (candles[-1][3] if candles else 4678.96)),
         "candles": candles,
         "openPositions": open_positions,
