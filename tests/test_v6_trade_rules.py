@@ -67,6 +67,23 @@ class TradeRulesTest(unittest.TestCase):
         plan = evaluate_entry(m5, m15, h1, h4, 4018.5, 4018.7, "BOT_1_TREND", 95)
         self.assertFalse(plan["allowed"])
 
+    def test_confirmed_trend_can_produce_broker_independent_plan(self):
+        m5, m15, h1, h4 = self.fixtures()
+        plan = evaluate_entry(m5, m15, h1, h4, 4018.5, 4018.7, "BOT_1_TREND")
+        self.assertTrue(plan["allowed"], plan)
+        self.assertEqual(plan["side"], "BUY")
+        self.assertLess(plan["sl"], 4018.7)
+        self.assertGreater(plan["tp"], 4018.7)
+        self.assertGreaterEqual(plan["rewardRisk"], 1.6)
+
+    def test_confirmed_sweep_must_breach_prior_swing_and_reclaim(self):
+        m5, m15, h1, h4 = self.fixtures()
+        m15[-2][0], m15[-2][1], m15[-2][2], m15[-2][3] = (4015.4, 4016.5, 4014.3, 4016.3)
+        plan = evaluate_entry(m5, m15, h1, h4, 4016.4, 4016.5, "BOT_3_SWEEP")
+        self.assertTrue(plan["allowed"], plan)
+        self.assertEqual(plan["side"], "BUY")
+        self.assertLess(plan["sl"], 4016.5)
+
     def test_forming_candle_does_not_change_entry(self):
         m5, m15, h1, h4 = self.fixtures()
         before = evaluate_entry(m5, m15, h1, h4, 4018.5, 4018.7, "BOT_1_TREND")
