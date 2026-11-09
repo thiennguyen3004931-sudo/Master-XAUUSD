@@ -1079,6 +1079,9 @@ def main():
         signal_mode, cfg.get("minConfidence", 85)
     )
     raw_positions = mt5.positions_get() or []
+    dca_settings = dict(cfg.get("positiveDcaConfig") or {})
+    dca_settings["strategyMode"] = signal_mode
+    dca_settings["minConfidence"] = cfg.get("minConfidence", 85)
 
     action_result = None
     real_account = int(getattr(account, "trade_mode", -1)) == int(getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2))
@@ -1127,7 +1130,8 @@ def main():
                         cfg["slDistance"], cfg["explicitSlPrice"], cfg["slReason"], cfg["tpDistance"], cfg["explicitTpPrice"], cfg["tpReason"] = plan
             if action_result is None:
                 cfg["side"] = request_side
-                action_result = execute_order(mt5, active_symbol, cfg)
+                action_result = execute_order(mt5, active_symbol, cfg,
+                                              comment_tag=("V6_" + str(entry_signal.get("strategyMode") or cfg.get("strategyMode") or "MANUAL"))[:31] if not manual else "V6_MANUAL")
             raw_positions = mt5.positions_get() or []
 
 
@@ -1143,7 +1147,7 @@ def main():
             active_symbol,
             raw_positions,
             entry_signal,
-            cfg.get("positiveDcaConfig") or {"enabled": True, "maxLayers": 2, "stepDistance": 4.5, "lotMultiplier": 0.5},
+            dca_settings,
             force_manual=bool(cfg.get("forceManual", False)),
             execute=True
         )
@@ -1178,7 +1182,7 @@ def main():
         active_symbol,
         raw_positions,
         entry_signal,
-        cfg.get("positiveDcaConfig") or {"enabled": False, "maxLayers": 2, "stepDistance": 4.5, "lotMultiplier": 0.5},
+        dca_settings,
         force_manual=False,
         execute=False
     )
