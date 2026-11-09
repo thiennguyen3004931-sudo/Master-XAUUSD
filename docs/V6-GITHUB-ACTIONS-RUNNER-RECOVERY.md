@@ -39,3 +39,29 @@ These checks are **synthetic only**. They do not replace the real Windows MT5 **
 - Keep the PR in **Draft**; do not merge to \`main\` until code review, all required gate checks, DEMO execution and out-of-sample replay.
 - Do not turn off security workflows, disable branch protection, or substitute hosted runners for jobs intentionally dependent on the production self-hosted broker machine.
 - The V6 order path continues to reject unapproved REAL execution. A running Actions runner does **not** imply trading authorization.
+
+## Update after the new Windows runner registered (2026-11-09)
+
+**The runner is now taking jobs.** Previous \`queued\` status was caused by no matching runner. The new Windows runner executed the jobs, then several FAILED because the runner **service environment** is not yet ready:
+
+| Failing job | Diagnosed log error | Meaning |
+| --- | --- | --- |
+| Web Quality, LIVE ARM source contracts | \`pwsh: command not found\` | PowerShell 7 is not on the runner service's PATH |
+| Canonical PR Gate, Private Master Core, API/Web dependency jobs | \`PSSecurityException\` on Actions-generated \`_temp/*.ps1\` | Script execution policy under service identity blocks GitHub Actions temporary scripts |
+| Hosted Phase7C System Lifecycle | Missing \`.env.phase7b-live.example\`, plus lot test state leakage | Source tests needed inert template and isolated DEMO mode fixture |
+
+**Code fixes:** the branch now restores the empty LIVE profile template with \`MT5_TRADING_ENABLED=false\`, and isolates the lot tests from tracked local runtime account state. Both changes preserve fail-closed LIVE posture.
+
+**Safe service-account diagnosis on Windows (read-only, no MT5 access):**
+
+\`\`\`powershell
+Get-CimInstance Win32_Service -Filter "Name LIKE 'actions.runner.%'" |
+  Select-Object Name,State,StartName,PathName
+Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object Source
+Test-Path 'C:\Program Files\PowerShell\7\pwsh.exe'
+Get-ExecutionPolicy -List
+\`\`\`
+
+**Resolution path:** on a *dedicated CI machine*, ensure PowerShell 7 is installed for all users and its directory is on the machine-level PATH visible to the runner service account; restart only the exact \`actions.runner.*\` Windows service after the administrator verifies it is safe. Review enterprise Group Policy versus PowerShell execution policy. Use a narrowly scoped, trusted CI execution policy instead of disabling Windows security globally, and do not run untrusted PR code on any machine with MT5 credentials/LIVE positions. Do not modify LIVE trading status to repair CI.
+
+After environment repair, use the existing PR checks rather than arbitrary live deployment. Keep PR #1 as DRAFT until DEMO broker acceptance.
