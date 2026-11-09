@@ -887,11 +887,21 @@
                 <!-- CHỌN CHẾ ĐỘ VẬN HÀNH BOT (TỰ ĐỘNG HOẶC CHỌN LOẠI BOT RIÊNG) -->
                 <div class="field" style="margin-bottom:2px">
                   <label style="color:var(--accent);font-weight:600">1. Chọn Loại Bot giao dịch (Tự động chọn theo thị trường hoặc Chọn loại Bot riêng)</label>
+                  <div class="field" style="margin-bottom:9px">
+                    <label>Khóa điều khiển V6 (không lưu trong GitHub; nhập lại mỗi phiên)</label>
+                    <div style="display:flex;gap:7px;align-items:center">
+                      <input type="password" id="v6ControlTokenInput" autocomplete="off" placeholder="ZIQ_V6_CONTROL_TOKEN" style="flex:1;min-width:120px" />
+                      <button type="button" class="btn" onclick="saveV6ControlTokenFromUi()">Xác thực phiên</button>
+                    </div>
+                    <small id="v6ControlTokenStatus">API giao dịch khóa cho đến khi xác thực.</small>
+                  </div>
                   <select id="botStrategySelect" onchange="onChangeBotStrategyMode()" style="border-color:rgba(56,189,248,0.45);font-weight:600">
                     <option value="AUTO_REGIME" selected>🤖 1. Tự động Thông minh + Gồng Trend Cấu Trúc (Hợp nhất Trend M5 · BE 1R · Đỉnh 10 giá · Sweep · Cản H1/H4)</option>
                     <option value="SEMI_AUTO_TREND">🤝 2. Bán Tự Động (Bạn vào lệnh tay — Bot tự nuôi SL 6–8 giá, BE 1R, Trailing M5, Khóa đỉnh 10 giá &amp; DCA+)</option>
                     <option value="BOT_1_TREND">📈 3. Chỉ đánh Sóng Trend &amp; Quét Thanh Khoản (Bỏ qua vùng Sideway đi ngang · Gồng sóng H1/H4)</option>
                     <option value="BOT_2_SIDEWAY">↔️ 4. Chỉ đánh Sideway Biên Cung/Cầu (Chuyên phiên Á đi ngang · Tự khóa DCA Dương)</option>
+                    <option value="BOT_3_SWEEP">💧 5. Liquidity Sweep xác nhận swing + nến M5 (đơn lệnh)</option>
+                    <option value="BOT_4_SWEEP_DCA_PLUS">➕ 6. Liquidity Sweep + tùy chọn DCA Dương (mặc định OFF)</option>
                   </select>
                 </div>
 
@@ -1740,6 +1750,25 @@ Branch : main
   </div>
 
   <script>
+    // Authenticated control on this browser tab only; token never embedded in a source file.
+    (() => {
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = typeof input === "string" ? input : input?.url || "";
+        if (!url.includes("/api/v1/mt5/")) return originalFetch(input, init);
+        const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : {}));
+        headers.set("x-v6-control-token", sessionStorage.getItem("xauusd_v6_control_token") || "");
+        return originalFetch(input, { ...(init || {}), headers });
+      };
+      window.saveV6ControlTokenFromUi = () => {
+        const input = document.getElementById("v6ControlTokenInput");
+        const token = String(input?.value || "").trim();
+        if (!token) return;
+        sessionStorage.setItem("xauusd_v6_control_token", token);
+        input.value = "";
+        document.getElementById("v6ControlTokenStatus").textContent = "Đã lưu khóa trong phiên tab. Kiểm tra kết nối để xác thực với server.";
+      };
+    })();
     const SCENARIOS = [
       {
         id: 0,
@@ -2426,7 +2455,7 @@ Branch : main
     window.__latestAccountBalance = 4131.83;
     window.__userLockedLot = parseFloat(localStorage.getItem("xauusd_locked_lot") || "0.05") || 0.05;
 
-    // Dữ liệu 30 chuỗi lệnh Backtest thực nghiệm chuẩn V6.3 (Cơ sở tính toán Lãi/Lỗ từng lệnh bằng tiền USD & Xuất Excel)
+    // DỮ LIỆU MINH HỌA CỐ ĐỊNH: không phải kết quả backtest broker có thể tái chạy.
     const BACKTEST_TRADES_RAW = [
       { id: "BT-001", dt: "2026-10-02 15:30", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.5, entry: 4582.40, sl: 4575.60, be: 4589.20, exit: 4601.80, pts: 19.40, v1Pts: 8.50, reason: "Chốt 50% cản H1 (4594) + Gồng cản H4 & DCA+1 sau BE" },
       { id: "BT-002", dt: "2026-10-03 20:15", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "SELL", dcaRatio: 0.5, entry: 4604.20, sl: 4611.00, be: 4597.40, exit: 4581.50, pts: 22.70, v1Pts: 9.00, reason: "Cây M15 sập mạnh → Khóa SL cách đáy 10 giá (4581.5)" },
@@ -2623,13 +2652,16 @@ Branch : main
       const modeNames = {
         AUTO_REGIME: "1. Tự động Thông minh + Gồng Trend Cấu Trúc V6.3",
         SEMI_AUTO_TREND: "2. Bán Tự Động (Vào lệnh tay — Bot tự nuôi Trend V6.3)",
-        BOT_1_TREND: "3. Chỉ đánh Sóng Trend & Quét Thanh Khoản (Bỏ qua Sideway)",
-        BOT_2_SIDEWAY: "4. Chỉ đánh Sideway Biên Cung/Cầu (Khóa DCA Dương)"
+        BOT_1_TREND: "3. Trend theo H4/H1/M15 + xác nhận M5",
+        BOT_2_SIDEWAY: "4. Sideway ở biên Supply/Demand",
+        BOT_3_SWEEP: "5. Liquidity Sweep đơn lệnh",
+        BOT_4_SWEEP_DCA_PLUS: "6. Sweep + DCA Dương có kiểm soát"
       };
       document.getElementById("dashBotRec").textContent = modeNames[modeVal] || modeVal;
       if (modeVal === "BOT_2_SIDEWAY") {
         document.getElementById("chkPositiveDca").checked = false;
         updatePositiveDcaUiState(false);
+        void saveDcaSettings(); // Disable DCA on backend, not only in UI.
       }
       const btStrat = document.getElementById("btStrategy");
       if (btStrat && [...btStrat.options].some(o => o.value === modeVal)) {
