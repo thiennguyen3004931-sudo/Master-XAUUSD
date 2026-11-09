@@ -2882,53 +2882,50 @@ Branch : main
     }
 
     async function toggleAutoTradingBot() {
-      isAutoBotOn = !isAutoBotOn;
+      const desired = !isAutoBotOn;
       const volume = Number(document.getElementById("tradeLot").value || window.__userLockedLot || 0.05);
       const slDistance = Number(document.getElementById("tradeSlDist").value || 6.8);
       const tpDistance = Number(document.getElementById("tradeTpDist").value || 16.0);
       const m15SpikeTrailDist = Number(document.getElementById("tradeSpikeTrail").value || 10.0);
       const logBox = document.getElementById("tradeExecutionLog");
-
-      const btnBot = document.getElementById("btnToggleAutoBot");
-      const badgeBot = document.getElementById("dashBotStateBadge");
-      if (isAutoBotOn) {
-        btnBot.textContent = "⏸ ĐANG CHẠY BOT (DỪNG)";
-        btnBot.className = "btn btn-buy";
-        badgeBot.textContent = "AUTO ON";
-        badgeBot.className = "badge badge-up";
-      } else {
-        btnBot.textContent = "▶ BẬT BOT TỰ ĐỘNG";
-        btnBot.className = "btn btn-solid";
-        badgeBot.textContent = "SẴN SÀNG";
-        badgeBot.className = "badge badge-accent";
-      }
-
       if (!isBackendReachable()) {
-        logBox.textContent = isAutoBotOn
-          ? `[ĐÃ BẬT BOT TỰ ĐỘNG V6.3] Đang quét ${activeBrokerSymbol} với khối lượng ${volume.toFixed(2)} lot (SL cấu trúc ${slDistance} giá · Đạt 1R kéo BE · Trailing M5 · Khóa đỉnh ${m15SpikeTrailDist} giá).`
-          : `[ĐÃ TẠM DỪNG BOT TỰ ĐỘNG]`;
+        logBox.textContent = "KHÔNG THỂ BẬT BOT: Máy chủ không kết nối. Chưa có thay đổi giao dịch.";
         return;
       }
-
       try {
         const fn = window["fet" + "ch"];
         const res = await fn(getApiOrigin() + "/api/v1/mt5/auto-bot", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ enabled: isAutoBotOn, volume, slDistance, tpDistance, m15SpikeTrailDist, strategyMode: document.getElementById('botStrategySelect')?.value || 'AUTO_REGIME', sourceDevice: getDeviceLabel() })
+          body: JSON.stringify({
+            enabled: desired, volume, slDistance, tpDistance, m15SpikeTrailDist,
+            strategyMode: document.getElementById("botStrategySelect")?.value || "AUTO_REGIME",
+            sourceDevice: getDeviceLabel()
+          })
         });
-        if (res.ok) {
-          const data = await res.json();
-          applyMt5StatusToUi(data);
-          logBox.textContent = data.autoBotState?.lastLog || "Đã cập nhật Bot Tự Động.";
+        if (!res.ok) {
+          logBox.textContent = "API TỪ CHỐI BẬT/TẮT BOT (" + res.status + "). Kiểm tra khóa điều khiển V6. Trạng thái cũ được giữ nguyên.";
+          return;
         }
-      } catch (e) {}
+        const data = await res.json();
+        isAutoBotOn = Boolean(data.autoBotState?.enabled);
+        applyMt5StatusToUi(data);
+        const btn = document.getElementById("btnToggleAutoBot");
+        const badge = document.getElementById("dashBotStateBadge");
+        btn.textContent = isAutoBotOn ? "⏸ ĐANG CHẠY BOT (DỪNG)" : "▶ BẬT BOT TỰ ĐỘNG";
+        btn.className = isAutoBotOn ? "btn btn-buy" : "btn btn-solid";
+        badge.textContent = isAutoBotOn ? "AUTO ON" : "SẴN SÀNG";
+        badge.className = isAutoBotOn ? "badge badge-up" : "badge badge-accent";
+        logBox.textContent = data.autoBotState?.lastLog || "Đã xác nhận trạng thái từ server.";
+      } catch (error) {
+        logBox.textContent = "Không thể cập nhật Bot: " + (error?.message || "mất kết nối");
+      }
     }
 
     async function sendBreakevenCommand() {
       const logBox = document.getElementById("tradeExecutionLog");
       if (!isBackendReachable()) {
-        logBox.textContent = "[KHÓA RỦI RO] Đã dời Stop Loss của toàn bộ vị thế đang mở về Hòa vốn (+0.25 giá bù phí).";
+        logBox.textContent = "[KHÔNG THỂ GỬI LỆNH BE] API không kết nối. SL trên MT5 CHƯA được xác nhận thay đổi.";
         return;
       }
       try {
@@ -2945,7 +2942,7 @@ Branch : main
     async function sendCloseAllCommand() {
       const logBox = document.getElementById("tradeExecutionLog");
       if (!isBackendReachable()) {
-        logBox.textContent = "[ĐÓNG CHUỖI LỆNH] Đã tất toán toàn bộ lệnh gốc và các tầng DCA Dương đang mở.";
+        logBox.textContent = "[KHÔNG THỂ ĐÓNG CHUỖI] API không kết nối. Các vị thế MT5 có thể vẫn đang mở.";
         return;
       }
       try {
