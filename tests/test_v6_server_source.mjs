@@ -1,4 +1,5 @@
 import test from "node:test";
+import { execFileSync as gitExecFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -96,3 +97,15 @@ test("DEMO bridge has no shared static API key and defaults to trading disabled"
   assert.match(profile, /if \(isLive\) \{/);
   assert.match(profile, /return;/);
 });
+
+test("runtime account and credential files must never be tracked in Git", () => {
+  const { execFileSync } = requireGuardedGit();
+  const tracked = execFileSync("git", ["ls-files", "--", ".runtime"], {
+    cwd: root, encoding: "utf8",
+  }).trim();
+  assert.equal(tracked, "", "LIVE arm state, MT5 credentials and Telegram token must be local-only");
+});
+
+function requireGuardedGit() {
+  return { execFileSync: gitExecFileSync };
+}
