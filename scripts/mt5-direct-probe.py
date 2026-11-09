@@ -757,40 +757,20 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
         "message": f"Sàn từ chối lệnh (Mã {retcode}: {getattr(res, 'comment', '')}). Kiểm tra nút Algo Trading trên MT5!"
     }
 
-def check_bot_signal_for_mode(live_analysis, strategy_mode, required_side, min_conf=80):
-    """
-    Kiểm tra xem tín hiệu nến hiện tại có thỏa mãn ĐIỀU KIỆN CỦA LOẠI BOT đang chọn hay không.
-    """
-    if not live_analysis:
-        return False, "Chưa có dữ liệu phân tích nến M15/M5."
-    sig_side = str(live_analysis.get("signalSide") or "WAIT").upper()
-    conf = float(live_analysis.get("confidence") or 0)
-    pname = str(live_analysis.get("patternName") or "")
-    trend_aligned = bool(live_analysis.get("trendAligned", False))
-
-    if sig_side != required_side:
-        return False, f"Tín hiệu Bot hiện tại ({sig_side} - {pname}) chưa đồng thuận với chiều lệnh đang mở ({required_side})."
-
+def check_bot_signal_for_mode(signal, strategy_mode, required_side, min_conf=80):
+    """DCA MUST use the same live closed-bar strategy gate as an original order."""
     mode = str(strategy_mode or "AUTO_REGIME").upper()
-    if mode == "BOT_1_TREND":
-        is_trend_pat = ("Engulfing" in pname) or ("Xu hướng" in pname) or ("Continuation" in pname) or ("Flag" in pname)
-        if not (is_trend_pat and trend_aligned and conf >= min_conf):
-            return False, f"Bot 1 (Trend Rider) đang chờ nhịp hồi Pullback EMA/FVG & nến xác nhận (Hiện tại: {pname}, Tin cậy {conf:.0f}%)."
-        return True, f"Thỏa điều kiện Bot 1 (Trend Rider): {pname} thuận xu hướng ({conf:.0f}%)."
-
-    if mode in ("BOT_3_SWEEP", "BOT_4_SWEEP_DCA_PLUS"):
-        is_sweep_pat = ("Sweep" in pname) or ("Pinbar" in pname) or ("Upthrust" in pname) or ("Engulfing" in pname)
-        if not (is_sweep_pat and conf >= min_conf):
-            return False, f"Bot Sweep đang chờ mẫu nến Quét thanh khoản Pinbar/Engulfing (Hiện tại: {pname}, Tin cậy {conf:.0f}%)."
-        return True, f"Thỏa điều kiện Bot Liquidity Sweep: {pname} ({conf:.0f}%)."
-
     if mode == "BOT_2_SIDEWAY":
-        return False, "Bot 2 (Sideway Corridor) chuyên đánh biên đi ngang — tự động khóa nhồi lệnh DCA Dương để tránh mua đỉnh/bán đáy hộp."
-
-    # AUTO_REGIME (Tự động chọn theo cấu trúc thị trường)
-    if not (trend_aligned and conf >= min_conf):
-        return False, f"Chế độ Tự động (Auto-Regime) đang chờ tín hiệu nến đạt độ tin cậy >= {min_conf}% (Hiện tại: {pname} - {conf:.0f}%)."
-    return True, f"Thỏa điều kiện Bot Tự động ({pname} - Tin cậy {conf:.0f}%)."
+        return False, "No positive DCA in sideway mode"
+    if not signal or not signal.get("allowed"):
+        return False, "No eligible completed-bar setup for DCA"
+    if signal.get("side") != required_side:
+        return False, "DCA direction conflicts with confirmed entry plan"
+    if int(signal.get("confidence", 0)) < float(min_conf):
+        return False, "DCA setup score below threshold"
+    if mode != str(signal.get("requestedMode") or "").upper():
+        return False, "DCA strategy mode and confirmed setup do not match"
+    return True, "Confirmed same-direction entry setup: " + str(signal.get("patternName") or "")
 
 
 def is_position_at_breakeven(pos):
@@ -1162,7 +1142,7 @@ def main():
             mt5,
             active_symbol,
             raw_positions,
-            live_analysis,
+            entry_signal,
             cfg.get("positiveDcaConfig") or {"enabled": True, "maxLayers": 2, "stepDistance": 4.5, "lotMultiplier": 0.5},
             force_manual=bool(cfg.get("forceManual", False)),
             execute=True
@@ -1197,7 +1177,7 @@ def main():
         mt5,
         active_symbol,
         raw_positions,
-        live_analysis,
+        entry_signal,
         cfg.get("positiveDcaConfig") or {"enabled": False, "maxLayers": 2, "stepDistance": 4.5, "lotMultiplier": 0.5},
         force_manual=False,
         execute=False
