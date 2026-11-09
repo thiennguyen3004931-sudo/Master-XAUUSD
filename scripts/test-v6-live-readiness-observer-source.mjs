@@ -16,6 +16,12 @@ assert.doesNotMatch(host, /actions\/checkout|\bGITHUB_TOKEN\b|\bsecrets\.|\bcred
 assert.match(host, /V6_READINESS_READ_ONLY=TRUE/);
 assert.match(host, /V6_LIVE_READINESS_RESULT=BLOCKED_NOT_AUTHORIZED/);
 assert.match(host, /exit 2\b/);
+assert.match(host, /Get-NetTCPConnection -State Listen -LocalPort/);
+assert.match(host, /V6_OBSERVED_' \+ \$listener\.Tag \+ '_OWNER_CLASS=/);
+assert.match(host, /V6_OBSERVED_' \+ \$listener\.Tag \+ '_OWNER_V6_SCRIPT=/);
+assert.match(host, /\bUNAVAILABLE\b/);
+assert.match(host, /\bNOT_MATCHED\b/);
+assert.match(host, /xauusd-standalone-server\[\.\]mjs/);
 assert.match(host, /V6_VERIFIED_MT5_ACCOUNT_TYPE=NO/);
 assert.match(host, /V6_VERIFIED_DAILY_LOSS_KILL_SWITCH=NO/);
 assert.match(host, /V6_VERIFIED_OPERATING_SOURCE_SHA=NO/);

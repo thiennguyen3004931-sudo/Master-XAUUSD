@@ -77,6 +77,69 @@ jobs:
           Write-Host "V6_OBSERVED_LOCAL_BRIDGE_PORT_8765=$bridgePort"
           Write-Host "V6_OBSERVED_LOCAL_WEB_PORT_5717=$webPort"
 
+          # Identify the process owning each loopback listening port. No command
+          # line, executable path, environment variable, PID or secret is logged.
+          function Get-V6PortOwnerSummary {
+            param([int]$Port)
+            try {
+              $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop)
+              if ($listeners.Count -eq 0) {
+                return @{ Class = 'NONE'; V6Script = 'NO' }
+              }
+              $ownerIds = @($listeners | ForEach-Object { [int]$_.OwningProcess } |
+                Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+              $classes = @()
+              $nodeObserved = $false
+              $nodeLineReadable = $false
+              $v6Matched = $false
+              foreach ($ownerId in $ownerIds) {
+                $procInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $ownerId" -ErrorAction Stop
+                if ($null -eq $procInfo) { continue }
+                if ($procInfo.Name -eq 'node.exe') {
+                  $classes += 'NODE'
+                  $nodeObserved = $true
+                  if (-not [string]::IsNullOrWhiteSpace([string]$procInfo.CommandLine)) {
+                    $nodeLineReadable = $true
+                    if ([string]$procInfo.CommandLine -match 'xauusd-standalone-server[.]mjs') {
+                      $v6Matched = $true
+                    }
+                  }
+                } elseif ($procInfo.Name -in @('terminal64.exe', 'terminal.exe')) {
+                  $classes += 'MT5_TERMINAL'
+                } else {
+                  $classes += 'OTHER'
+                }
+              }
+              $uniqueClasses = @($classes | Sort-Object -Unique)
+              if ($uniqueClasses.Count -eq 0) {
+                return @{ Class = 'UNAVAILABLE'; V6Script = 'UNKNOWN' }
+              }
+              $ownerClass = if ($uniqueClasses.Count -eq 1) { $uniqueClasses[0] } else { 'MULTIPLE' }
+              $v6Status = if ($v6Matched) {
+                'MATCHED'
+              } elseif ($nodeObserved -and $nodeLineReadable) {
+                'NOT_MATCHED'
+              } elseif ($nodeObserved) {
+                'UNKNOWN'
+              } else {
+                'NO_NODE'
+              }
+              return @{ Class = $ownerClass; V6Script = $v6Status }
+            } catch {
+              return @{ Class = 'UNAVAILABLE'; V6Script = 'UNKNOWN' }
+            }
+          }
+          foreach ($listener in @(
+            @{ Port = 3711; Tag = 'API_3711' },
+            @{ Port = 5717; Tag = 'WEB_5717' },
+            @{ Port = 8765; Tag = 'BRIDGE_8765' }
+          )) {
+            $summary = Get-V6PortOwnerSummary -Port $listener.Port
+            Write-Host ('V6_OBSERVED_' + $listener.Tag + '_OWNER_CLASS=' + $summary.Class)
+            Write-Host ('V6_OBSERVED_' + $listener.Tag + '_OWNER_V6_SCRIPT=' + $summary.V6Script)
+          }
+
+
           $processLookupOk = $false
           $mt5Terminal = $false
           $v6Server = $false
