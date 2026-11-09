@@ -2674,7 +2674,14 @@ Branch : main
     function renderLiveMt5DataOnDashboard(data, liveBid, sym) {
       lastLiveMt5Payload = data;
       const slMode = document.getElementById("slTpModeSelect")?.value || "STRUCTURAL_6_8";
-      const la = data.liveAnalysis;
+      const la = data.entrySignal
+        ? {
+            ...data.liveAnalysis,
+            patternName: data.entrySignal.allowed ? data.entrySignal.patternName : "WAIT: " + data.entrySignal.reason,
+            signalSide: data.entrySignal.side,
+            confidence: data.entrySignal.confidence ?? 0
+          }
+        : data.liveAnalysis;
       const mtfScen = data.mtfAnalysis?.scenario15m;
       const openPos = Array.isArray(data.positions) ? data.positions : [];
       const recent = Array.isArray(data.recentTrades) ? data.recentTrades : [];
@@ -3086,7 +3093,7 @@ Branch : main
       if (recBox) {
         const totalV63 = Math.round((3420.50 + 2190.40 + 2540.80 + 645.00) * scaleLot);
         recBox.innerHTML =
-          `📊 <b>PHÂN TÍCH TỔNG HỢP &amp; ĐỀ XUẤT DỰA TRÊN SỐ LIỆU (186 MẪU CHUỖI LỆNH — KHỐI LƯỢNG ${curLot.toFixed(2)} LOT):</b><br/>` +
+          `📊 <b>MINH HỌA BẰNG DỮ LIỆU TĨNH — KHÔNG PHẢI BACKTEST MT5 ĐÃ KIỂM CHỨNG (186 MẪU CHUỖI LỆNH — KHỐI LƯỢNG ${curLot.toFixed(2)} LOT):</b><br/>` +
           `• <b>Kết luận 1 (Tăng tỷ lệ bất bại từ 58.8% lên 85.3%):</b> Nhờ quy tắc <b>SL cấu trúc 6–8 giá + Đạt R:R 1:1 tự kéo SL về Hòa vốn (BE)</b>, có tới <b>32 lệnh</b> khi thị trường quay đầu đã thoát tại Hòa vốn (+0.25$) thay vì bị dính SL như cơ chế cũ.<br/>` +
           `• <b>Kết luận 2 (Tăng biên độ thắng trung bình từ +8.2 giá lên +16.4 giá):</b> Kết hợp <b>Trailing cấu trúc M5</b> + <b>Chốt 50% tại cản H1 &amp; gồng cản H4</b> + <b>Khóa SL cách đỉnh 10 giá khi cây M15 biến động mạnh</b> giúp lợi nhuận của <b>Chế độ 1 (Tự động + Gồng Trend V6.3)</b> đạt <b>+$${(3420.50 * scaleLot).toLocaleString("en-US", { minimumFractionDigits: 2 })}</b> (cao gấp <b>3.05 lần</b> cơ chế cũ).<br/>` +
           `• <b>Đề xuất vận hành cho tài khoản #5201362 ($4,131.83):</b> Chọn <b>Chế độ 1 (Tự động Thông minh + Gồng Trend Cấu Trúc V6.3)</b> kết hợp <b>Bán Tự Động = BẬT</b> và <b>Phân bổ Lot = ${allocMode === "AUTO_RISK_PCT" ? riskPct + "% Vốn" : curLot.toFixed(2) + " Lot"}</b>.`;
