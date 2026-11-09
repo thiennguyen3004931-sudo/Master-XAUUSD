@@ -84,6 +84,27 @@ class TradeRulesTest(unittest.TestCase):
         self.assertEqual(plan["side"], "BUY")
         self.assertLess(plan["sl"], 4016.5)
 
+    def test_sideway_range_edge_uses_opposite_boundary_target(self):
+        epoch = 1794180000000
+        m15 = []
+        for i in range(60):
+            op = 4004.0 + (i % 10 - 5) * 1.0
+            m15.append([op, op + 1.0, op - 1.0, op + 0.2, epoch + i * 900000])
+        m15[-2] = [3998.8, 3999.8, 3997.7, 3999.4, m15[-2][4]]
+        m5 = []
+        for i in range(60):
+            op = 3998.3 + (i % 3) * 0.1
+            m5.append([op, op + 0.7, op - 0.7, op + 0.15, epoch + i * 300000])
+        m5[-3] = [3998.5, 3999.0, 3998.2, 3998.7, m5[-3][4]]
+        m5[-2] = [3998.8, 3999.4, 3998.5, 3999.2, m5[-2][4]]
+        h1 = [[4005, 4006, 4004, 4005 + (i % 2) * 0.1, epoch + i * 3600000] for i in range(60)]
+        h4 = [[4005, 4006, 4004, 4005, epoch + i * 14400000] for i in range(60)]
+        plan = evaluate_entry(m5, m15, h1, h4, 3998.9, 3999.0, "BOT_2_SIDEWAY")
+        self.assertTrue(plan["allowed"], plan)
+        self.assertEqual(plan["side"], "BUY")
+        self.assertGreater(plan["tp"], 3999.0)
+        self.assertLess(plan["sl"], 3999.0)
+
     def test_forming_candle_does_not_change_entry(self):
         m5, m15, h1, h4 = self.fixtures()
         before = evaluate_entry(m5, m15, h1, h4, 4018.5, 4018.7, "BOT_1_TREND")
