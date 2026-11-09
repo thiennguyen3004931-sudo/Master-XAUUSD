@@ -702,7 +702,9 @@ def manage_trend_and_manual_positions(mt5, active_symbol, pos_list, candles_m5, 
     }
 
 def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V6"):
-    side = str(order_cfg.get("side") or "BUY").upper()
+    side = str(order_cfg.get("side") or "").strip().upper()
+    if side not in ("BUY", "SELL"):
+        return {"ok": False, "message": "Explicit BUY or SELL direction required"}
     try:
         volume = float(order_cfg.get("volume") or 0.01)
     except (TypeError, ValueError):
@@ -779,8 +781,16 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
     max_total_pct = max(0.0, min(2.0, float(order_cfg.get("maxPortfolioRiskPercent", 1.5))))
     if new_risk > equity * per_trade_pct / 100:
         return {"ok": False, "message": "Rejected: requested lot exceeds per-order equity risk cap"}
+    # None denotes broker readback failure, not an empty portfolio.
+    # An unverifiable portfolio must never bypass the total-risk gate.
+    try:
+        existing_positions = mt5.positions_get()
+    except Exception:
+        existing_positions = None
+    if existing_positions is None:
+        return {"ok": False, "message": "Cannot verify broker portfolio positions; new order blocked"}
     open_risk = 0.0
-    for existing in (mt5.positions_get() or []):
+    for existing in existing_positions:
         old_sl = float(getattr(existing, "sl", 0) or 0)
         if old_sl <= 0:
             return {"ok": False, "message": "An existing position has no SL; new orders blocked"}

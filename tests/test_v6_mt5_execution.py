@@ -133,6 +133,41 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(result.get("pending"))
 
+    def test_order_without_explicit_side_must_not_default_to_buy(self):
+        mt5 = MockBroker()
+        for side in (None, "", "WAIT", "HOLD"):
+            result = engine.execute_order(mt5, "XAUUSD.G", {
+                "side": side, "volume": 0.02,
+                "slDistance": 6.8, "tpDistance": 16,
+            })
+            self.assertFalse(result["ok"])
+        self.assertEqual(mt5.sent, [])
+
+    def test_portfolio_readback_unavailable_fails_closed_before_order_send(self):
+        class UnavailablePortfolioBroker(MockBroker):
+            def positions_get(self, *args, **kwargs):
+                return None
+        mt5 = UnavailablePortfolioBroker()
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "BUY", "volume": 0.02,
+            "slDistance": 6.8, "tpDistance": 16,
+        })
+        self.assertFalse(result["ok"])
+        self.assertIn("portfolio", result["message"].lower())
+        self.assertEqual(mt5.sent, [])
+
+    def test_portfolio_readback_exception_fails_closed(self):
+        class BrokenPortfolioBroker(MockBroker):
+            def positions_get(self, *args, **kwargs):
+                raise RuntimeError("broker unavailable")
+        mt5 = BrokenPortfolioBroker()
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "SELL", "volume": 0.02,
+            "slDistance": 6.8, "tpDistance": 16,
+        })
+        self.assertFalse(result["ok"])
+        self.assertEqual(mt5.sent, [])
+
     def test_unprotected_existing_position_blocks_new_risk(self):
         mt5 = MockBroker()
         mt5.positions = [SimpleNamespace(sl=0, type=0, symbol="XAUUSD.G", volume=0.01, price_open=4000)]

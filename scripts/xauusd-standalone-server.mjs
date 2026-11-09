@@ -14,6 +14,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { spawn, execFile, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { parseRequiredTicket, parseOptionalBoolean } from "./v6-api-input-guards.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1140,7 +1141,15 @@ async function handleApiRequest(req, res) {
   // API BẬT/TẮT & CẤU HÌNH DCA DƯƠNG THUẬN XU HƯỚNG (POSITIVE DCA)
   if (pathname === "/api/v1/mt5/positive-dca" && req.method === "POST") {
     const body = await readJsonBody(req);
-    if (body.enabled !== undefined) positiveDcaConfig.enabled = Boolean(body.enabled);
+    let requestedEnabled, executeNow;
+    try {
+      requestedEnabled = parseOptionalBoolean(body.enabled, "dca.enabled");
+      executeNow = parseOptionalBoolean(body.executeNow, "dca.executeNow");
+    } catch {
+      sendJson(res, 400, { error: "INVALID_BOOLEAN", message: "enabled/executeNow phải là boolean true/false." });
+      return;
+    }
+    if (requestedEnabled !== undefined) positiveDcaConfig.enabled = requestedEnabled;
     if (body.maxLayers !== undefined) positiveDcaConfig.maxLayers = Math.max(1, Math.min(5, Number(body.maxLayers)));
     if (body.stepDistance !== undefined) positiveDcaConfig.stepDistance = Math.max(1.0, Number(body.stepDistance));
     if (body.lotMultiplier !== undefined) positiveDcaConfig.lotMultiplier = Math.max(0.25, Math.min(1.5, Number(body.lotMultiplier)));
@@ -1150,19 +1159,19 @@ async function handleApiRequest(req, res) {
       : "ĐÃ TẮT chế độ DCA Dương Thuận Xu Hướng (Chỉ đánh đơn lệnh).";
 
     recordSyncAction(body.sourceDevice || "WEB", positiveDcaConfig.lastStatusText);
-    const actionType = body.executeNow ? "dca_plus" : "probe";
+    const actionType = executeNow === true ? "dca_plus" : "probe";
     const probe = await invokeMt5PythonEngine(
       {
         action: actionType,
         positiveDcaConfig,
-        forceManual: Boolean(body.executeNow),
+        forceManual: executeNow === true,
       },
       true
     );
     const payload = buildStatusPayload(probe);
     sendJson(res, 200, {
       ...payload,
-      dcaMessage: body.executeNow
+      dcaMessage: executeNow === true
         ? probe?.actionResult?.message || positiveDcaConfig.lastStatusText
         : positiveDcaConfig.lastStatusText,
     });
@@ -1334,10 +1343,12 @@ async function handleApiRequest(req, res) {
 
   if (pathname === "/api/v1/mt5/close" && req.method === "POST") {
     const body = await readJsonBody(req);
-    const ticket = Number(body.ticket);
-    if (!Number.isSafeInteger(ticket) || ticket <= 0 || body.ticket === null || body.ticket === undefined) {
+    let ticket;
+    try {
+      ticket = parseRequiredTicket(body.ticket);
+    } catch {
       sendJson(res, 400, {
-        closeResult: { ok: false, message: "Phải chọn ticket hợp lệ để đóng một vị thế; không cho phép đóng hàng loạt ngầm định." },
+        closeResult: { ok: false, message: "Phải chọn ticket nguyên dương chính xác để đóng một vị thế." },
       });
       return;
     }
@@ -1352,7 +1363,16 @@ async function handleApiRequest(req, res) {
 
   if (pathname === "/api/v1/mt5/breakeven" && req.method === "POST") {
     const body = await readJsonBody(req);
-    const probe = await invokeMt5PythonEngine({ action: "breakeven", ticket: body.ticket || null }, true);
+    let ticket;
+    try {
+      ticket = parseRequiredTicket(body.ticket);
+    } catch {
+      sendJson(res, 400, {
+        beResult: { ok: false, message: "Phải chọn ticket chính xác để dời BE; không dời hàng loạt ngầm định." },
+      });
+      return;
+    }
+    const probe = await invokeMt5PythonEngine({ action: "breakeven", ticket }, true);
     const payload = buildStatusPayload(probe);
     sendJson(res, 200, {
       ...payload,
@@ -1363,14 +1383,22 @@ async function handleApiRequest(req, res) {
 
   if (pathname === "/api/v1/mt5/auto-bot" && req.method === "POST") {
     const body = await readJsonBody(req);
-    if (body.enabled !== undefined) autoBotState.enabled = Boolean(body.enabled);
+    let requestedEnabled, adoptManual;
+    try {
+      requestedEnabled = parseOptionalBoolean(body.enabled, "autoBot.enabled");
+      adoptManual = parseOptionalBoolean(body.semiAutoAdoptManual, "autoBot.semiAutoAdoptManual");
+    } catch {
+      sendJson(res, 400, { error: "INVALID_BOOLEAN", message: "enabled/semiAutoAdoptManual phải là boolean true/false." });
+      return;
+    }
+    if (requestedEnabled !== undefined) autoBotState.enabled = requestedEnabled;
     if (body.volume !== undefined) autoBotState.volume = Math.max(0.01, Number(body.volume));
     if (body.slDistance !== undefined) autoBotState.slDistance = Math.max(1, Number(body.slDistance));
     if (body.tpDistance !== undefined) autoBotState.tpDistance = Math.max(2, Number(body.tpDistance));
     if (body.minConfidence !== undefined) autoBotState.minConfidence = Math.max(60, Number(body.minConfidence));
     if (body.strategyMode !== undefined) autoBotState.strategyMode = String(body.strategyMode);
     if (body.slMode !== undefined) trendManagementConfig.slMode = String(body.slMode);
-    if (body.semiAutoAdoptManual !== undefined) trendManagementConfig.semiAutoAdoptManual = Boolean(body.semiAutoAdoptManual);
+    if (adoptManual !== undefined) trendManagementConfig.semiAutoAdoptManual = adoptManual;
     if (body.m15SpikeTrailDist !== undefined) trendManagementConfig.m15SpikeTrailDist = Math.max(5, Number(body.m15SpikeTrailDist));
     autoBotState.lastLog = autoBotState.enabled
       ? `ĐÃ BẬT BOT TỰ ĐỘNG (${currentAccountConfig.brokerSymbol || "XAUUSD.G"} · Lot ${autoBotState.volume} · DCA Dương: ${positiveDcaConfig.enabled ? "BẬT" : "TẮT"}).`

@@ -13,8 +13,37 @@ test("manual V6 order requires an explicit BUY/SELL direction; never defaults to
   assert.doesNotMatch(server, /side:\s*body\.side\s*\|\|\s*["']BUY["']/);
 });
 
-test("V6 close web API requires a positive safe integer ticket", () => {
-  assert.match(server, /Number\.isSafeInteger\(ticket\)/);
-  assert.match(server, /ticket <= 0/);
+test("V6 close and BE both require strict explicit tickets", () => {
+  assert.match(server, /parseRequiredTicket\(body\.ticket\)/);
   assert.match(server, /action: "close", ticket/);
+  assert.match(server, /action: "breakeven", ticket/);
+  assert.doesNotMatch(server, /ticket: body\.ticket \|\| null/);
+});
+
+test("DCA and auto-bot do not coerce strings into enabled trading", () => {
+  assert.match(server, /parseOptionalBoolean\(body\.executeNow/);
+  assert.match(server, /parseOptionalBoolean\(body\.enabled/);
+  assert.match(server, /parseOptionalBoolean\(body\.semiAutoAdoptManual/);
+  assert.match(server, /executeNow === true \? "dca_plus" : "probe"/);
+  assert.doesNotMatch(server, /Boolean\(body\.enabled\)/);
+  assert.doesNotMatch(server, /Boolean\(body\.executeNow\)/);
+});
+
+import { parseRequiredTicket, parseOptionalBoolean } from "../scripts/v6-api-input-guards.mjs";
+
+test("ticket parser permits only canonical positive safe integers", () => {
+  assert.equal(parseRequiredTicket(42), 42);
+  assert.equal(parseRequiredTicket("4201"), 4201);
+  for (const input of [undefined, null, true, false, 0, -1, 1.5, "0", "01", "1.0", "1e3", " 7", "7 ", "-7", "", [], {}, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => parseRequiredTicket(input), /EXPLICIT_POSITIVE_TICKET_REQUIRED/);
+  }
+});
+
+test("trading switches only accept actual booleans", () => {
+  assert.equal(parseOptionalBoolean(undefined), undefined);
+  assert.equal(parseOptionalBoolean(false), false);
+  assert.equal(parseOptionalBoolean(true), true);
+  for (const input of [null, 0, 1, "true", "false", "", [], {}]) {
+    assert.throws(() => parseOptionalBoolean(input, "enabled"), /BOOLEAN_REQUIRED/);
+  }
 });
