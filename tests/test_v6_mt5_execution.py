@@ -3,6 +3,7 @@ import importlib.util
 import sys
 import time
 import unittest
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,7 @@ class MockBroker:
     ORDER_FILLING_FOK = 0
     ORDER_TIME_GTC = 0
     TRADE_ACTION_DEAL = 1
+    TRADE_ACTION_SLTP = 6
     TRADE_RETCODE_DONE = 10009
 
     def __init__(self):
@@ -46,10 +48,22 @@ class MockBroker:
         return (entry - stop) * lot * 100.0
 
     def positions_get(self, *args, **kwargs):
+        ticket = kwargs.get("ticket")
+        if ticket is not None:
+            return [p for p in self.positions if int(getattr(p, "ticket", 0)) == int(ticket)]
+        symbol = kwargs.get("symbol")
+        if symbol is not None:
+            return [p for p in self.positions if str(p.symbol) == str(symbol)]
         return self.positions
 
     def order_send(self, request):
         self.sent.append(request)
+        if request["action"] == self.TRADE_ACTION_SLTP:
+            for p in self.positions:
+                if p.ticket == request["position"]:
+                    p.sl = request["sl"]
+                    p.tp = request["tp"]
+            return SimpleNamespace(retcode=10009, order=123)
         return SimpleNamespace(retcode=10009, order=123, price=request["price"])
 
 
@@ -91,6 +105,52 @@ class ExecutionRiskTest(unittest.TestCase):
         })
         self.assertFalse(result["ok"])
         self.assertEqual(len(mt5.sent), 0)
+
+    def test_sl_modification_broker_readback_and_monotonic(self):
+        mt5 = MockBroker()
+        position = SimpleNamespace(
+            symbol="XAUUSD.G", ticket=202, type=0, price_open=3990,
+            price_current=3997, sl=3983.0, tp=4020.0, magic=270715
+        )
+        mt5.positions = [position]
+        update = engine.modify_position_sl_tp(mt5, position, 3990.25, 4020.0, "BE")
+        self.assertTrue(update["ok"], update)
+        self.assertGreaterEqual(position.sl, 3990.25)
+        previous_sent = len(mt5.sent)
+        denied = engine.modify_position_sl_tp(mt5, position, 3988, 4020.0, "Invalid widen")
+        self.assertFalse(denied["ok"])
+        self.assertEqual(len(mt5.sent), previous_sent)
+        self.assertAlmostEqual(position.sl, 3990.25)
+
+    def test_sl_broker_ack_without_readback_must_not_claim_success(self):
+        class AckWithoutReadback(MockBroker):
+            def order_send(self, req):
+                self.sent.append(req)
+                return SimpleNamespace(retcode=10009)
+        mt5 = AckWithoutReadback()
+        p = SimpleNamespace(symbol="XAUUSD.G", ticket=303, type=0, price_open=3990,
+                            price_current=3997, sl=3983, tp=4020, magic=270715)
+        mt5.positions = [p]
+        result = engine.modify_position_sl_tp(mt5, p, 3990.25, 4020, "Unconfirmed BE")
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["changed"])
+
+    def test_operator_be_never_loosens_profitable_sl(self):
+        mt5 = MockBroker()
+        p = SimpleNamespace(symbol="XAUUSD.G", ticket=304, type=0, price_open=3990,
+                            price_current=3997, sl=3995, tp=4020, magic=270715)
+        mt5.positions = [p]
+        result = engine.move_sl_to_breakeven(mt5, 304)
+        self.assertTrue(result["ok"])
+        self.assertAlmostEqual(p.sl, 3995)
+        self.assertEqual(mt5.sent, [])
+
+    def test_auto_sideway_blocks_pyramiding(self):
+        signal = {"allowed": True, "side": "BUY", "confidence": 88,
+                  "strategyMode": "BOT_2_SIDEWAY", "requestedMode": "AUTO_REGIME"}
+        ok, why = engine.check_bot_signal_for_mode(signal, "AUTO_REGIME", "BUY", 85)
+        self.assertFalse(ok)
+        self.assertIn("sideway", why.lower())
 
     def test_sideway_dca_prohibited(self):
         signal = {
