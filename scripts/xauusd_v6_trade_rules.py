@@ -133,7 +133,7 @@ def _target(side, entry, sl, h1, h4, min_rr=1.6):
     return round(target, 2) if entry - target >= min_rr * risk else None
 
 
-def _plan(side, mode, label, score, reason, entry, reference, vol, h1, h4, candle_ts, 
+def _plan(side, mode, label, score, reason, entry, reference, vol, h1, h4, candle_ts,
           target_override=None, minimum_rr=1.6):
     sl = _stop_price(side, entry, reference, vol)
     if sl is None:
