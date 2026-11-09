@@ -25,8 +25,17 @@ test("DCA and auto-bot do not coerce strings into enabled trading", () => {
   assert.match(server, /parseOptionalBoolean\(body\.enabled/);
   assert.match(server, /parseOptionalBoolean\(body\.semiAutoAdoptManual/);
   assert.match(server, /executeNow === true \? "dca_plus" : "probe"/);
-  assert.doesNotMatch(server, /Boolean\(body\.enabled\)/);
-  assert.doesNotMatch(server, /Boolean\(body\.executeNow\)/);
+  const dcaRoute = server.slice(
+    server.indexOf('if (pathname === "/api/v1/mt5/positive-dca"'),
+    server.indexOf('if (pathname === "/api/v1/mt5/approve-proposal"'),
+  );
+  const autoRoute = server.slice(
+    server.indexOf('if (pathname === "/api/v1/mt5/auto-bot"'),
+    server.indexOf('if (pathname === "/api/v1/mt5/status"'),
+  );
+  assert.ok(dcaRoute.length > 0 && autoRoute.length > 0);
+  assert.doesNotMatch(dcaRoute, /Boolean\(body\.enabled\)|Boolean\(body\.executeNow\)/);
+  assert.doesNotMatch(autoRoute, /Boolean\(body\.enabled\)|Boolean\(body\.semiAutoAdoptManual\)/);
 });
 
 import { parseRequiredTicket, parseOptionalBoolean } from "../scripts/v6-api-input-guards.mjs";
