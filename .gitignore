@@ -7,7 +7,7 @@ coverage/
 .ignored_node_modules/
 
 # Local environment and secrets
-# Never track local MT5 account state, LIVE arm metadata, or Telegram tokens.
+# Never commit local MT5 accounts, LIVE arm sessions or Telegram tokens.
 /.runtime/
 .env
 .env.*

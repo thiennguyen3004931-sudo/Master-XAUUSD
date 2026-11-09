@@ -1,0 +1,44 @@
+name: V6 Self-hosted Windows runner preflight (read-only)
+on:
+  pull_request:
+    paths:
+      - .github/workflows/v6-self-hosted-runner-preflight.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-runner-preflight:
+    # Only the repository's own PRs may request local self-hosted diagnostics.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 5
+    steps:
+      - name: Probe tool paths under the runner service account (no checkout, no broker connection)
+        shell: cmd
+        run: |
+          @echo off
+          echo V6_RUNNER_PREFLIGHT_READ_ONLY=TRUE
+          echo RUNNER_NAME=%RUNNER_NAME%
+          echo RUNNER_OS=%RUNNER_OS%
+          echo RUNNER_ARCH=%RUNNER_ARCH%
+          set "PREFLIGHT_FAILED=0"
+          echo CHECK_POWERSHELL_7_PATH_BEGIN
+          where pwsh
+          if errorlevel 1 (
+            echo V6_ERROR=POWERSHELL_7_NOT_ON_RUNNER_SERVICE_PATH
+            set "PREFLIGHT_FAILED=1"
+          )
+          if exist "C:\Program Files\PowerShell\7\pwsh.exe" (echo POWERSHELL_7_DEFAULT_INSTALL=FOUND) else (echo POWERSHELL_7_DEFAULT_INSTALL=MISSING)
+          echo CHECK_WINDOWS_POWERSHELL_PATH_BEGIN
+          where powershell.exe
+          if errorlevel 1 exit /b 2
+          echo CHECK_EFFECTIVE_EXECUTION_POLICY_BEGIN
+          powershell.exe -NoLogo -NoProfile -NonInteractive -Command "Get-ExecutionPolicy -List | Format-Table -AutoSize; if ((Get-ExecutionPolicy) -eq 'Restricted') { Write-Host 'V6_ERROR=WINDOWS_POWERSHELL_SCRIPT_POLICY_RESTRICTED'; exit 10 }"
+          if errorlevel 1 set "PREFLIGHT_FAILED=1"
+          if "%PREFLIGHT_FAILED%"=="1" (
+            echo V6_RUNNER_PREFLIGHT_RESULT=FAIL_FIX_RUNNER_HOST
+            exit /b 1
+          )
+          echo V6_RUNNER_PREFLIGHT_RESULT=PASS

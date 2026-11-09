@@ -1,6 +1,27 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import test from "node:test";
+import path from "node:path";
+import { tmpdir } from "node:os";
+import test, { after } from "node:test";
+
+// These tests assert DEMO account behavior, not whichever profile is tracked in .runtime.
+// Keep tests hermetic; do not weaken production broker/account matching gates.
+const previousRuntimeRoot = process.env.PHASE7C_RUNTIME_ROOT;
+const isolatedRuntimeRoot = fs.mkdtempSync(path.join(tmpdir(), "phase7c-decision-monitor-"));
+process.env.PHASE7C_RUNTIME_ROOT = isolatedRuntimeRoot;
+fs.writeFileSync(path.join(isolatedRuntimeRoot, "phase7c-account-mode.json"), JSON.stringify({
+  version: 1,
+  accountMode: "DEMO",
+  liveExecutionEnabled: false,
+  envFile: null,
+  updatedBy: "offline-test-fixture"
+}), "utf8");
+after(() => {
+  if (previousRuntimeRoot === undefined) delete process.env.PHASE7C_RUNTIME_ROOT;
+  else process.env.PHASE7C_RUNTIME_ROOT = previousRuntimeRoot;
+  fs.rmSync(isolatedRuntimeRoot, { recursive: true, force: true });
+});
+
 import {
   buildPhase7CDecisionMonitor,
   formatPhase7CDecisionMonitorForMt5,

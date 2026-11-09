@@ -14,6 +14,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { spawn, execFile, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { parseRequiredTicket, parseOptionalBoolean } from "./v6-api-input-guards.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,20 +31,26 @@ const DIRECT_PROBE_SCRIPT = path.join(ROOT_DIR, "scripts", "mt5-direct-probe.py"
 
 fs.mkdirSync(RUNTIME_DIR, { recursive: true });
 
-function freeStalePortsOnWindows() {
-  if (process.platform !== "win32") return;
-  const myPid = process.pid;
-  try {
-    const cmd = `powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort ${WEB_PORT},${API_PORT} -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -ne ${myPid} } | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }"`;
-    execSync(cmd, { stdio: "ignore", timeout: 5000 });
-  } catch {
-    // ignore
-  }
+// Do not kill unrelated Windows processes to reclaim ports. In particular, a
+// self-hosted CI runner and MT5 must never be disrupted by starting this server.
+// A port conflict is a fatal startup error, not permission to Stop-Process.
+
+// Saved account profiles never automatically re-arm LIVE after a process restart.
+let currentAccountConfig = { ...loadSavedAccountConfig(), liveArmed: false };
+const CONTROL_TOKEN = String(process.env.ZIQ_V6_CONTROL_TOKEN || "").trim();
+const ENTRY_DEDUPE_FILE = path.join(RUNTIME_DIR, "v6-entry-dedupe.json");
+let previousEntryKey = "";
+try { previousEntryKey = JSON.parse(fs.readFileSync(ENTRY_DEDUPE_FILE, "utf8")).key || ""; } catch {}
+function persistEntryKey(key) {
+  previousEntryKey = key;
+  fs.writeFileSync(ENTRY_DEDUPE_FILE, JSON.stringify({ key, timestamp: Date.now() }), "utf8");
 }
-
-freeStalePortsOnWindows();
-
-let currentAccountConfig = loadSavedAccountConfig();
+function controlAuthorized(req) {
+  if (!CONTROL_TOKEN) return false;
+  const supplied = Buffer.from(String(req.headers["x-v6-control-token"] || ""), "utf8");
+  const expected = Buffer.from(CONTROL_TOKEN, "utf8");
+  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+}
 
 let positiveDcaConfig = {
   enabled: false,
@@ -66,7 +73,7 @@ let trendManagementConfig = {
   enableM5StructuralTrail: true,
   m15SpikeTrailDist: 10.0,
   enablePartialCloseAtSr: true,
-  semiAutoAdoptManual: true,
+  semiAutoAdoptManual: false, // Manual positions are never adopted without explicit opt-in.
 };
 let lastSentScenarioSignature = "";
 
@@ -198,6 +205,35 @@ let strategyProposals = [
 
 const TELEGRAM_CONFIG_FILE = path.join(RUNTIME_DIR, "telegram-config.json");
 const SHARED_STATE_FILE = path.join(RUNTIME_DIR, "shared-bot-state.json");
+// Restore user parameters only. NEVER restore automatic trading or DCA authorization.
+try {
+  const saved = JSON.parse(fs.readFileSync(SHARED_STATE_FILE, "utf8"));
+  const allowedModes = new Set([
+    "AUTO_REGIME", "SEMI_AUTO_TREND", "BOT_1_TREND", "BOT_2_SIDEWAY",
+    "BOT_3_SWEEP", "BOT_4_SWEEP_DCA_PLUS", "LIQUIDITY_SWEEP_AND_TREND"
+  ]);
+  const oldBot = saved?.autoBotState || {};
+  const oldDca = saved?.positiveDcaConfig || {};
+  if (allowedModes.has(oldBot.strategyMode)) autoBotState.strategyMode = oldBot.strategyMode;
+  for (const field of ["volume", "slDistance", "tpDistance", "minConfidence"]) {
+    if (Number.isFinite(Number(oldBot[field])) && Number(oldBot[field]) > 0) {
+      autoBotState[field] = Number(oldBot[field]);
+    }
+  }
+  if (Number.isInteger(Number(oldDca.maxLayers)) && Number(oldDca.maxLayers) >= 1 && Number(oldDca.maxLayers) <= 3) {
+    positiveDcaConfig.maxLayers = Number(oldDca.maxLayers);
+  }
+  if (Number.isFinite(Number(oldDca.stepDistance)) && Number(oldDca.stepDistance) > 0) {
+    positiveDcaConfig.stepDistance = Number(oldDca.stepDistance);
+  }
+  if (Number.isFinite(Number(oldDca.lotMultiplier)) && Number(oldDca.lotMultiplier) > 0 && Number(oldDca.lotMultiplier) <= 1) {
+    positiveDcaConfig.lotMultiplier = Number(oldDca.lotMultiplier);
+  }
+} catch {}
+autoBotState.enabled = false;
+autoBotState.lastActionTime = 0;
+positiveDcaConfig.enabled = false;
+positiveDcaConfig.lastDcaTime = 0;
 
 let syncRevision = 1;
 let lastSyncAction = {
@@ -224,7 +260,7 @@ function loadTelegramConfig() {
   } catch {}
   return {
     enabled: true,
-    botToken: process.env.ZIQ_TELEGRAM_BOT_TOKEN || ("8957841283:AAGSp1KebI9" + "Axu9G5N-tQJhx-969nyAJRIQ"),
+    botToken: process.env.ZIQ_TELEGRAM_BOT_TOKEN || "",
     chatId: process.env.ZIQ_TELEGRAM_CHAT_ID || "1629602548",
     notifyOrders: true,
     notifyMtf15m: false,
@@ -256,6 +292,8 @@ const BOT_MODE_NAMES = {
   SEMI_AUTO_TREND: "2. Bán Tự Động (Bạn vào lệnh tay — Bot tự nuôi Trend V6.3)",
   BOT_1_TREND: "3. Chỉ đánh Sóng Trend & Quét Thanh Khoản (Gồng cản H1/H4)",
   BOT_2_SIDEWAY: "4. Chỉ đánh Sideway Biên Cung/Cầu (Khóa DCA Dương)",
+  BOT_3_SWEEP: "5. Liquidity Sweep + M5 confirmation (single entry)",
+  BOT_4_SWEEP_DCA_PLUS: "6. Liquidity Sweep + optional positive DCA",
 };
 
 function getActiveBotDisplayName() {
@@ -436,12 +474,12 @@ function loadSavedAccountConfig() {
     // ignore
   }
   return {
-    accountMode: "LIVE",
+    accountMode: "DEMO",
     login: "5201362",
     server: "DBG Market Limited",
     brokerSymbol: "XAUUSD.G",
     terminalPath: "",
-    liveArmed: true,
+    liveArmed: false,
     riskPercent: 0.8,
     fixedLot: 0.12,
     connectedAt: Date.now(),
@@ -510,7 +548,7 @@ function resolveRealPythonOnWindows() {
   return cachedPythonCmd;
 }
 
-function invokeMt5PythonEngine(extraPayload = {}, force = false) {
+function invokeMt5PythonEngineDirect(extraPayload = {}, force = false) {
   const isProbeOnly = !extraPayload.action || extraPayload.action === "probe";
   const now = Date.now();
   if (isProbeOnly && !force && lastDirectProbeSnapshot && now - lastDirectProbeTime < 2200) {
@@ -524,9 +562,14 @@ function invokeMt5PythonEngine(extraPayload = {}, force = false) {
     server: currentAccountConfig.server,
     brokerSymbol: currentAccountConfig.brokerSymbol || "XAUUSD.G",
     terminalPath: currentAccountConfig.terminalPath || "",
-    autoManageBe: true,
+    autoManageBe: false,
     trendManagementConfig: { ...trendManagementConfig, useStructuralSl68: trendManagementConfig.slMode === 'STRUCTURAL_6_8' },
-    positiveDcaConfig: { ...positiveDcaConfig, useStructuralSl68: trendManagementConfig.slMode === 'STRUCTURAL_6_8', slDistance: autoBotState.slDistance, tpDistance: autoBotState.tpDistance },
+    positiveDcaConfig: { ...positiveDcaConfig, useStructuralSl68: trendManagementConfig.slMode === "STRUCTURAL_6_8", slDistance: autoBotState.slDistance, tpDistance: autoBotState.tpDistance },
+    strategyMode: autoBotState.strategyMode,
+    minConfidence: autoBotState.minConfidence,
+    maxRiskPercent: 1.0,
+    maxPortfolioRiskPercent: 1.5,
+    liveAuthorized: false, // Fail closed: LIVE orders need a separate verified activation implementation.
     ...extraPayload,
   });
 
@@ -577,11 +620,29 @@ function invokeMt5PythonEngine(extraPayload = {}, force = false) {
   if (isProbeOnly) probeInFlight = promise;
   return promise;
 }
+// All broker-mutating actions are serialized across Web requests and monitor ticks.
+let brokerMutationTail = Promise.resolve();
+function invokeMt5PythonEngine(extraPayload = {}, force = false) {
+  const action = extraPayload.action || "probe";
+  if (!["order", "dca_plus", "manage_positions", "close", "breakeven"].includes(action)) {
+    return invokeMt5PythonEngineDirect(extraPayload, force);
+  }
+  const pending = brokerMutationTail.then(() => invokeMt5PythonEngineDirect(extraPayload, force));
+  brokerMutationTail = pending.catch(() => null);
+  return pending;
+}
 
 // Vòng lặp Giám Sát Lệnh, Nuôi Lệnh Cấu Trúc M5, Phát Hiện Lệnh Đóng & Chạy Bot Tự Động mỗi 6 giây
+let v6MonitorBusy = false;
 setInterval(async () => {
+  if (v6MonitorBusy) return;
+  v6MonitorBusy = true;
   try {
+    const management = await invokeMt5PythonEngine({ action: "manage_positions" }, true);
     const snap = await invokeMt5PythonEngine({ action: "probe" }, true);
+    if (management?.trendManagementStatus && snap) {
+      snap.trendManagementStatus = management.trendManagementStatus;
+    }
     if (!snap || !snap.connected) return;
 
     const openPos = Array.isArray(snap.openPositions) ? snap.openPositions : [];
@@ -659,6 +720,16 @@ setInterval(async () => {
           },
           true
         );
+        if (dcaSnap?.actionResult?.submitted && !dcaSnap?.actionResult?.ok) {
+          // A pending or partially filled DCA may already exist at MT5.
+          // Disable automatic retries until an operator reconciles the broker.
+          positiveDcaConfig.enabled = false;
+          positiveDcaConfig.lastDcaTime = Date.now();
+          positiveDcaConfig.lastStatusText = "DCA TẠM KHÓA: broker đã nhận lệnh nhưng khớp chưa xác minh. Kiểm tra MT5 trước khi bật lại.";
+          autoBotState.lastLog = positiveDcaConfig.lastStatusText;
+          recordSyncAction("AUTO_BOT", positiveDcaConfig.lastStatusText);
+          return;
+        }
         if (dcaSnap?.actionResult?.ok) {
           positiveDcaConfig.lastDcaTime = Date.now();
           positiveDcaConfig.lastStatusText = `[DCA DƯƠNG ĐÃ NHỒI LỆNH] ${dcaSnap.actionResult.message}`;
@@ -679,20 +750,31 @@ setInterval(async () => {
 
     // 2. Nếu chưa có lệnh mở và Bot Tự Động đang BẬT (Không tự vào lệnh mới nếu đang ở chế độ SEMI_AUTO_TREND chờ người dùng vào tay)
     if (openPos.length === 0 && autoBotState.enabled && autoBotState.strategyMode !== "SEMI_AUTO_TREND") {
-      const analysis = snap.liveAnalysis;
-      if (!analysis || analysis.signalSide === "WAIT") return;
-      if (Number(analysis.confidence || 0) < autoBotState.minConfidence) {
-        autoBotState.lastLog = `Đang quét ${snap.brokerSymbol}: '${analysis.patternName}' (${analysis.confidence}%) chưa đạt ngưỡng ${autoBotState.minConfidence}%.`;
+      const analysis = snap.entrySignal;
+      if (!analysis?.allowed || !["BUY", "SELL"].includes(analysis.side)) {
+        autoBotState.lastLog = "WAIT: " + (analysis?.reason || "No valid setup");
         return;
       }
+      if (Number(analysis.confidence || 0) < autoBotState.minConfidence) return;
+      const entryKey = [
+        snap.accountLogin, autoBotState.strategyMode,
+        analysis.side, analysis.closedM15Time
+      ].join("|");
+      if (previousEntryKey === entryKey) return;
       if (Date.now() - autoBotState.lastActionTime < 15 * 60 * 1000) return;
+      // Persist before the broker call; no second order on a lost response/restart.
+      persistEntryKey(entryKey);
       autoBotState.lastActionTime = Date.now();
-      const entryReasonText = `${analysis.patternName} (${analysis.confidence}%) — ${analysis.reason || "Đồng thuận xu hướng H4/H1/M15"}`;
+      const entryReasonText = analysis.reason || analysis.patternName;
       const orderSnap = await invokeMt5PythonEngine(
         {
           action: "order",
-          side: analysis.signalSide,
+          side: analysis.side,
           volume: autoBotState.volume,
+          strategyMode: autoBotState.strategyMode,
+          minConfidence: autoBotState.minConfidence,
+          closedM15Time: analysis.closedM15Time,
+          manualOrder: false,
           slDistance: autoBotState.slDistance,
           tpDistance: autoBotState.tpDistance,
           slMode: trendManagementConfig.slMode,
@@ -702,6 +784,12 @@ setInterval(async () => {
         },
         true
       );
+      if (orderSnap?.actionResult?.submitted && !orderSnap?.actionResult?.ok) {
+        autoBotState.enabled = false;
+        autoBotState.lastLog = "AUTO BOT TẠM KHÓA: broker đã nhận lệnh nhưng chưa xác minh khớp đầy đủ. Kiểm tra MT5 trước khi bật lại.";
+        recordSyncAction("AUTO_BOT", autoBotState.lastLog);
+        return;
+      }
       if (orderSnap?.actionResult?.ok) {
         autoBotState.lastLog = `[AUTO BOT KHỚP LỆNH GỐC] ${orderSnap.actionResult.message}`;
         recordSyncAction("AUTO_BOT", autoBotState.lastLog);
@@ -710,8 +798,10 @@ setInterval(async () => {
         }
       }
     }
-  } catch {
-    // ignore
+  } catch (e) {
+    console.error("[V6 MONITOR]", e?.message || e);
+  } finally {
+    v6MonitorBusy = false;
   }
 }, 6000);
 
@@ -786,19 +876,26 @@ function writeBridgeEnvAndArmFiles(cfg) {
   fs.mkdirSync(bridgeDir, { recursive: true });
 
   const isLive = cfg.accountMode === "LIVE";
+  if (isLive) {
+    // V6 must not rewrite or arm Phase7C's shared LIVE bridge profile.
+    // V6 REAL orders also remain independently fail-closed in the Python broker path.
+    return;
+  }
   const envFileName = isLive ? ".env.phase7b-live" : ".env.phase7b-demo";
   const envFilePath = path.join(bridgeDir, envFileName);
 
-  let apiKey = process.env.MT5_BRIDGE_API_KEY || "xauusd_live_bridge_secret_2026_key";
-  if (apiKey.length < 16) apiKey = "xauusd_live_bridge_secret_2026_key";
+  // A shared hard-coded fallback key would permit bridge impersonation.
+  // Without a distinct, operator-supplied DEMO key, produce an inert profile.
+  const apiKey = String(process.env.MT5_BRIDGE_API_KEY || "").trim();
+  const bridgeApiReady = apiKey.length >= 32 && !/[\r\n]/.test(apiKey);
 
   const symbolMap = JSON.stringify({ XAUUSD: cfg.brokerSymbol || "XAUUSD.G" });
   const envLines = [
     `# Auto-generated by XAUUSD Web Account Connector (${cfg.accountMode})`,
     `MT5_BRIDGE_HOST=127.0.0.1`,
     `MT5_BRIDGE_PORT=8765`,
-    `MT5_API_KEY=${apiKey}`,
-    `MT5_TRADING_ENABLED=true`,
+    `MT5_API_KEY=${bridgeApiReady ? apiKey : ""}`,
+    `MT5_TRADING_ENABLED=${bridgeApiReady ? "true" : "false"}`,
     `MT5_ALLOW_REAL_ACCOUNT=${isLive ? "true" : "false"}`,
     `XAUUSD_PHASE7C_ALLOW_LIVE_TRADING=${isLive ? "true" : "false"}`,
     `MT5_ALLOWED_LOGINS=${cfg.login}`,
@@ -876,7 +973,7 @@ function sendJson(res, status, payload) {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key",
+    "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token",
     "cache-control": "no-store",
   });
   res.end(body);
@@ -955,7 +1052,7 @@ function buildStatusPayload(probe) {
     health: {
       status: isConnected ? "ok" : "waiting_mt5",
       connected: isConnected,
-      tradingEnabled: true,
+      tradingEnabled: isConnected && probe?.accountMode === "DEMO",
       terminalTradeAllowed: probe?.terminalTradeAllowed ?? false,
       expertTradeAllowed: probe?.expertTradeAllowed ?? false,
       accountLogin: isConnected ? probe.accountLogin : Number(currentAccountConfig.login || 5201362),
@@ -985,6 +1082,7 @@ function buildStatusPayload(probe) {
           }
         : null,
     liveAnalysis: probe?.liveAnalysis || null,
+    entrySignal: probe?.entrySignal || { allowed: false, side: "WAIT", reason: "MT5 not connected" },
     candles: isConnected && Array.isArray(probe.candles) ? probe.candles : [],
     positions: isConnected && Array.isArray(probe.openPositions) ? probe.openPositions : [],
     recentTrades: isConnected && Array.isArray(probe.recentTrades) ? probe.recentTrades : [],
@@ -996,7 +1094,7 @@ async function handleApiRequest(req, res) {
     res.writeHead(204, {
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "GET, POST, OPTIONS",
-      "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key",
+      "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token",
     });
     res.end();
     return;
@@ -1004,6 +1102,13 @@ async function handleApiRequest(req, res) {
 
   const parsedUrl = new URL(req.url || "/", `http://127.0.0.1:${API_PORT}`);
   const pathname = parsedUrl.pathname;
+  if ((pathname.startsWith("/api/v1/") || pathname === "/health") && !controlAuthorized(req)) {
+    sendJson(res, CONTROL_TOKEN ? 401 : 503, {
+      error: CONTROL_TOKEN ? "V6_CONTROL_TOKEN_INVALID" : "V6_CONTROL_TOKEN_NOT_CONFIGURED",
+      message: "ZIQ_V6_CONTROL_TOKEN and x-v6-control-token are required for all MT5 API access"
+    });
+    return;
+  }
 
   if (pathname === "/api/v1/mt5/connect-account" && req.method === "POST") {
     const body = await readJsonBody(req);
@@ -1013,7 +1118,8 @@ async function handleApiRequest(req, res) {
     const server = String(body.server || currentAccountConfig.server || "DBG Market Limited").trim();
     const brokerSymbol = String(body.brokerSymbol || currentAccountConfig.brokerSymbol || "XAUUSD.G").trim();
     const terminalPath = String(body.terminalPath ?? "").trim();
-    const liveArmed = body.liveArmed !== undefined ? Boolean(body.liveArmed) : true;
+    // Switching accounts never arms LIVE; only an independent verified action may.
+    const liveArmed = false;
 
     currentAccountConfig = {
       ...currentAccountConfig,
@@ -1044,7 +1150,15 @@ async function handleApiRequest(req, res) {
   // API BẬT/TẮT & CẤU HÌNH DCA DƯƠNG THUẬN XU HƯỚNG (POSITIVE DCA)
   if (pathname === "/api/v1/mt5/positive-dca" && req.method === "POST") {
     const body = await readJsonBody(req);
-    if (body.enabled !== undefined) positiveDcaConfig.enabled = Boolean(body.enabled);
+    let requestedEnabled, executeNow;
+    try {
+      requestedEnabled = parseOptionalBoolean(body.enabled, "dca.enabled");
+      executeNow = parseOptionalBoolean(body.executeNow, "dca.executeNow");
+    } catch {
+      sendJson(res, 400, { error: "INVALID_BOOLEAN", message: "enabled/executeNow phải là boolean true/false." });
+      return;
+    }
+    if (requestedEnabled !== undefined) positiveDcaConfig.enabled = requestedEnabled;
     if (body.maxLayers !== undefined) positiveDcaConfig.maxLayers = Math.max(1, Math.min(5, Number(body.maxLayers)));
     if (body.stepDistance !== undefined) positiveDcaConfig.stepDistance = Math.max(1.0, Number(body.stepDistance));
     if (body.lotMultiplier !== undefined) positiveDcaConfig.lotMultiplier = Math.max(0.25, Math.min(1.5, Number(body.lotMultiplier)));
@@ -1054,19 +1168,27 @@ async function handleApiRequest(req, res) {
       : "ĐÃ TẮT chế độ DCA Dương Thuận Xu Hướng (Chỉ đánh đơn lệnh).";
 
     recordSyncAction(body.sourceDevice || "WEB", positiveDcaConfig.lastStatusText);
-    const actionType = body.executeNow ? "dca_plus" : "probe";
+    const actionType = executeNow === true ? "dca_plus" : "probe";
     const probe = await invokeMt5PythonEngine(
       {
         action: actionType,
         positiveDcaConfig,
-        forceManual: Boolean(body.executeNow),
+        forceManual: executeNow === true,
       },
       true
     );
+    if (executeNow === true && probe?.actionResult?.submitted && !probe?.actionResult?.ok) {
+      // Manual DCA may have entered a pending/partial state. Never leave
+      // automatic DCA enabled when its broker exposure is uncertain.
+      positiveDcaConfig.enabled = false;
+      positiveDcaConfig.lastDcaTime = Date.now();
+      positiveDcaConfig.lastStatusText = "DCA TẠM KHÓA: cần đối soát vị thế MT5 trước khi bật lại.";
+      recordSyncAction("WEB", positiveDcaConfig.lastStatusText);
+    }
     const payload = buildStatusPayload(probe);
     sendJson(res, 200, {
       ...payload,
-      dcaMessage: body.executeNow
+      dcaMessage: executeNow === true
         ? probe?.actionResult?.message || positiveDcaConfig.lastStatusText
         : positiveDcaConfig.lastStatusText,
     });
@@ -1104,11 +1226,12 @@ async function handleApiRequest(req, res) {
           trendManagementConfig.m15SpikeTrailDist = 10.0;
           trendManagementConfig.enablePartialCloseAtSr = true;
           trendManagementConfig.semiAutoAdoptManual = true;
-          positiveDcaConfig.enabled = true;
+          // Approval of stop-management improvements never silently enables risk-increasing DCA.
           autoBotState.slDistance = 6.8;
           autoBotState.lastLog = "Đã áp dụng Đề xuất #4: SL Cấu trúc 6–8 giá + Đạt 1R kéo BE + Trailing M5 + Khóa đỉnh M15 cách 10 giá + Chốt từng phần cản H1/H4 + Bán tự động nuôi lệnh tay!";
         } else if (propId === "PROP-03") {
-          autoBotState.lastLog = "Đã bật phân luồng Sideway Corridor cho Phiên Á theo phê duyệt Đề xuất #3.";
+          autoBotState.lastLog = "Đã ghi nhận đề xuất Sideway phiên Á. Phải chọn chế độ SIDEWAY riêng; chưa có lịch tự chuyển bot.";
+          positiveDcaConfig.enabled = false;
         }
       }
     }
@@ -1195,17 +1318,27 @@ async function handleApiRequest(req, res) {
 
   if (pathname === "/api/v1/mt5/order" && req.method === "POST") {
     const body = await readJsonBody(req);
+    const requestedSide = typeof body.side === "string" ? body.side.trim().toUpperCase() : "";
+    if (requestedSide !== "BUY" && requestedSide !== "SELL") {
+      sendJson(res, 400, {
+        orderResult: { ok: false, message: "Phải chọn rõ BUY hoặc SELL; không tự đặt lệnh BUY mặc định." },
+      });
+      return;
+    }
     const effectiveSlMode = String(body.slMode || trendManagementConfig.slMode || "STRUCTURAL_6_8");
     const probe = await invokeMt5PythonEngine(
       {
         action: "order",
-        side: body.side || "BUY",
+        manualOrder: true,
+        side: requestedSide,
         volume: Number(body.volume || autoBotState.volume || 0.05),
         slDistance: Number(body.slDistance ?? autoBotState.slDistance ?? 6.8),
         tpDistance: Number(body.tpDistance ?? autoBotState.tpDistance ?? 16.0),
         slMode: effectiveSlMode,
         useStructuralSl68: effectiveSlMode === "STRUCTURAL_6_8",
         botName: `${getActiveBotDisplayName()} (Kích hoạt từ ${body.sourceDevice || "Web"})`,
+        maxRiskPercent: 1.0,
+        maxPortfolioRiskPercent: 1.5,
         entryReason: body.entryReason || `Lệnh ${body.side} theo cấu trúc ${effectiveSlMode === "STRUCTURAL_6_8" ? "SL 6–8 giá & TP tại vùng cản H1/H4" : "SL/TP tùy chọn"}`,
       },
       true
@@ -1227,7 +1360,16 @@ async function handleApiRequest(req, res) {
 
   if (pathname === "/api/v1/mt5/close" && req.method === "POST") {
     const body = await readJsonBody(req);
-    const probe = await invokeMt5PythonEngine({ action: "close", ticket: body.ticket || null }, true);
+    let ticket;
+    try {
+      ticket = parseRequiredTicket(body.ticket);
+    } catch {
+      sendJson(res, 400, {
+        closeResult: { ok: false, message: "Phải chọn ticket nguyên dương chính xác để đóng một vị thế." },
+      });
+      return;
+    }
+    const probe = await invokeMt5PythonEngine({ action: "close", ticket }, true);
     const payload = buildStatusPayload(probe);
     sendJson(res, 200, {
       ...payload,
@@ -1238,7 +1380,16 @@ async function handleApiRequest(req, res) {
 
   if (pathname === "/api/v1/mt5/breakeven" && req.method === "POST") {
     const body = await readJsonBody(req);
-    const probe = await invokeMt5PythonEngine({ action: "breakeven", ticket: body.ticket || null }, true);
+    let ticket;
+    try {
+      ticket = parseRequiredTicket(body.ticket);
+    } catch {
+      sendJson(res, 400, {
+        beResult: { ok: false, message: "Phải chọn ticket chính xác để dời BE; không dời hàng loạt ngầm định." },
+      });
+      return;
+    }
+    const probe = await invokeMt5PythonEngine({ action: "breakeven", ticket }, true);
     const payload = buildStatusPayload(probe);
     sendJson(res, 200, {
       ...payload,
@@ -1249,14 +1400,22 @@ async function handleApiRequest(req, res) {
 
   if (pathname === "/api/v1/mt5/auto-bot" && req.method === "POST") {
     const body = await readJsonBody(req);
-    if (body.enabled !== undefined) autoBotState.enabled = Boolean(body.enabled);
+    let requestedEnabled, adoptManual;
+    try {
+      requestedEnabled = parseOptionalBoolean(body.enabled, "autoBot.enabled");
+      adoptManual = parseOptionalBoolean(body.semiAutoAdoptManual, "autoBot.semiAutoAdoptManual");
+    } catch {
+      sendJson(res, 400, { error: "INVALID_BOOLEAN", message: "enabled/semiAutoAdoptManual phải là boolean true/false." });
+      return;
+    }
+    if (requestedEnabled !== undefined) autoBotState.enabled = requestedEnabled;
     if (body.volume !== undefined) autoBotState.volume = Math.max(0.01, Number(body.volume));
     if (body.slDistance !== undefined) autoBotState.slDistance = Math.max(1, Number(body.slDistance));
     if (body.tpDistance !== undefined) autoBotState.tpDistance = Math.max(2, Number(body.tpDistance));
     if (body.minConfidence !== undefined) autoBotState.minConfidence = Math.max(60, Number(body.minConfidence));
     if (body.strategyMode !== undefined) autoBotState.strategyMode = String(body.strategyMode);
     if (body.slMode !== undefined) trendManagementConfig.slMode = String(body.slMode);
-    if (body.semiAutoAdoptManual !== undefined) trendManagementConfig.semiAutoAdoptManual = Boolean(body.semiAutoAdoptManual);
+    if (adoptManual !== undefined) trendManagementConfig.semiAutoAdoptManual = adoptManual;
     if (body.m15SpikeTrailDist !== undefined) trendManagementConfig.m15SpikeTrailDist = Math.max(5, Number(body.m15SpikeTrailDist));
     autoBotState.lastLog = autoBotState.enabled
       ? `ĐÃ BẬT BOT TỰ ĐỘNG (${currentAccountConfig.brokerSymbol || "XAUUSD.G"} · Lot ${autoBotState.volume} · DCA Dương: ${positiveDcaConfig.enabled ? "BẬT" : "TẮT"}).`
@@ -1330,13 +1489,19 @@ const webServer = http.createServer((req, res) => {
   res.end(html);
 });
 
-apiServer.on("error", (err) => {
-  if (err.code !== "EADDRINUSE") console.error("[API Error]", err.message);
-});
+function failOnListenError(label, port, err) {
+  const code = err && typeof err.code === "string" ? err.code : "UNKNOWN";
+  console.error(`[V6_${label}_LISTEN_FAILED] port=${port} code=${code}: ${err?.message || "unknown listen error"}`);
+  if (code === "EADDRINUSE") {
+    console.error("Port already in use: stop the conflicting service manually after verifying its identity. No automatic process termination.");
+  }
+  // Fail closed instead of silently serving only one of the two API/Web ports.
+  // This exits the current V6 process only; it does not terminate other apps.
+  process.exit(1);
+}
 
-webServer.on("error", (err) => {
-  if (err.code !== "EADDRINUSE") console.error("[WEB Error]", err.message);
-});
+apiServer.on("error", (err) => failOnListenError("API", API_PORT, err));
+webServer.on("error", (err) => failOnListenError("WEB", WEB_PORT, err));
 
 apiServer.listen(API_PORT, "0.0.0.0", () => {
   console.log(`XAUUSD_STANDALONE_API=ONLINE|PORT=${API_PORT}`);
