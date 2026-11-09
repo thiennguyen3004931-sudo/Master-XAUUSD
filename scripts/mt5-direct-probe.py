@@ -702,6 +702,12 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
 
     if side not in ("BUY", "SELL") or not (sl > 0 and tp > 0):
         return {"ok": False, "message": "Invalid order side / missing broker SL or TP"}
+    initial_r = (price - sl) if is_buy else (sl - price)
+    reward = (tp - price) if is_buy else (price - tp)
+    min_rr = max(1.2, float(order_cfg.get("minRewardRisk") or 1.2))
+    if not isfinite(initial_r) or initial_r <= 0 or not isfinite(reward) or reward / initial_r < min_rr:
+        return {"ok": False, "message": "Entry RR invalid after broker executable Bid/Ask"}
+
     point = float(getattr(sym_info, "point", 0.01) or 0.01)
     stops_gap = max(point, float(getattr(sym_info, "trade_stops_level", 0) or 0) * point)
     spread_points = (float(tick.ask) - float(tick.bid)) / point
@@ -971,6 +977,7 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
             "explicitTpPrice": dca_tp,
             "maxRiskPercent": 0.5,
             "maxPortfolioRiskPercent": 1.5,
+            "minRewardRisk": 1.6,
         },
         comment_tag=f"DCA_PLUS_L{next_layer_num}_{side}"
     )
@@ -1024,28 +1031,43 @@ def close_position_by_ticket(mt5, ticket_id):
     return {"ok": closed_count > 0, "closedCount": closed_count, "message": last_msg}
 
 def move_sl_to_breakeven(mt5, ticket_id):
-    positions = mt5.positions_get(ticket=int(ticket_id)) if ticket_id else mt5.positions_get()
+    """Only tighten stops; operator-wide BE may touch V6-owned gold positions only."""
+    if ticket_id:
+        ticket_pos = _read_position_by_ticket(mt5, ticket_id)
+        positions = [ticket_pos] if ticket_pos is not None else []
+    else:
+        positions = [
+            p for p in (mt5.positions_get() or [])
+            if ("XAUUSD" in str(getattr(p, "symbol", "")).upper()
+                or str(getattr(p, "symbol", "")).upper().startswith("GOLD"))
+            and int(getattr(p, "magic", 0) or 0) == 270715
+        ]
     if not positions:
-        return {"ok": False, "message": "Không tìm thấy vị thế đang mở để dời SL Hòa vốn."}
-
-    pos = positions[0]
-    sym = str(pos.symbol)
-    sym_info = mt5.symbol_info(sym)
-    digits = int(getattr(sym_info, "digits", 2)) if sym_info else 2
-    is_buy = int(pos.type) == 0
-    be_price = round(float(pos.price_open) + (0.25 if is_buy else -0.25), digits)
-
-    req = {
-        "action": int(getattr(mt5, "TRADE_ACTION_SLTP", 6)),
-        "symbol": sym,
-        "position": int(pos.ticket),
-        "sl": be_price,
-        "tp": float(pos.tp),
+        return {"ok": False, "message": "Không có vị thế V6 phù hợp để dời SL."}
+    success = 0
+    failures = []
+    for pos in positions:
+        digits = int(getattr(mt5.symbol_info(str(pos.symbol)), "digits", 2))
+        buy = int(pos.type) == 0
+        entry = float(pos.price_open)
+        old_sl = float(getattr(pos, "sl", 0.0) or 0.0)
+        be_price = round(entry + (0.25 if buy else -0.25), digits)
+        if old_sl > 0 and ((buy and old_sl >= be_price) or (not buy and old_sl <= be_price)):
+            success += 1
+            continue
+        result = modify_position_sl_tp(mt5, pos, be_price, float(getattr(pos, "tp", 0) or 0),
+                                       "Operator BE (never loosen)")
+        if result.get("ok"):
+            success += 1
+        else:
+            failures.append(f"#{pos.ticket}: {result.get('message', 'broker rejected')}")
+    return {
+        "ok": success > 0 and not failures,
+        "movedOrAlreadyProtected": success,
+        "message": f"BE verified for {success}/{len(positions)} ticket(s)" +
+                   ("; FAIL: " + "; ".join(failures) if failures else "")
     }
-    res = mt5.order_send(req)
-    if res and int(getattr(res, "retcode", -1)) in (10009, 10025):
-        return {"ok": True, "message": f"Đã dời SL lệnh #{pos.ticket} về Hòa vốn ({be_price}) thành công!"}
-    return {"ok": False, "message": f"Chưa thể dời SL về BE: {getattr(res, 'comment', '')}"}
+
 
 def main():
     raw_cfg = sys.argv[1] if len(sys.argv) > 1 else "{}"
@@ -1155,6 +1177,7 @@ def main():
             if not manual:
                 cfg["explicitSlPrice"] = entry_signal["sl"]
                 cfg["explicitTpPrice"] = entry_signal["tp"]
+                cfg["minRewardRisk"] = 1.25 if entry_signal.get("strategyMode") == "BOT_2_SIDEWAY" else 1.6
                 cfg["entryReason"] = entry_signal["reason"]
                 cfg["slReason"] = "Confirmed structural stop, never clipped inside swing"
                 cfg["tpReason"] = "Per-strategy RR and H1/H4 or range target"
