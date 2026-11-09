@@ -239,7 +239,7 @@ function loadTelegramConfig() {
   } catch {}
   return {
     enabled: true,
-    botToken: process.env.ZIQ_TELEGRAM_BOT_TOKEN || ("8957841283:AAGSp1KebI9" + "Axu9G5N-tQJhx-969nyAJRIQ"),
+    botToken: process.env.ZIQ_TELEGRAM_BOT_TOKEN || "",
     chatId: process.env.ZIQ_TELEGRAM_CHAT_ID || "1629602548",
     notifyOrders: true,
     notifyMtf15m: false,
@@ -839,6 +839,11 @@ function writeBridgeEnvAndArmFiles(cfg) {
   fs.mkdirSync(bridgeDir, { recursive: true });
 
   const isLive = cfg.accountMode === "LIVE";
+  if (isLive) {
+    // V6 must not rewrite or arm Phase7C's shared LIVE bridge profile.
+    // V6 REAL orders also remain independently fail-closed in the Python broker path.
+    return;
+  }
   const envFileName = isLive ? ".env.phase7b-live" : ".env.phase7b-demo";
   const envFilePath = path.join(bridgeDir, envFileName);
 
