@@ -610,9 +610,16 @@ function invokeMt5PythonEngine(extraPayload = {}, force = false) {
 }
 
 // Vòng lặp Giám Sát Lệnh, Nuôi Lệnh Cấu Trúc M5, Phát Hiện Lệnh Đóng & Chạy Bot Tự Động mỗi 6 giây
+let v6MonitorBusy = false;
 setInterval(async () => {
+  if (v6MonitorBusy) return;
+  v6MonitorBusy = true;
   try {
+    const management = await invokeMt5PythonEngine({ action: "manage_positions" }, true);
     const snap = await invokeMt5PythonEngine({ action: "probe" }, true);
+    if (management?.trendManagementStatus && snap) {
+      snap.trendManagementStatus = management.trendManagementStatus;
+    }
     if (!snap || !snap.connected) return;
 
     const openPos = Array.isArray(snap.openPositions) ? snap.openPositions : [];
@@ -710,20 +717,31 @@ setInterval(async () => {
 
     // 2. Nếu chưa có lệnh mở và Bot Tự Động đang BẬT (Không tự vào lệnh mới nếu đang ở chế độ SEMI_AUTO_TREND chờ người dùng vào tay)
     if (openPos.length === 0 && autoBotState.enabled && autoBotState.strategyMode !== "SEMI_AUTO_TREND") {
-      const analysis = snap.liveAnalysis;
-      if (!analysis || analysis.signalSide === "WAIT") return;
-      if (Number(analysis.confidence || 0) < autoBotState.minConfidence) {
-        autoBotState.lastLog = `Đang quét ${snap.brokerSymbol}: '${analysis.patternName}' (${analysis.confidence}%) chưa đạt ngưỡng ${autoBotState.minConfidence}%.`;
+      const analysis = snap.entrySignal;
+      if (!analysis?.allowed || !["BUY", "SELL"].includes(analysis.side)) {
+        autoBotState.lastLog = "WAIT: " + (analysis?.reason || "No valid setup");
         return;
       }
+      if (Number(analysis.confidence || 0) < autoBotState.minConfidence) return;
+      const entryKey = [
+        snap.accountLogin, autoBotState.strategyMode,
+        analysis.side, analysis.closedM15Time
+      ].join("|");
+      if (previousEntryKey === entryKey) return;
       if (Date.now() - autoBotState.lastActionTime < 15 * 60 * 1000) return;
+      // Persist before the broker call; no second order on a lost response/restart.
+      persistEntryKey(entryKey);
       autoBotState.lastActionTime = Date.now();
-      const entryReasonText = `${analysis.patternName} (${analysis.confidence}%) — ${analysis.reason || "Đồng thuận xu hướng H4/H1/M15"}`;
+      const entryReasonText = analysis.reason || analysis.patternName;
       const orderSnap = await invokeMt5PythonEngine(
         {
           action: "order",
-          side: analysis.signalSide,
+          side: analysis.side,
           volume: autoBotState.volume,
+          strategyMode: autoBotState.strategyMode,
+          minConfidence: autoBotState.minConfidence,
+          closedM15Time: analysis.closedM15Time,
+          manualOrder: false,
           slDistance: autoBotState.slDistance,
           tpDistance: autoBotState.tpDistance,
           slMode: trendManagementConfig.slMode,
@@ -741,8 +759,10 @@ setInterval(async () => {
         }
       }
     }
-  } catch {
-    // ignore
+  } catch (e) {
+    console.error("[V6 MONITOR]", e?.message || e);
+  } finally {
+    v6MonitorBusy = false;
   }
 }, 6000);
 
