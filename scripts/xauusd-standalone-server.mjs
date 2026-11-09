@@ -81,7 +81,7 @@ let trendManagementConfig = {
   enableM5StructuralTrail: true,
   m15SpikeTrailDist: 10.0,
   enablePartialCloseAtSr: true,
-  semiAutoAdoptManual: true,
+  semiAutoAdoptManual: false, // Manual positions are never adopted without explicit opt-in.
 };
 let lastSentScenarioSignature = "";
 
