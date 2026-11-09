@@ -26,3 +26,25 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_v6_*.py' -v
       - name: Check V6 standalone Node server syntax
         run: node --check scripts/xauusd-standalone-server.mjs
+
+  v6-windows-hosted:
+    name: V6 Windows no-terminal safety
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Compile V6 Python modules without MetaTrader5 installed
+        shell: pwsh
+        run: python -m py_compile scripts/xauusd_v6_trade_rules.py scripts/mt5-direct-probe.py tests/test_v6_trade_rules.py tests/test_v6_mt5_execution.py
+      - name: Test V6 order and trailing contracts against mock broker
+        shell: pwsh
+        run: python -m unittest discover -s tests -p 'test_v6_*.py' -v
+      - name: Verify standalone server syntax
+        shell: pwsh
+        run: node --check scripts/xauusd-standalone-server.mjs
