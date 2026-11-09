@@ -79,15 +79,50 @@ jobs:
 
           # Identify the process owning each loopback listening port. No command
           # line, executable path, environment variable, PID or secret is logged.
+          function Get-V6ListenerPids {
+            param([int]$Port)
+            # The NetTCPIP cmdlet may be unavailable under a Windows runner
+            # service account. Fall back to the built-in, read-only netstat.
+            try {
+              $results = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop |
+                ForEach-Object { [int]$_.OwningProcess } |
+                Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+              return @{ OwnerIds = $results; Method = 'NETTCP'; Available = $true }
+            } catch {
+              # Do not print exception messages; they can expose local paths.
+            }
+            try {
+              $rows = @(& netstat.exe -ano -p tcp 2>$null)
+              if ($LASTEXITCODE -ne 0) {
+                return @{ OwnerIds = @(); Method = 'UNAVAILABLE'; Available = $false }
+              }
+              $found = @()
+              foreach ($row in $rows) {
+                $fields = @([regex]::Split([string]$row.Trim(), '\s+'))
+                if ($fields.Count -lt 5 -or $fields[0] -ne 'TCP' -or $fields[3] -ne 'LISTENING') { continue }
+                if (-not $fields[1].EndsWith(":$Port")) { continue }
+                $owner = 0
+                if ([int]::TryParse($fields[4], [ref]$owner) -and $owner -gt 0) {
+                  $found += $owner
+                }
+              }
+              return @{ OwnerIds = @($found | Sort-Object -Unique); Method = 'NETSTAT'; Available = $true }
+            } catch {
+              return @{ OwnerIds = @(); Method = 'UNAVAILABLE'; Available = $false }
+            }
+          }
+
           function Get-V6PortOwnerSummary {
             param([int]$Port)
+            $lookup = Get-V6ListenerPids -Port $Port
+            if (-not $lookup.Available) {
+              return @{ Class = 'UNAVAILABLE'; V6Script = 'UNKNOWN'; Method = 'UNAVAILABLE' }
+            }
+            $ownerIds = @($lookup.OwnerIds | Where-Object { $_ -gt 0 })
+            if ($ownerIds.Count -eq 0) {
+              return @{ Class = 'NONE'; V6Script = 'NO'; Method = $lookup.Method }
+            }
             try {
-              $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop)
-              if ($listeners.Count -eq 0) {
-                return @{ Class = 'NONE'; V6Script = 'NO' }
-              }
-              $ownerIds = @($listeners | ForEach-Object { [int]$_.OwningProcess } |
-                Where-Object { $_ -gt 0 } | Sort-Object -Unique)
               $classes = @()
               $nodeObserved = $false
               $nodeLineReadable = $false
@@ -112,7 +147,7 @@ jobs:
               }
               $uniqueClasses = @($classes | Sort-Object -Unique)
               if ($uniqueClasses.Count -eq 0) {
-                return @{ Class = 'UNAVAILABLE'; V6Script = 'UNKNOWN' }
+                return @{ Class = 'UNAVAILABLE'; V6Script = 'UNKNOWN'; Method = $lookup.Method }
               }
               $ownerClass = if ($uniqueClasses.Count -eq 1) { $uniqueClasses[0] } else { 'MULTIPLE' }
               $v6Status = if ($v6Matched) {
@@ -124,9 +159,9 @@ jobs:
               } else {
                 'NO_NODE'
               }
-              return @{ Class = $ownerClass; V6Script = $v6Status }
+              return @{ Class = $ownerClass; V6Script = $v6Status; Method = $lookup.Method }
             } catch {
-              return @{ Class = 'UNAVAILABLE'; V6Script = 'UNKNOWN' }
+              return @{ Class = 'UNAVAILABLE'; V6Script = 'UNKNOWN'; Method = $lookup.Method }
             }
           }
           foreach ($listener in @(
@@ -136,6 +171,7 @@ jobs:
           )) {
             $summary = Get-V6PortOwnerSummary -Port $listener.Port
             Write-Host ('V6_OBSERVED_' + $listener.Tag + '_OWNER_CLASS=' + $summary.Class)
+            Write-Host ('V6_OBSERVED_' + $listener.Tag + '_LOOKUP_METHOD=' + $summary.Method)
             Write-Host ('V6_OBSERVED_' + $listener.Tag + '_OWNER_V6_SCRIPT=' + $summary.V6Script)
           }
 
@@ -150,7 +186,7 @@ jobs:
             $mt5Terminal = (@($proc | Where-Object { $_.Name -in @('terminal64.exe', 'terminal.exe') })).Count -gt 0
             $v6Server = (@($proc | Where-Object {
               $_.Name -eq 'node.exe' -and
-              [string]$_.CommandLine -match 'xauusd-standalone-server\\.mjs'
+              [string]$_.CommandLine -match 'xauusd-standalone-server[.]mjs'
             })).Count -gt 0
             $processLookupOk = $true
           } catch {
