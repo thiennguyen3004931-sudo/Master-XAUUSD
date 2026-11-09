@@ -1,0 +1,94 @@
+name: Phase7C Startup Runner Lock Lifetime CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-startup-runner-lock-lifetime
+    paths:
+      - "scripts/lib/phase7c-startup-runner-guard.ps1"
+      - "scripts/lib/phase7c-scheduled-task-ownership.ps1"
+      - "scripts/lib/phase7c-runtime-ownership-probe.ps1"
+      - "scripts/run-phase7c-executor-task-runner-local.ps1"
+      - "scripts/register-phase7c-executor-task-local.ps1"
+      - "scripts/stop-phase7c-executors-local.ps1"
+      - "scripts/test-phase7c-startup-runner-lock-lifetime-local.ps1"
+      - "scripts/test-phase7c-startup-runner-lock-persistent-loop-local.ps1"
+      - "scripts/test-phase7c-startup-runner-lock-system-task-local.ps1"
+      - "scripts/test-phase7c-startup-runner-lock-broker-stop-failure-local.ps1"
+      - "scripts/test-phase7c-runtime-ownership-generation-mismatch-local.ps1"
+      - "scripts/test-phase7c-runtime-ownership-lock-acl-observer-local.ps1"
+      - "scripts/test-phase7c-task-action-runner-hash-guard-local.ps1"
+      - "scripts/test-phase7c-task-installer-runner-hash-guard-local.ps1"
+      - "scripts/test-phase7c-runtime-provenance-stale-runner-local.ps1"
+      - "scripts/test-phase7c-json-atomic-sharing-retry-local.ps1"
+      - ".github/workflows/phase7c-startup-runner-lock-lifetime-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/lib/phase7c-startup-runner-guard.ps1"
+      - "scripts/lib/phase7c-scheduled-task-ownership.ps1"
+      - "scripts/lib/phase7c-runtime-ownership-probe.ps1"
+      - "scripts/run-phase7c-executor-task-runner-local.ps1"
+      - "scripts/register-phase7c-executor-task-local.ps1"
+      - "scripts/stop-phase7c-executors-local.ps1"
+      - "scripts/test-phase7c-startup-runner-lock-lifetime-local.ps1"
+      - "scripts/test-phase7c-startup-runner-lock-persistent-loop-local.ps1"
+      - "scripts/test-phase7c-startup-runner-lock-system-task-local.ps1"
+      - "scripts/test-phase7c-startup-runner-lock-broker-stop-failure-local.ps1"
+      - "scripts/test-phase7c-runtime-ownership-generation-mismatch-local.ps1"
+      - "scripts/test-phase7c-runtime-ownership-lock-acl-observer-local.ps1"
+      - "scripts/test-phase7c-task-action-runner-hash-guard-local.ps1"
+      - "scripts/test-phase7c-task-installer-runner-hash-guard-local.ps1"
+      - "scripts/test-phase7c-runtime-provenance-stale-runner-local.ps1"
+      - "scripts/test-phase7c-json-atomic-sharing-retry-local.ps1"
+      - ".github/workflows/phase7c-startup-runner-lock-lifetime-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lock-lifetime-windows:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Atomic JSON transient sharing retry - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-json-atomic-sharing-retry-local.ps1
+      - name: Startup runner lock finite lifetime - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-startup-runner-lock-lifetime-local.ps1
+      - name: Startup runner lock persistent loop - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-startup-runner-lock-persistent-loop-local.ps1
+      - name: Startup runner lock persistent SYSTEM task - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-startup-runner-lock-system-task-local.ps1
+      - name: Startup runner exact broker STOP failure - SYSTEM Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-startup-runner-lock-broker-stop-failure-local.ps1
+      - name: Runtime ownership generation mismatch - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-runtime-ownership-generation-mismatch-local.ps1
+      - name: Runtime ownership ACL observer - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-runtime-ownership-lock-acl-observer-local.ps1
+      - name: Task action runner hash guard - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-task-action-runner-hash-guard-local.ps1
+      - name: Task installer runner hash guard - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-task-installer-runner-hash-guard-local.ps1
+      - name: Runtime stale runner provenance - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-runtime-provenance-stale-runner-local.ps1
+      - name: Startup runner lock finite lifetime - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-startup-runner-lock-lifetime-local.ps1
+      - name: Startup runner lock persistent loop - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-startup-runner-lock-persistent-loop-local.ps1
+      - name: Runtime ownership generation mismatch - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-runtime-ownership-generation-mismatch-local.ps1

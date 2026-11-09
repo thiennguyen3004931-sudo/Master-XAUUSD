@@ -1,0 +1,106 @@
+name: Phase7C Reversal Entry Gate CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-legacy-background-cleanup
+    paths:
+      - 'apps/api/src/routes/phase7b-demo.route.ts'
+      - 'apps/api/src/services/phase7b-entry-diagnostics-account-mode.ts'
+      - 'apps/api/src/services/phase7c-decision-monitor.service.ts'
+      - 'apps/api/src/services/phase7c-live-regime.service.ts'
+      - 'scripts/run-phase7b-demo-controller.ts'
+      - 'scripts/phase7c-auto-live-reversal-lock.mjs'
+      - 'scripts/phase7c-auto-live-reversal-lock.test.mjs'
+      - 'scripts/phase7c-reversal-trend-filter.test.mjs'
+      - 'apps/api/src/services/phase7c-reversal-trend-filter.ts'
+      - 'scripts/run-phase7c-trend-controller.mjs'
+      - 'scripts/phase7c-trend-mode-gate.mjs'
+      - 'scripts/phase7c-trend-mode-gate.d.mts'
+      - 'scripts/phase7c-trend-mode-gate.test.mjs'
+      - 'scripts/test-phase7c-reversal-entry-contract.mjs'
+      - 'scripts/phase7c-trend-entry-attribution.mjs'
+      - 'scripts/phase7c-trend-entry-attribution.test.mjs'
+      - 'scripts/phase7c-decision-audit.mjs'
+      - 'scripts/phase7c-trend-entry-block.mjs'
+      - 'scripts/phase7c-trend-entry-block-classification.test.mjs'
+      - 'scripts/phase7c-decision-monitor.test.mjs'
+      - 'scripts/phase7b-live-entry-diagnostics.test.mjs'
+      - '.github/workflows/phase7c-reversal-entry-gate-ci.yml'
+  pull_request:
+    paths:
+      - 'apps/api/src/routes/phase7b-demo.route.ts'
+      - 'apps/api/src/services/phase7b-entry-diagnostics-account-mode.ts'
+      - 'apps/api/src/services/phase7c-decision-monitor.service.ts'
+      - 'apps/api/src/services/phase7c-live-regime.service.ts'
+      - 'scripts/run-phase7b-demo-controller.ts'
+      - 'scripts/phase7c-auto-live-reversal-lock.mjs'
+      - 'scripts/phase7c-auto-live-reversal-lock.test.mjs'
+      - 'scripts/phase7c-reversal-trend-filter.test.mjs'
+      - 'apps/api/src/services/phase7c-reversal-trend-filter.ts'
+      - 'scripts/run-phase7c-trend-controller.mjs'
+      - 'scripts/phase7c-trend-mode-gate.mjs'
+      - 'scripts/phase7c-trend-mode-gate.d.mts'
+      - 'scripts/phase7c-trend-mode-gate.test.mjs'
+      - 'scripts/test-phase7c-reversal-entry-contract.mjs'
+      - 'scripts/phase7c-trend-entry-attribution.mjs'
+      - 'scripts/phase7c-trend-entry-attribution.test.mjs'
+      - 'scripts/phase7c-decision-audit.mjs'
+      - 'scripts/phase7c-trend-entry-block.mjs'
+      - 'scripts/phase7c-trend-entry-block-classification.test.mjs'
+      - 'scripts/phase7c-decision-monitor.test.mjs'
+      - 'scripts/phase7b-live-entry-diagnostics.test.mjs'
+      - '.github/workflows/phase7c-reversal-entry-gate-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase7c-reversal-entry-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reversal-entry-gate:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        timeout-minutes: 3
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build workspace
+        run: pnpm build
+      - name: REVERSAL CHOCH direction contract
+        run: node --test scripts/test-phase7c-reversal-entry-contract.mjs
+      - name: Run LIVE entry diagnostics account-mode regression tests
+        run: pnpm --dir apps/api exec tsx ../../scripts/phase7b-live-entry-diagnostics.test.mjs
+      - name: Run Phase7C decision monitor regression tests
+        run: pnpm --dir apps/api exec tsx ../../scripts/phase7c-decision-monitor.test.mjs
+      - name: LIVE AUTO reversal new-order hard lock tests
+        run: node --test scripts/phase7c-auto-live-reversal-lock.test.mjs
+      - name: REVERSAL H1 H4 shadow trend filter tests
+        run: pnpm --dir apps/api exec tsx ../../scripts/phase7c-reversal-trend-filter.test.mjs
+      - name: Run Trend AUTO reversal gate tests
+        run: node --test scripts/phase7c-trend-mode-gate.test.mjs
+      - name: Run Trend entry regime attribution tests
+        run: node --test scripts/phase7c-trend-entry-attribution.test.mjs
+      - name: Run Trend expected mode-block classification regression
+        run: node --test scripts/phase7c-trend-entry-block-classification.test.mjs
+      - name: Parse Trend controller gate
+        run: node --check scripts/run-phase7c-trend-controller.mjs
+      - name: Parse Trend mode policy
+        run: node --check scripts/phase7c-trend-mode-gate.mjs
+      - name: Diff hygiene
+        run: git diff --check

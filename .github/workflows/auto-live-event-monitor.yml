@@ -1,0 +1,97 @@
+name: AUTO LIVE Read-Only Event Monitor
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/ops/auto-live-event-monitor.ps1'
+      - 'scripts/ops/auto-live-offline-lease.ps1'
+      - 'scripts/ops/set-auto-live-monitor-offline-lease.ps1'
+      - 'scripts/test-auto-live-offline-lease.ps1'
+      - 'scripts/test-auto-live-event-monitor-source.ps1'
+      - '.github/workflows/auto-live-event-monitor.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/ops/auto-live-event-monitor.ps1'
+      - 'scripts/ops/auto-live-offline-lease.ps1'
+      - 'scripts/ops/set-auto-live-monitor-offline-lease.ps1'
+      - 'scripts/test-auto-live-offline-lease.ps1'
+      - 'scripts/test-auto-live-event-monitor-source.ps1'
+      - '.github/workflows/auto-live-event-monitor.yml'
+  workflow_dispatch:
+    inputs:
+      notify:
+        description: 'Persist state and emit GitHub issue event comments'
+        required: true
+        default: false
+        type: boolean
+  schedule:
+    - cron: '2-52/10 * * * *'
+    - cron: '7-57/10 * * * *'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: auto-live-readonly-monitor-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'production' }}
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    name: auto-live-readonly-monitor
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout monitor source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Static monitor safety contract
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-auto-live-event-monitor-source.ps1
+
+      - name: Expected offline lease regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-auto-live-offline-lease.ps1
+
+      - name: Run read-only production monitor
+        if: github.event_name != 'pull_request'
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTION_ROOT: F:\Project\XAUUSD_AI_MASTER\xauusd-ai-master
+          MONITOR_ISSUE_NUMBER: '28'
+        run: |
+          $notify = $false
+          if ('${{ github.event_name }}' -eq 'schedule') {
+            $notify = $true
+          } elseif ('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.notify }}' -eq 'true') {
+            $notify = $true
+          }
+
+          $params = @{
+            ProductionRoot = $env:PRODUCTION_ROOT
+            IssueNumber = [int]$env:MONITOR_ISSUE_NUMBER
+            Notify = $notify
+          }
+          & .\scripts\ops\auto-live-event-monitor.ps1 @params
+
+      - name: Safety boundary
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host "MONITOR_PRODUCTION_READ_ONLY=TRUE"
+          Write-Host "MONITOR_PRODUCTION_HTTP_METHODS=GET_ONLY"
+          Write-Host "MONITOR_MODE_MUTATION=NONE"
+          Write-Host "MONITOR_ARM_MUTATION=NONE"
+          Write-Host "MONITOR_ACCOUNT_SWITCH=NONE"
+          Write-Host "MONITOR_ORDER_MUTATION=NONE"
+          Write-Host "MONITOR_POSITION_MUTATION=NONE"
+          Write-Host "MONITOR_LIVE_TEST_ORDER=NONE"

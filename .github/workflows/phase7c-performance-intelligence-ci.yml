@@ -1,0 +1,62 @@
+name: Phase7C Performance Intelligence CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/api/src/contracts/phase7c-performance-correlation.schema.ts"
+      - "apps/api/src/services/phase7c-performance-intelligence.service.ts"
+      - "apps/api/src/services/phase7c-performance-intelligence-core.service.ts"
+      - "apps/api/src/services/phase7c-single-flight.ts"
+      - "apps/api/src/services/phase7c-performance-correlation.service.ts"
+      - "apps/api/src/routes/phase7c-performance-intelligence.route.ts"
+      - "apps/api/src/app.ts"
+      - "apps/web/src/phase7c-performance-intelligence-api.ts"
+      - "apps/web/src/phase7c-performance-intelligence-types.ts"
+      - "apps/web/src/ui/Phase7CPerformanceIntelligenceCard.tsx"
+      - "apps/web/src/pages/Phase7CControlCenterShellPage.tsx"
+      - "scripts/test-phase7c-performance-intelligence-source.mjs"
+      - "scripts/phase7c-performance-intelligence.test.ts"
+      - "scripts/phase7c-performance-correlation-schema.test.ts"
+      - ".github/workflows/phase7c-performance-intelligence-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Performance Intelligence source contract
+        run: node scripts/test-phase7c-performance-intelligence-source.mjs
+
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+
+      - name: Build web dependency graph
+        run: pnpm --filter @xauusd/web... build
+
+      - name: Performance Intelligence semantic tests
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-performance-intelligence.test.ts
+
+      - name: Performance correlation schema semantic tests
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-performance-correlation-schema.test.ts

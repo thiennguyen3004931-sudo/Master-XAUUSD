@@ -1,0 +1,42 @@
+name: Phase7C Sideway Fetch Failure Observability CI
+# Source-only observability regression: no runtime, ARM, mode, bridge, or order mutation.
+
+on:
+  push:
+    branches:
+      - fix/phase7c-sideway-fetch-failure-observability
+    paths:
+      - scripts/phase7c-sideway-fetch-observability.test.mjs
+      - scripts/run-phase7c-sideway-controller.mjs
+      - .github/workflows/phase7c-sideway-fetch-observability-ci.yml
+  pull_request:
+    paths:
+      - scripts/phase7c-sideway-fetch-observability.test.mjs
+      - scripts/run-phase7c-sideway-controller.mjs
+      - .github/workflows/phase7c-sideway-fetch-observability-ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: sideway-fetch-observability-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax check
+        run: node --check ./scripts/run-phase7c-sideway-controller.mjs
+
+      - name: Sideway request failure observability regression
+        run: node --test ./scripts/phase7c-sideway-fetch-observability.test.mjs
+
+      - name: Diff hygiene
+        run: git diff --check

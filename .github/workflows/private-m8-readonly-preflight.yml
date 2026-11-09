@@ -1,0 +1,79 @@
+name: Private M8 Read-Only Preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: Exact approved private main commit SHA
+        required: true
+        type: string
+      expected_tree:
+        description: Exact approved private main tree SHA
+        required: true
+        type: string
+      runtime_project_root:
+        description: Current production project root on the self-hosted Windows runner
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  m8-readonly-preflight:
+    name: m8-readonly-preflight-self-hosted
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout private main candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Verify exact approved candidate
+        shell: powershell
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
+        run: |
+          if ($env:EXPECTED_COMMIT -notmatch '^[0-9a-fA-F]{40}$') {
+            Write-Error "EXPECTED_COMMIT_INVALID"
+            exit 1
+          }
+          if ($env:EXPECTED_TREE -notmatch '^[0-9a-fA-F]{40}$') {
+            Write-Error "EXPECTED_TREE_INVALID"
+            exit 1
+          }
+
+          $actualHead = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          $actualTree = (git rev-parse 'HEAD^{tree}').Trim().ToLowerInvariant()
+          $expectedHead = $env:EXPECTED_COMMIT.Trim().ToLowerInvariant()
+          $expectedTree = $env:EXPECTED_TREE.Trim().ToLowerInvariant()
+
+          Write-Host "CHECKED_OUT_HEAD=$actualHead"
+          Write-Host "EXPECTED_HEAD=$expectedHead"
+          Write-Host "CHECKED_OUT_TREE=$actualTree"
+          Write-Host "EXPECTED_TREE=$expectedTree"
+
+          if ($actualHead -ne $expectedHead) {
+            Write-Error "CHECKED_OUT_HEAD_MISMATCH"
+            exit 1
+          }
+          if ($actualTree -ne $expectedTree) {
+            Write-Error "CHECKED_OUT_TREE_MISMATCH"
+            exit 1
+          }
+
+      - name: Run canonical M8 read-only preflight
+        shell: powershell
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
+          RUNTIME_PROJECT_ROOT: ${{ inputs.runtime_project_root }}
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\security\preflight-private-cutover.ps1 `
+            -ExpectedCommit $env:EXPECTED_COMMIT `
+            -ExpectedTree $env:EXPECTED_TREE `
+            -RuntimeProjectRoot $env:RUNTIME_PROJECT_ROOT

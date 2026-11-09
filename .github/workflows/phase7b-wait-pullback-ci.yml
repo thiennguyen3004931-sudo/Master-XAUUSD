@@ -1,0 +1,142 @@
+name: Phase7B Wait Pullback CI
+
+on:
+  push:
+    branches:
+      - phase7b-wait-pullback-runtime
+  pull_request:
+    paths:
+      - "packages/risk-engine/**"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/run-phase7b-wait-pullback-shadow.ts"
+      - "scripts/run-phase7b-wait-pullback-shadow-local.ps1"
+      - "scripts/upgrade-phase7b-wait-pullback-demo-local.ps1"
+      - "scripts/activate-phase7b-wait-pullback-demo-local.ps1"
+      - "scripts/summarize-phase7b-wait-pullback-journal-local.mjs"
+      - "scripts/apply-phase7b-wait-pullback-demo-controller-hook.mjs"
+      - "scripts/templates/phase7b-wait-pullback-entry-subsystem.ts.txt"
+      - ".github/workflows/phase7b-wait-pullback-ci.yml"
+
+jobs:
+  risk-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build risk-engine dependency graph
+        run: pnpm --filter @xauusd/risk-engine... build
+
+      - name: Typecheck risk-engine
+        run: pnpm --filter @xauusd/risk-engine typecheck
+
+      - name: Test risk-engine
+        run: pnpm --filter @xauusd/risk-engine test
+
+      - name: Parse Phase7B Node scripts
+        shell: bash
+        run: |
+          node --check scripts/apply-phase7b-wait-pullback-demo-controller-hook.mjs
+          node --check scripts/summarize-phase7b-wait-pullback-journal-local.mjs
+
+      - name: Parse Phase7B PowerShell scripts
+        shell: pwsh
+        run: |
+          $files = @(
+            "scripts/run-phase7b-wait-pullback-shadow-local.ps1",
+            "scripts/upgrade-phase7b-wait-pullback-demo-local.ps1",
+            "scripts/activate-phase7b-wait-pullback-demo-local.ps1"
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file :: $($_.Message)" }
+              exit 1
+            }
+            Write-Host "PHASE7B_POWERSHELL_PARSE_PASS=$file"
+          }
+
+      - name: Smoke-test WAIT_PULLBACK journal summary
+        shell: bash
+        run: |
+          cat > .phase7b-journal-ci.jsonl <<'EOF'
+          {"timestamp":"2026-08-15T00:00:00.000Z","type":"WAIT_PULLBACK","signalId":"s1"}
+          {"timestamp":"2026-08-15T00:05:00.000Z","type":"PULLBACK_STILL_TOO_WIDE","signalId":"s1"}
+          {"timestamp":"2026-08-15T00:10:00.000Z","type":"PULLBACK_ENTRY","signalId":"s1"}
+          {"timestamp":"2026-08-15T00:10:01.000Z","type":"ENTRY_FILLED","signalId":"s1","entryState":"PULLBACK_ENTRY"}
+          {"timestamp":"2026-08-15T00:15:00.000Z","type":"WAIT_PULLBACK","signalId":"s2"}
+          {"timestamp":"2026-08-15T00:30:01.000Z","type":"PULLBACK_EXPIRED","signalId":"s2"}
+          EOF
+          node scripts/summarize-phase7b-wait-pullback-journal-local.mjs \
+            --file=.phase7b-journal-ci.jsonl \
+            --out=.phase7b-summary-ci.json
+          node -e 'const s=require("./.phase7b-summary-ci.json"); if(s.waitPullbackSetups!==2||s.pullbackRecovered!==1||s.pullbackExpired!==1||s.entryFilled!==1) process.exit(1)'
+          rm -f .phase7b-journal-ci.jsonl .phase7b-summary-ci.json
+
+      - name: Dry-run demo-controller WAIT_PULLBACK upgrade
+        shell: bash
+        run: |
+          cp scripts/run-phase7b-demo-controller.ts .phase7b-controller-ci.ts
+          node scripts/apply-phase7b-wait-pullback-demo-controller-hook.mjs .phase7b-controller-ci.ts
+          node scripts/apply-phase7b-wait-pullback-demo-controller-hook.mjs .phase7b-controller-ci.ts
+
+          grep -q 'PHASE7B_DEMO_STRUCTURAL_SL_GT_10=WAIT_PULLBACK' .phase7b-controller-ci.ts
+          grep -q 'PHASE7B_DEMO_ENTRY_GATE=PATTERN_PLUS_SUPERTREND_M15_M5_PLUS_VALID_STRUCTURE' .phase7b-controller-ci.ts
+          grep -q 'THREE_CANDLE_BODY_DOMINANCE' .phase7b-controller-ci.ts
+          grep -q 'pendingPullback' .phase7b-controller-ci.ts
+          grep -q 'if (allowReal) throw new Error' .phase7b-controller-ci.ts
+          grep -q 'PLUS6_SL_TO_ENTRY' .phase7b-controller-ci.ts
+          grep -q 'PLUS10_PARTIAL_ONE_THIRD' .phase7b-controller-ci.ts
+          grep -q 'REVERSAL_FVG_REJECTION' .phase7b-controller-ci.ts
+          grep -q 'PHASE7B_DEMO_MA20_MA50=CONFIDENCE_ONLY_NOT_ENTRY_GATE' .phase7b-controller-ci.ts
+
+          if grep -q 'PRICE_DISTANCE_CLAMPED_6_TO_10' .phase7b-controller-ci.ts; then exit 1; fi
+          if grep -q 'PATTERN_PLUS_MA_ONLY' .phase7b-controller-ci.ts; then exit 1; fi
+          if grep -q 'Math.min(10, Math.max(6' .phase7b-controller-ci.ts; then exit 1; fi
+
+          node <<'NODE'
+          const fs = require('node:fs');
+          const ts = require('typescript');
+          const file = '.phase7b-controller-ci.ts';
+          const source = fs.readFileSync(file, 'utf8');
+          const result = ts.transpileModule(source, {
+            fileName: file,
+            reportDiagnostics: true,
+            compilerOptions: {
+              target: ts.ScriptTarget.ES2022,
+              module: ts.ModuleKind.ESNext,
+            },
+          });
+          const errors = (result.diagnostics ?? []).filter((d) => d.category === ts.DiagnosticCategory.Error);
+          if (errors.length) {
+            for (const diagnostic of errors) {
+              console.error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+            }
+            process.exit(1);
+          }
+          console.log('PHASE7B_DEMO_CONTROLLER_TRANSPILE=PASS');
+          NODE
+
+          rm -f .phase7b-controller-ci.ts .phase7b-controller-ci.ts.phase7b-wait-pullback.bak

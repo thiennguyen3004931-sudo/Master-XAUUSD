@@ -1,0 +1,54 @@
+name: Phase7C Observability Event Loop CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/api/src/services/phase7c-decision-monitor.service.ts"
+      - "apps/api/src/services/phase7c-performance-intelligence.service.ts"
+      - "apps/api/src/services/phase7c-performance-intelligence-core.service.ts"
+      - "apps/api/src/services/phase7c-performance-effectiveness.service.ts"
+      - "apps/api/src/services/phase7c-performance-effectiveness-core.service.ts"
+      - "apps/api/src/services/phase7c-single-flight.ts"
+      - "scripts/test-phase7c-observability-event-loop-source.mjs"
+      - "scripts/phase7c-observability-event-loop.test.ts"
+      - "scripts/phase7c-single-flight.test.ts"
+      - ".github/workflows/phase7c-observability-event-loop-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+
+      - name: Event-loop semantic regressions
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-observability-event-loop.test.ts
+
+      - name: Single-flight semantic RED/GREEN contract
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-single-flight.test.ts
+
+      - name: Observability event-loop source contract
+        run: node scripts/test-phase7c-observability-event-loop-source.mjs

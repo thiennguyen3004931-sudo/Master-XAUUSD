@@ -1,0 +1,45 @@
+name: Phase7C Web Lot Canonical UI CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-lot-ui-canonical
+    paths:
+      - "apps/web/src/phase7c-lot-settings.ts"
+      - "apps/web/src/pages/Phase7BOpsPage.tsx"
+      - "scripts/test-phase7c-web-lot-canonical-ui.ts"
+      - "scripts/phase7c-account-risk-fixed-tp-preservation.test.mjs"
+      - ".github/workflows/phase7c-web-lot-canonical-ui-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/web/src/phase7c-lot-settings.ts"
+      - "apps/web/src/pages/Phase7BOpsPage.tsx"
+      - "scripts/test-phase7c-web-lot-canonical-ui.ts"
+      - "scripts/phase7c-account-risk-fixed-tp-preservation.test.mjs"
+      - ".github/workflows/phase7c-web-lot-canonical-ui-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lot-canonical-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lot canonical UI behavior contract
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/test-phase7c-web-lot-canonical-ui.ts
+      - name: Account Risk preserves canonical Fixed TP
+        run: node --test scripts/phase7c-account-risk-fixed-tp-preservation.test.mjs
+      - name: Build Web
+        run: pnpm --filter @xauusd/web build

@@ -1,0 +1,42 @@
+name: Phase7C Lifecycle READY Window CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-lifecycle-ready-acquire-stable-window
+    paths:
+      - "apps/api/src/services/phase7c-lifecycle.service.ts"
+      - "apps/api/src/services/phase7c-lifecycle-ready-window.test.ts"
+      - "docs/superpowers/plans/2026-09-05-phase7c-lifecycle-ready-acquire-stable-window.md"
+      - ".github/workflows/phase7c-lifecycle-ready-window-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/api/src/services/phase7c-lifecycle.service.ts"
+      - "apps/api/src/services/phase7c-lifecycle-ready-window.test.ts"
+      - "docs/superpowers/plans/2026-09-05-phase7c-lifecycle-ready-acquire-stable-window.md"
+      - ".github/workflows/phase7c-lifecycle-ready-window-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle-ready-window:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+      - name: READY acquire plus stable regression
+        run: pnpm --filter @xauusd/api exec tsx --test src/services/phase7c-lifecycle-ready-window.test.ts

@@ -1,0 +1,56 @@
+name: Phase7C M5 Structural Trailing CI
+
+on:
+  pull_request:
+    paths:
+      - "scripts/phase7c-m5-structural-trailing.mjs"
+      - "scripts/phase7c-m5-structural-trailing-source-adapter.mjs"
+      - "scripts/phase7c-stop-monotonicity.mjs"
+      - "scripts/run-phase7c-trend-account-mode.mjs"
+      - "scripts/run-phase7c-sideway-account-mode.mjs"
+      - "scripts/test-phase7c-m5-structural-trailing-contract.mjs"
+      - "scripts/test-phase7c-stop-monotonicity.mjs"
+      - "scripts/test-phase7c-canonical-daily-recovery-executors-contract.mjs"
+      - "scripts/test-phase7c-live-arm-source.ps1"
+      - ".github/workflows/phase7c-m5-structural-trailing-ci.yml"
+  push:
+    branches:
+      - feat/phase7c-m5-structural-trailing
+    paths:
+      - "scripts/phase7c-m5-structural-trailing.mjs"
+      - "scripts/phase7c-m5-structural-trailing-source-adapter.mjs"
+      - "scripts/phase7c-stop-monotonicity.mjs"
+      - "scripts/run-phase7c-trend-account-mode.mjs"
+      - "scripts/run-phase7c-sideway-account-mode.mjs"
+      - "scripts/test-phase7c-m5-structural-trailing-contract.mjs"
+      - "scripts/test-phase7c-stop-monotonicity.mjs"
+      - "scripts/test-phase7c-canonical-daily-recovery-executors-contract.mjs"
+      - "scripts/test-phase7c-live-arm-source.ps1"
+      - ".github/workflows/phase7c-m5-structural-trailing-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  m5-structural-trailing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: M5 structural trailing contract
+        run: node ./scripts/test-phase7c-m5-structural-trailing-contract.mjs
+      - name: Stop monotonicity regression
+        run: node ./scripts/test-phase7c-stop-monotonicity.mjs
+      - name: Canonical Daily Recovery regression
+        run: node ./scripts/test-phase7c-canonical-daily-recovery-executors-contract.mjs
+
+  account-mode-source-regression:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: LIVE ARM source safety
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-arm-source.ps1

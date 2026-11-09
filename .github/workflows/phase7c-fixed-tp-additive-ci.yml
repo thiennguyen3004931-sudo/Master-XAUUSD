@@ -1,0 +1,251 @@
+name: Phase7C Fixed TP Additive CI
+# Task 9 focused + required legacy regression verification.
+
+on:
+  push:
+    branches:
+      - feat/phase7c-fixed-tp-additive
+    paths:
+      - "apps/api/src/services/phase7c-lot-settings.service.ts"
+      - "apps/api/src/routes/phase7c.route.ts"
+      - "apps/web/src/api.ts"
+      - "apps/web/src/phase7c-types.ts"
+      - "apps/web/src/pages/Phase7CControlCenterPage.tsx"
+      - "scripts/phase7c-fixed-tp.mjs"
+      - "scripts/phase7c-fixed-tp.test.mjs"
+      - "scripts/phase7c-fixed-tp-risk-profile.test.mjs"
+      - "scripts/phase7c-fixed-tp-runtime-wiring.test.mjs"
+      - "scripts/phase7c-fixed-tp-trend-snapshot.test.mjs"
+      - "scripts/phase7c-fixed-tp-trend-exit.test.mjs"
+      - "scripts/phase7c-fixed-tp-sideway-snapshot.test.mjs"
+      - "scripts/phase7c-fixed-tp-sideway-exit.test.mjs"
+      - "scripts/phase7c-fixed-tp-api-web.test.mjs"
+      - "scripts/phase7c-lot-settings.test.mjs"
+      - "scripts/test-phase7c-dual-account-mode-source.ps1"
+      - "scripts/lib/phase7c-account-mode.ps1"
+      - "scripts/run-phase7c-executors-local.ps1"
+      - "scripts/run-phase7c-trend-controller-local.ps1"
+      - "scripts/run-phase7c-trend-account-mode.mjs"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/run-phase7c-sideway-controller-local.ps1"
+      - "scripts/run-phase7c-sideway-account-mode.mjs"
+      - "scripts/run-phase7c-sideway-locked.mjs"
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - ".github/workflows/phase7c-fixed-tp-additive-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/api/src/services/phase7c-lot-settings.service.ts"
+      - "apps/api/src/routes/phase7c.route.ts"
+      - "apps/web/src/api.ts"
+      - "apps/web/src/phase7c-types.ts"
+      - "apps/web/src/pages/Phase7CControlCenterPage.tsx"
+      - "scripts/phase7c-fixed-tp.mjs"
+      - "scripts/phase7c-fixed-tp.test.mjs"
+      - "scripts/phase7c-fixed-tp-risk-profile.test.mjs"
+      - "scripts/phase7c-fixed-tp-runtime-wiring.test.mjs"
+      - "scripts/phase7c-fixed-tp-trend-snapshot.test.mjs"
+      - "scripts/phase7c-fixed-tp-trend-exit.test.mjs"
+      - "scripts/phase7c-fixed-tp-sideway-snapshot.test.mjs"
+      - "scripts/phase7c-fixed-tp-sideway-exit.test.mjs"
+      - "scripts/phase7c-fixed-tp-api-web.test.mjs"
+      - "scripts/phase7c-lot-settings.test.mjs"
+      - "scripts/test-phase7c-dual-account-mode-source.ps1"
+      - "scripts/lib/phase7c-account-mode.ps1"
+      - "scripts/run-phase7c-executors-local.ps1"
+      - "scripts/run-phase7c-trend-controller-local.ps1"
+      - "scripts/run-phase7c-trend-account-mode.mjs"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/run-phase7c-sideway-controller-local.ps1"
+      - "scripts/run-phase7c-sideway-account-mode.mjs"
+      - "scripts/run-phase7c-sideway-locked.mjs"
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - ".github/workflows/phase7c-fixed-tp-additive-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fixed-tp-contract-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build API contract with workspace dependencies
+        run: pnpm exec turbo run build --filter=@xauusd/api
+      - name: Fixed TP RED/GREEN contract
+        run: node --test scripts/phase7c-fixed-tp.test.mjs
+      - name: Fixed TP PowerShell risk-profile contract
+        run: node --test scripts/phase7c-fixed-tp-risk-profile.test.mjs
+      - name: Fixed TP runtime wiring contract
+        run: node --test scripts/phase7c-fixed-tp-runtime-wiring.test.mjs
+      - name: Trend Fixed TP snapshot contract
+        run: node --test scripts/phase7c-fixed-tp-trend-snapshot.test.mjs
+      - name: Trend Fixed TP exit contract
+        run: node --test scripts/phase7c-fixed-tp-trend-exit.test.mjs
+      - name: Sideway Fixed TP snapshot contract
+        run: node --test scripts/phase7c-fixed-tp-sideway-snapshot.test.mjs
+      - name: Sideway Fixed TP exit contract
+        run: node --test scripts/phase7c-fixed-tp-sideway-exit.test.mjs
+      - name: API/Web Fixed TP controls contract
+        run: node --test scripts/phase7c-fixed-tp-api-web.test.mjs
+      - name: Existing lot settings regression
+        run: node --test scripts/phase7c-lot-settings.test.mjs
+      - name: Build Web
+        run: pnpm --filter @xauusd/web build
+      - name: Diff hygiene
+        run: git diff --check
+
+  fixed-tp-contract-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build API contract with workspace dependencies
+        run: pnpm exec turbo run build --filter=@xauusd/api
+      - name: Fixed TP RED/GREEN contract
+        run: node --test scripts/phase7c-fixed-tp.test.mjs
+      - name: Fixed TP PowerShell risk-profile contract
+        run: node --test scripts/phase7c-fixed-tp-risk-profile.test.mjs
+      - name: Fixed TP runtime wiring contract
+        run: node --test scripts/phase7c-fixed-tp-runtime-wiring.test.mjs
+      - name: Trend Fixed TP snapshot contract
+        run: node --test scripts/phase7c-fixed-tp-trend-snapshot.test.mjs
+      - name: Trend Fixed TP exit contract
+        run: node --test scripts/phase7c-fixed-tp-trend-exit.test.mjs
+      - name: Sideway Fixed TP snapshot contract
+        run: node --test scripts/phase7c-fixed-tp-sideway-snapshot.test.mjs
+      - name: Sideway Fixed TP exit contract
+        run: node --test scripts/phase7c-fixed-tp-sideway-exit.test.mjs
+      - name: API/Web Fixed TP controls contract
+        run: node --test scripts/phase7c-fixed-tp-api-web.test.mjs
+      - name: Existing lot settings regression
+        run: node --test scripts/phase7c-lot-settings.test.mjs
+      - name: Build Web
+        run: pnpm --filter @xauusd/web build
+      - name: Diff hygiene
+        run: git diff --check
+
+  legacy-regressions-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Web lot canonical UI behavior contract
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/test-phase7c-web-lot-canonical-ui.ts
+      - name: Build Web for canonical lot UI
+        run: pnpm --filter @xauusd/web build
+      - name: Dual account Node tests
+        run: node scripts/test-phase7c-dual-account-mode.mjs
+      - name: Build risk engine dependency graph
+        run: pnpm --filter @xauusd/risk-engine... build
+      - name: Build API dual-account regression
+        run: pnpm --filter @xauusd/api... build
+      - name: Trend singleton ownership regression
+        run: node --test scripts/phase7c-trend-singleton-ownership.test.mjs
+      - name: Existing shared execution lock regression
+        run: node --test scripts/phase7c-execution-lock.test.mjs
+      - name: Trend singleton source syntax checks
+        run: |
+          node --check scripts/run-phase7c-trend-controller.mjs
+          node --check scripts/phase7c-runtime-singleton-lock.mjs
+      - name: Diff hygiene
+        run: git diff --check
+
+  legacy-regressions-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate dual-account MJS syntax
+        shell: pwsh
+        run: |
+          node --check .\scripts\phase7c-account-runtime-guard.mjs
+          node --check .\scripts\phase7c-live-source-adapters.mjs
+          node --check .\scripts\run-phase7c-trend-account-mode.mjs
+          node --check .\scripts\run-phase7c-sideway-account-mode.mjs
+          node --check .\scripts\run-phase7c-sideway-locked.mjs
+      - name: Broker timestamp normalization regression
+        shell: pwsh
+        run: python .\scripts\test-phase7c-broker-time-normalization.py
+      - name: Static dual-account source safety assertions
+        shell: pwsh
+        run: .\scripts\test-phase7c-dual-account-mode-source.ps1
+      - name: Activation safety assertions with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-activation-safety-source.ps1
+      - name: Activation safety assertions with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-activation-safety-source.ps1
+      - name: Compact MT5 dashboard assertions with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-compact-mt5-dashboard-source.ps1
+      - name: Compact MT5 dashboard assertions with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-compact-mt5-dashboard-source.ps1
+      - name: MT5 panel installer assertions with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-mt5-panel-installer-source.ps1
+      - name: MT5 panel installer assertions with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-mt5-panel-installer-source.ps1
+      - name: Dashboard safe deploy assertions with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-dashboard-safe-deploy-source.ps1
+      - name: Dashboard safe deploy assertions with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-dashboard-safe-deploy-source.ps1
+      - name: Dual account tests with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-dual-account-mode-local.ps1
+      - name: Dual account tests with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-dual-account-mode-local.ps1
+      - name: LIVE risk fail-closed assertions with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-risk-profile-source.ps1
+      - name: LIVE risk fail-closed assertions with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-live-risk-profile-source.ps1
+      - name: Trend singleton ownership regression
+        run: node --test scripts/phase7c-trend-singleton-ownership.test.mjs
+      - name: Existing shared execution lock regression
+        run: node --test scripts/phase7c-execution-lock.test.mjs
+      - name: Trend singleton source syntax checks
+        run: |
+          node --check scripts/run-phase7c-trend-controller.mjs
+          node --check scripts/phase7c-runtime-singleton-lock.mjs
+      - name: Diff hygiene
+        run: git diff --check

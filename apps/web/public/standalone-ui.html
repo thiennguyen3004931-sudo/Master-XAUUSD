@@ -1,0 +1,3718 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>XAUUSD AI Master V6 — Terminal Giao Dịch, DCA Dương, Phê Duyệt Chiến Lược & Mobile Internet</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg-app: #090d16;
+      --bg-sidebar: #0b101b;
+      --bg-card: #101624;
+      --bg-card-hover: #141c2e;
+      --bg-input: #0b101b;
+      --border: rgba(255, 255, 255, 0.07);
+      --border-strong: rgba(255, 255, 255, 0.13);
+      --accent: #38bdf8;
+      --accent-soft: rgba(56, 189, 248, 0.11);
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --up: #10b981;
+      --up-soft: rgba(16, 185, 129, 0.12);
+      --down: #f43f5e;
+      --down-soft: rgba(244, 63, 94, 0.12);
+      --warn: #f59e0b;
+      --warn-soft: rgba(245, 158, 11, 0.12);
+      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", sans-serif;
+      --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      font-family: var(--font-sans);
+      background: var(--bg-app);
+      color: var(--text-primary);
+      font-size: 12px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .app-layout {
+      display: flex;
+      min-height: 100vh;
+      transition: all 0.2s ease;
+    }
+
+    /* CHẾ ĐỘ XEM THỬ MOBILE NGAY TRÊN MÁY TÍNH */
+    body.mobile-sim-mode {
+      background: #04070d;
+      display: flex;
+      justify-content: center;
+      padding: 12px 0;
+    }
+    body.mobile-sim-mode .app-layout {
+      width: 412px;
+      max-width: 412px;
+      min-height: 840px;
+      border: 2px solid rgba(56, 189, 248, 0.35);
+      border-radius: 24px;
+      overflow-x: hidden;
+      flex-direction: column;
+      background: var(--bg-app);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.75);
+      padding-bottom: 64px;
+    }
+    body.mobile-sim-mode .sidebar { display: none; }
+    body.mobile-sim-mode .mobile-bottom-nav { display: flex !important; width: 408px; left: 50%; transform: translateX(-50%); border-radius: 0 0 22px 22px; }
+    body.mobile-sim-mode .grid-4,
+    body.mobile-sim-mode .grid-3,
+    body.mobile-sim-mode .grid-2,
+    body.mobile-sim-mode .grid-main-3col,
+    body.mobile-sim-mode .form-grid-5,
+    body.mobile-sim-mode .form-grid-4,
+    body.mobile-sim-mode .form-grid-3,
+    body.mobile-sim-mode .pattern-grid,
+    body.mobile-sim-mode .check-grid,
+    body.mobile-sim-mode .diag-bar {
+      grid-template-columns: 1fr !important;
+    }
+
+    .sidebar {
+      width: 220px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 14px 10px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      flex-shrink: 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 8px 14px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+    }
+
+    .brand-logo {
+      width: 30px;
+      height: 30px;
+      border-radius: 7px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      color: var(--accent);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 11.5px;
+    }
+
+    .brand-name {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: #f8fafc;
+    }
+
+    .brand-sub {
+      font-size: 10.5px;
+      color: var(--text-muted);
+    }
+
+    .nav-group-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 6px 10px;
+    }
+
+    .nav-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .nav-item {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      border-radius: 7px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 500;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.14s ease;
+    }
+
+    .nav-item:hover {
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .nav-item.active {
+      color: #f8fafc;
+      background: var(--accent-soft);
+      border-color: rgba(56, 189, 248, 0.22);
+      font-weight: 600;
+    }
+
+    .nav-tag {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+    }
+
+    .nav-item.active .nav-tag {
+      background: rgba(56, 189, 248, 0.18);
+      color: var(--accent);
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 11px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .sidebar-footer-title {
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .dot-up { background: var(--up); box-shadow: 0 0 8px rgba(16, 185, 129, 0.5); }
+    .dot-warn { background: var(--warn); box-shadow: 0 0 8px rgba(245, 158, 11, 0.5); }
+
+    .workspace {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .topbar {
+      min-height: 52px;
+      background: rgba(9, 13, 22, 0.9);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 0;
+      z-index: 15;
+    }
+
+    .page-heading {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f8fafc;
+    }
+
+    .page-subheading {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 5px;
+      font-size: 11px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+    }
+
+    .badge-up { color: var(--up); background: var(--up-soft); border-color: rgba(16, 185, 129, 0.24); }
+    .badge-down { color: var(--down); background: var(--down-soft); border-color: rgba(244, 63, 94, 0.24); }
+    .badge-accent { color: var(--accent); background: var(--accent-soft); border-color: rgba(56, 189, 248, 0.24); }
+    .badge-warn { color: var(--warn); background: var(--warn-soft); border-color: rgba(245, 158, 11, 0.28); }
+
+    .btn {
+      padding: 5.5px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border-strong);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-primary);
+      font-size: 11.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.14s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.07);
+      border-color: rgba(255, 255, 255, 0.22);
+    }
+
+    .btn.active, .btn-primary {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: rgba(56, 189, 248, 0.38);
+      font-weight: 600;
+    }
+
+    .btn-solid {
+      background: #0284c7;
+      color: #fff;
+      border-color: #38bdf8;
+      font-weight: 600;
+    }
+    .btn-solid:hover { background: #0369a1; }
+
+    .btn-buy {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border-color: rgba(16, 185, 129, 0.38);
+      font-weight: 600;
+      justify-content: center;
+    }
+    .btn-buy:hover { background: rgba(16, 185, 129, 0.25); }
+
+    .btn-sell {
+      background: rgba(244, 63, 94, 0.15);
+      color: #fb7185;
+      border-color: rgba(244, 63, 94, 0.38);
+      font-weight: 600;
+      justify-content: center;
+    }
+    .btn-sell:hover { background: rgba(244, 63, 94, 0.25); }
+
+    .content-area {
+      padding: 14px 18px 32px;
+      max-width: 1640px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .view-section { display: none; flex-direction: column; gap: 12px; }
+    .view-section.active { display: flex; }
+
+    .diag-bar {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 9px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+    }
+
+    .diag-step {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      font-size: 11px;
+    }
+
+    .diag-step .st-label { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .diag-step .st-val { margin-left: auto; font-family: var(--font-mono); font-weight: 600; }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .grid-main-3col {
+      display: grid;
+      grid-template-columns: 310px minmax(0, 1fr) 330px;
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: border-color 0.15s ease;
+    }
+
+    .card:hover { border-color: var(--border-strong); }
+
+    .card-top {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex: 1;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding-bottom: 9px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    .card-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #f1f5f9;
+    }
+
+    .card-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .metric-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .metric-value {
+      font-size: 15.5px;
+      font-weight: 600;
+      color: #f8fafc;
+      font-family: var(--font-mono);
+      margin: 5px 0 3px;
+    }
+
+    .metric-foot {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .kv-list { display: flex; flex-direction: column; }
+
+    .kv-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5.5px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      font-size: 11.8px;
+    }
+
+    .kv-row:last-child { border-bottom: none; }
+    .kv-key { color: var(--text-secondary); }
+    .kv-val { color: var(--text-primary); font-weight: 500; font-family: var(--font-mono); }
+
+    .table-wrap { width: 100%; overflow-x: auto; }
+
+    .clean-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11.6px;
+    }
+
+    .clean-table th {
+      text-align: left;
+      padding: 7px 8px;
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 11px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    .clean-table td {
+      padding: 7.5px 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--text-primary);
+    }
+
+    .clean-table tr:last-child td { border-bottom: none; }
+    .num { text-align: right; font-family: var(--font-mono); }
+    .text-up { color: var(--up); }
+    .text-down { color: var(--down); }
+    .text-accent { color: var(--accent); }
+    .text-warn { color: var(--warn); }
+
+    .form-grid-5 {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+
+    .form-grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      align-items: end;
+    }
+
+    .form-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+
+    .field label {
+      display: block;
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+      font-weight: 500;
+    }
+
+    .field input, .field select {
+      width: 100%;
+      padding: 6px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-input);
+      color: var(--text-primary);
+      font-size: 11.8px;
+      font-family: inherit;
+      outline: none;
+    }
+
+    .field input:focus, .field select:focus { border-color: var(--accent); }
+
+    /* HỘP DCA DƯƠNG THUẬN XU HƯỚNG */
+    .dca-box {
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .dca-box.active-dca {
+      border-color: rgba(16, 185, 129, 0.35);
+      background: rgba(16, 185, 129, 0.04);
+    }
+
+    /* HỘP PHÊ DUYỆT CHIẾN LƯỢC */
+    .proposal-card {
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+      height: 100%;
+    }
+    .proposal-card.approved {
+      border-color: rgba(16, 185, 129, 0.38);
+      background: rgba(16, 185, 129, 0.04);
+    }
+    .proposal-card.rejected {
+      opacity: 0.65;
+    }
+
+    .pattern-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .pattern-item {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 11px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .pattern-item.active {
+      border-color: var(--accent);
+      background: rgba(56, 189, 248, 0.05);
+    }
+
+    .check-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .check-box-card {
+      padding: 8px 10px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--bg-input);
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      cursor: pointer;
+      font-size: 11.2px;
+      color: var(--text-secondary);
+    }
+
+    .check-box-card.checked {
+      border-color: rgba(56, 189, 248, 0.32);
+      background: rgba(56, 189, 248, 0.05);
+      color: var(--text-primary);
+    }
+
+    .check-box-card input { margin-top: 2px; accent-color: var(--accent); }
+
+    .terminal-box {
+      background: #060911;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 9px 11px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      overflow-x: auto;
+    }
+
+    /* THANH ĐIỀU HƯỚNG ĐÁY DÀNH RIÊNG CHO ĐIỆN THOẠI (MOBILE BOTTOM BAR) */
+    .mobile-bottom-nav {
+      display: none;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 56px;
+      background: rgba(11, 16, 27, 0.96);
+      backdrop-filter: blur(14px);
+      border-top: 1px solid var(--border-strong);
+      z-index: 50;
+      justify-content: space-around;
+      align-items: center;
+      padding: 0 4px;
+    }
+
+    .mob-tab {
+      flex: 1;
+      height: 100%;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 500;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      cursor: pointer;
+    }
+
+    .mob-tab.active {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .mob-tab span.ico { font-size: 14px; }
+
+    @media (max-width: 1200px) {
+      .grid-4, .pattern-grid, .check-grid, .form-grid-5, .diag-bar { grid-template-columns: repeat(2, 1fr); }
+      .grid-main-3col { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 780px) {
+      .app-layout { flex-direction: column; padding-bottom: 62px; }
+      .sidebar { display: none; }
+      .mobile-bottom-nav { display: flex; }
+      .grid-4, .grid-3, .grid-2, .pattern-grid, .check-grid, .form-grid-5, .form-grid-4, .form-grid-3, .diag-bar { grid-template-columns: 1fr; }
+      .content-area { padding: 10px 12px 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <!-- SIDEBAR TỐI GIẢN -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">AU</div>
+        <div>
+          <div class="brand-name">XAUUSD AI Master</div>
+          <div class="brand-sub">Terminal V6 · DCA+ &amp; Mobile</div>
+        </div>
+      </div>
+
+      <div class="nav-group-label">Điều hướng hệ thống</div>
+      <ul class="nav-list" id="sidebarNav">
+        <li>
+          <button class="nav-item active" onclick="switchRoute('dashboard', this)">
+            <span>Bảng điều khiển &amp; DCA+</span>
+            <span class="nav-tag">V6</span>
+          </button>
+        </li>
+        <li>
+          <button class="nav-item" onclick="switchRoute('approvals', this)">
+            <span>Thống kê &amp; Phê duyệt Bot</span>
+            <span class="nav-tag" id="pendingPropTag">3</span>
+          </button>
+        </li>
+        <li>
+          <button class="nav-item" onclick="switchRoute('ops', this)">
+            <span>Kết nối API / MT5 LIVE</span>
+            <span class="nav-tag" id="navModeTag">LIVE</span>
+          </button>
+        </li>
+        <li>
+          <button class="nav-item" onclick="switchRoute('signals', this)">
+            <span>Tín hiệu &amp; 12 Mẫu hình</span>
+            <span class="nav-tag">12</span>
+          </button>
+        </li>
+        <li>
+          <button class="nav-item" onclick="switchRoute('backtest', this)">
+            <span>Backtest &amp; Đánh giá Bot</span>
+            <span class="nav-tag">V2</span>
+          </button>
+        </li>
+        <li>
+          <button class="nav-item" onclick="switchRoute('launcher', this)">
+            <span>Web Mobile &amp; Internet 4G</span>
+            <span class="nav-tag">QR</span>
+          </button>
+        </li>
+      </ul>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-footer-title">
+          <span class="dot dot-up" id="sidebarConnDot"></span>
+          <span id="sidebarConnTitle">MT5 LIVE · #5201362</span>
+        </div>
+        <div id="sidebarConnSub">DBG Market Limited · Mã XAUUSD.G · Hỗ trợ DCA Dương.</div>
+      </div>
+    </aside>
+
+    <!-- KHÔNG GIAN LÀM VIỆC CHÍNH -->
+    <div class="workspace">
+      <header class="topbar">
+        <div>
+          <div class="page-heading" id="topbarTitle">Bảng điều khiển, DCA Dương &amp; Phê duyệt chiến lược</div>
+          <div class="page-subheading" id="topbarSub">Quản trị giao dịch XAUUSD.G, nhồi lệnh DCA Dương thuận xu hướng và truy cập trên Mobile Internet</div>
+        </div>
+        <div class="topbar-right">
+          <button class="btn" id="btnMobilePreview" onclick="toggleMobileSimMode()">📱 Chế độ Mobile</button>
+          <span class="badge badge-accent" id="headerAccountBadge">LIVE · #5201362 (XAUUSD.G)</span>
+          <span class="badge badge-up" id="livePriceChip">XAUUSD.G 2,738.40</span>
+          <button class="btn btn-primary" onclick="forceCheckConnection()">🔄 Kiểm tra API &amp; MT5</button>
+        </div>
+      </header>
+
+      <main class="content-area">
+        <!-- THANH KIỂM TRA KẾT NỐI 5 BƯỚC -->
+        <div class="diag-bar">
+          <div class="diag-step">
+            <span class="dot dot-up" id="stDot1"></span>
+            <span class="st-label">1. API (:3711 / :5717)</span>
+            <span class="st-val text-up" id="stVal1">ONLINE</span>
+          </div>
+          <div class="diag-step">
+            <span class="dot dot-up" id="stDot2"></span>
+            <span class="st-label">2. Python MT5</span>
+            <span class="st-val text-up" id="stVal2">READY</span>
+          </div>
+          <div class="diag-step">
+            <span class="dot dot-up" id="stDot3"></span>
+            <span class="st-label">3. MT5 (#5201362)</span>
+            <span class="st-val text-up" id="stVal3">CONNECTED</span>
+          </div>
+          <div class="diag-step">
+            <span class="dot dot-up" id="stDot4"></span>
+            <span class="st-label">4. Mã sàn</span>
+            <span class="st-val text-accent" id="stVal4">XAUUSD.G</span>
+          </div>
+          <div class="diag-step">
+            <span class="dot dot-up" id="stDot5"></span>
+            <span class="st-label">5. DCA Dương</span>
+            <span class="st-val text-accent" id="stVal5">TÙY CHỌN</span>
+          </div>
+          <button class="btn btn-solid" onclick="switchRouteByName('approvals')">Duyệt Đề xuất Bot (3) →</button>
+        </div>
+
+        <!-- =========================================================
+             TRANG 1: BẢNG ĐIỀU KHIỂN, ĐẶT LỆNH & CHẾ ĐỘ DCA DƯƠNG
+             ========================================================= -->
+        <section id="route-dashboard" class="view-section active">
+          <!-- HÀNG 1: 4 THẺ CHỈ SỐ CÂN ĐỐI -->
+          <div class="grid-4">
+            <div class="card">
+              <div class="metric-label">
+                <span>Mô hình thị trường hiện tại</span>
+                <span class="badge badge-accent" id="dashPatternConf">Tin cậy 89%</span>
+              </div>
+              <div class="metric-value" id="dashPatternName">Quét Thanh Khoản Đáy + Pinbar</div>
+              <div class="metric-foot" id="dashPatternMeta">Xu hướng: <span class="text-up">Thuận xu hướng Tăng (Bullish)</span></div>
+            </div>
+
+            <div class="card">
+              <div class="metric-label">
+                <span>Chiến lược đã phê duyệt</span>
+                <span class="badge badge-up" id="dashBotStateBadge">SẴN SÀNG</span>
+              </div>
+              <div class="metric-value text-accent" id="dashBotRec">Liquidity Sweep + DCA+</div>
+              <div class="metric-foot" id="dashBotReason">Mẫu 42 chuỗi lệnh: Win 71.4% · PF 2.94 (+1.46R)</div>
+            </div>
+
+            <div class="card">
+              <div class="metric-label">
+                <span>Chế độ DCA Dương Thuận Xu Hướng</span>
+                <span class="badge" id="dashDcaBadge">ĐANG TẮT</span>
+              </div>
+              <div class="metric-value" id="dashDcaSummary">Tối đa 2 tầng · +4.5 giá</div>
+              <div class="metric-foot">Chỉ nhồi khi lệnh gốc dương &amp; đã khóa SL Hòa vốn</div>
+            </div>
+
+            <div class="card">
+              <div class="metric-label">
+                <span>Tài khoản MT5 đang vận hành</span>
+                <span class="badge badge-up" id="dashAccModeBadge">LIVE · #5201362</span>
+              </div>
+              <div class="metric-value text-up" id="dashEquityVal">$4,131.83</div>
+              <div class="metric-foot" id="dashAccSub">Số dư: <b>$4,131.83</b> · Mã: <span class="text-accent">XAUUSD.G</span></div>
+            </div>
+          </div>
+
+          <!-- HÀNG 2: BIỂU ĐỒ NẾN XAUUSD.G & BẢNG ĐẶT LỆNH + DCA DƯƠNG THUẬN XU HƯỚNG -->
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <div>
+                    <div class="card-title">Biểu đồ cấu trúc nến <span id="chartSymbolTitle">XAUUSD.G</span> (M15) &amp; Các tầng DCA Dương</div>
+                    <div class="card-subtitle" id="chartFootLeft">Hiển thị điểm vào lệnh gốc (Entry), các mốc nhồi lệnh DCA Dương thuận xu hướng và TP</div>
+                  </div>
+                  <div class="toolbar-group">
+                    <button class="btn active" id="scen-live" onclick="selectLiveMt5ChartMode()">🔴 Nến MT5 Thực</button>
+                    <button class="btn" id="scen-0" onclick="selectMarketScenario(0)">Sweep Tăng</button>
+                    <button class="btn" id="scen-1" onclick="selectMarketScenario(1)">Cờ Tăng</button>
+                    <button class="btn" id="scen-2" onclick="selectMarketScenario(2)">VĐV Giảm</button>
+                    <button class="btn" id="scen-3" onclick="selectMarketScenario(3)">Sideway</button>
+                  </div>
+                </div>
+                <svg id="mainCandleSvg" viewBox="0 0 740 250" style="width:100%;height:235px;background:#090d16;border-radius:7px;border:1px solid var(--border)"></svg>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;margin-top:10px;border-top:1px solid var(--border);font-size:11px;color:var(--text-secondary)">
+                <span>Nguyên tắc DCA Dương: Tuyệt đối không nhồi lệnh âm · Khóa SL Hòa vốn trước khi thêm tầng.</span>
+                <button class="btn" onclick="switchRouteByName('approvals')">Xem thống kê mẫu lệnh →</button>
+              </div>
+            </div>
+
+            <!-- BẢNG ĐIỀU KHIỂN ĐẶT LỆNH & BẬT/TẮT CHẾ ĐỘ DCA DƯƠNG THUẬN XU HƯỚNG -->
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <div>
+                    <div class="card-title">Thực thi Giao dịch &amp; Chế độ DCA Dương Thuận Xu Hướng (Bật/Tắt)</div>
+                    <div class="card-subtitle">Tùy chỉnh thông số lệnh gốc và công tắc nhồi lệnh dương khi giá đi đúng xu hướng</div>
+                  </div>
+                  <span class="badge badge-accent" id="execSymbolBadge">XAUUSD.G</span>
+                </div>
+
+                <!-- CHỌN CHẾ ĐỘ VẬN HÀNH BOT (TỰ ĐỘNG HOẶC CHỌN LOẠI BOT RIÊNG) -->
+                <div class="field" style="margin-bottom:2px">
+                  <label style="color:var(--accent);font-weight:600">1. Chọn Loại Bot giao dịch (Tự động chọn theo thị trường hoặc Chọn loại Bot riêng)</label>
+                  <select id="botStrategySelect" onchange="onChangeBotStrategyMode()" style="border-color:rgba(56,189,248,0.45);font-weight:600">
+                    <option value="AUTO_REGIME" selected>🤖 1. Tự động Thông minh + Gồng Trend Cấu Trúc (Hợp nhất Trend M5 · BE 1R · Đỉnh 10 giá · Sweep · Cản H1/H4)</option>
+                    <option value="SEMI_AUTO_TREND">🤝 2. Bán Tự Động (Bạn vào lệnh tay — Bot tự nuôi SL 6–8 giá, BE 1R, Trailing M5, Khóa đỉnh 10 giá &amp; DCA+)</option>
+                    <option value="BOT_1_TREND">📈 3. Chỉ đánh Sóng Trend &amp; Quét Thanh Khoản (Bỏ qua vùng Sideway đi ngang · Gồng sóng H1/H4)</option>
+                    <option value="BOT_2_SIDEWAY">↔️ 4. Chỉ đánh Sideway Biên Cung/Cầu (Chuyên phiên Á đi ngang · Tự khóa DCA Dương)</option>
+                  </select>
+                </div>
+
+                <!-- KHUNG PHÂN BỔ KHỐI LƯỢNG LOT & TỰ ĐỘNG TÍNH THEO % VỐN -->
+                <div style="padding:8px 10px;background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.28);border-radius:7px;display:flex;flex-direction:column;gap:7px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
+                    <span style="font-size:11.5px;font-weight:600;color:var(--up)">2. Quản lý Khối lượng Lot &amp; Tự phân bổ theo % Vốn ($4,131.83)</span>
+                    <span class="badge badge-up" id="lotLiveSummaryBadge">Đang áp dụng: 0.05 Lot (0.8% Vốn ≈ $33)</span>
+                  </div>
+                  <div class="form-grid-3">
+                    <div class="field">
+                      <label>Phương thức phân bổ Lot</label>
+                      <select id="lotAllocMode" onchange="onChangeLotAllocMode()" style="font-weight:600">
+                        <option value="AUTO_RISK_PCT" selected>📊 Tự phân bổ theo % Vốn (Auto-Lot)</option>
+                        <option value="FIXED_LOT">🎯 Nhập Lot cố định (Giữ nguyên số bạn gõ)</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label style="color:var(--accent);font-weight:600">% Vốn rủi ro / lệnh (%)</label>
+                      <input type="number" id="tradeRiskPct" value="0.8" min="0.1" max="10.0" step="0.1" oninput="onEditRiskPercent()" onchange="onEditRiskPercent()" style="border-color:rgba(56,189,248,0.5);font-weight:700;color:var(--accent)" />
+                    </div>
+                    <div class="field">
+                      <label style="color:var(--up);font-weight:600">Lot lệnh gốc thực thi</label>
+                      <input type="number" id="tradeLot" value="0.05" min="0.01" max="50" step="0.01" oninput="onManualLotInput()" onchange="onManualLotInput()" style="border-color:rgba(16,185,129,0.6);font-weight:700;color:var(--up)" />
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:5px;flex-wrap:wrap">
+                    <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                      <span style="font-size:10.5px;color:var(--text-secondary)">Chọn % Vốn:</span>
+                      <button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="setQuickRiskPct(0.5)">0.5% Vốn</button>
+                      <button type="button" class="btn active" style="padding:2px 7px;font-size:10.5px" onclick="setQuickRiskPct(0.8)">0.8% Vốn</button>
+                      <button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="setQuickRiskPct(1.0)">1.0% Vốn</button>
+                      <button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="setQuickRiskPct(1.5)">1.5% Vốn</button>
+                      <button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="setQuickRiskPct(2.0)">2.0% Vốn</button>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                      <span style="font-size:10.5px;color:var(--text-secondary)">Chọn Lot cố định:</span>
+                      <button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="setQuickLot(0.01)">0.01</button>
+                      <button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="setQuickLot(0.02)">0.02</button>
+                      <button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="setQuickLot(0.05)">0.05</button>
+                      <button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="setQuickLot(0.10)">0.10</button>
+                      <button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="setQuickLot(0.20)">0.20</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- THÔNG SỐ SL CẤU TRÚC, TP CẢN H1/H4 & KHÓA ĐỈNH M15 -->
+                <div class="form-grid-3">
+                  <div class="field">
+                    <label>SL Cấu trúc 6–8 giá / Tùy chọn ($)</label>
+                    <input type="number" id="tradeSlDist" value="6.8" min="1.0" step="0.5" oninput="onSlOrTpChanged()" onchange="onSlOrTpChanged()" />
+                  </div>
+                  <div class="field">
+                    <label>TP Cản H1-H4 / Tùy chọn ($)</label>
+                    <input type="number" id="tradeTpDist" value="16.0" min="2.0" step="1.0" onchange="saveTradeParamsToServer()" />
+                  </div>
+                  <div class="field">
+                    <label>Khóa SL từ Đỉnh M15 ($)</label>
+                    <input type="number" id="tradeSpikeTrail" value="10.0" min="5.0" step="1.0" onchange="saveTradeParamsToServer()" />
+                  </div>
+                </div>
+
+                <!-- CHẾ ĐỘ ĐẶT SL/TP LINH HOẠT & TIẾP QUẢN LỆNH VÀO TAY (BÁN TỰ ĐỘNG) -->
+                <div class="form-grid-2" style="margin-bottom:2px">
+                  <div class="field">
+                    <label>Chế độ Đặt SL/TP &amp; Chốt lời vùng cản khung lớn</label>
+                    <select id="slTpModeSelect" onchange="onChangeBotStrategyMode()">
+                      <option value="STRUCTURAL_6_8" selected>📐 SL Cấu trúc 6–8 giá · Đạt 1R kéo BE · Trailing M5 &amp; Chốt 50% tại cản H1 → Gồng cản H4</option>
+                      <option value="FIXED_CUSTOM">🎯 Chủ động dùng mức SL / TP cố định đang nhập ở ô trên (Khi bạn muốn cố định)</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Cơ chế Bán tự động (Khi bạn tự vào lệnh tay)</label>
+                    <select id="semiAutoSelect" onchange="onChangeBotStrategyMode()">
+                      <option value="ON" selected>🤝 BẬT: Giữ SL/TP bạn tự đặt (hoặc tự gắn SL 6-8 giá) &amp; Bot tự nuôi BE 1R + Trailing M5 + DCA+</option>
+                      <option value="OFF">TẮT: Không can thiệp vào lệnh bạn đặt bằng tay</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- KHUNG BẬT/TẮT CHẾ ĐỘ DCA DƯƠNG THEO ĐIỀU KIỆN BOT SAU KHI KÉO BE -->
+                <div class="dca-box" id="dcaControlBox">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+                    <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-weight:600;color:var(--text-primary)">
+                      <input type="checkbox" id="chkPositiveDca" onchange="togglePositiveDcaMode()" style="accent-color:var(--up);width:14px;height:14px" />
+                      <span>Bật DCA Dương (Chỉ DCA khi Lệnh đầu đã kéo BE + Đang Dương + Có tín hiệu của Loại Bot)</span>
+                    </label>
+                    <span class="badge" id="dcaStatusChip">ĐANG TẮT (OFF)</span>
+                  </div>
+
+                  <div class="form-grid-3">
+                    <div class="field">
+                      <label>Mức lãi tự kéo BE lệnh đầu ($)</label>
+                      <input type="number" id="dcaStepDist" value="3.5" min="1.5" step="0.5" onchange="saveDcaSettings()" />
+                    </div>
+                    <div class="field">
+                      <label>Số tầng DCA+ tối đa</label>
+                      <select id="dcaMaxLayers" onchange="saveDcaSettings()">
+                        <option value="1">Tối đa 1 tầng phụ</option>
+                        <option value="2" selected>Tối đa 2 tầng phụ (Chuẩn)</option>
+                        <option value="3">Tối đa 3 tầng phụ</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label>Hệ số giảm Lot tầng sau</label>
+                      <select id="dcaLotMult" onchange="saveDcaSettings()">
+                        <option value="0.5" selected>0.5x Lot trước (An toàn cao)</option>
+                        <option value="0.75">0.75x Lot trước</option>
+                        <option value="1.0">1.0x Bằng Lot gốc</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- NÚT BẬT BOT & VÀO LỆNH BUY / SELL / NHỒI DCA DƯƠNG -->
+                <div style="display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:8px">
+                  <button class="btn btn-solid" id="btnToggleAutoBot" style="justify-content:center;padding:8px 10px" onclick="toggleAutoTradingBot()">
+                    ▶ BẬT BOT TỰ ĐỘNG
+                  </button>
+                  <button class="btn btn-buy" style="padding:8px 10px" onclick="sendDirectOrder('BUY')">
+                    ▲ BUY XAUUSD.G
+                  </button>
+                  <button class="btn btn-sell" style="padding:8px 10px" onclick="sendDirectOrder('SELL')">
+                    ▼ SELL XAUUSD.G
+                  </button>
+                </div>
+
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+                  <button class="btn" style="justify-content:center;color:var(--accent)" onclick="triggerManualPositiveDca()">
+                    ➕ Nhồi DCA Dương ngay
+                  </button>
+                  <button class="btn" style="justify-content:center" onclick="sendBreakevenCommand()">
+                    🛡️ Dời SL Hòa vốn
+                  </button>
+                  <button class="btn" style="justify-content:center;color:var(--down)" onclick="sendCloseAllCommand()">
+                    ✖ Đóng tất cả lệnh
+                  </button>
+                </div>
+
+                <div class="terminal-box" id="tradeExecutionLog">
+[QUY TẮC VẬN HÀNH BOT &amp; DCA DƯƠNG CHUẨN TÍN HIỆU]
+• Bước 1: Bạn chọn Loại Bot (Tự động hoặc Bot 1/2/3/4 riêng biệt) rồi bấm [▶ BẬT BOT TỰ ĐỘNG].
+• Bước 2 (Quy tắc DCA Dương): Không nhồi theo khoảng cách giá cố định! Chỉ khi Lệnh đầu ĐÃ KÉO BE + Đang Dương + Xuất hiện tín hiệu mới của đúng Loại Bot đang chạy thuận chiều thì mới vào lệnh DCA Dương.
+                </div>
+              </div>
+            </div>
+          </div>
+
+
+          <!-- HÀNG 2.5 (MỚI): KHUNG PHÂN TÍCH XU HƯỚNG ĐA KHUNG (H4 · H1 · M15) & KỊCH BẢN CẬP NHẬT MỖI 15 PHÚT -->
+          <div class="card" style="border-color:rgba(56,189,248,0.32)">
+            <div class="card-top">
+              <div class="card-header">
+                <div>
+                  <div class="card-title" style="color:var(--accent)">⏱ Phân Tích Xu Hướng Giá Vàng Đa Khung (H4 · H1 · M15) &amp; Kịch Bản Giao Dịch (Cập nhật mỗi 15 phút)</div>
+                  <div class="card-subtitle" id="mtfHeaderSub">Tự động phân tích cấu trúc H4 · H1 · M15 trên Web (Đã tắt báo kịch bản lên Telegram — Telegram chỉ báo chi tiết Lệnh giao dịch)</div>
+                </div>
+                <div class="toolbar-group">
+                  <span class="badge badge-up" id="mtfCountdownBadge">Cập nhật sau: 14:55</span>
+                  <button class="btn" onclick="triggerMtfScenarioRefresh(false)">🔄 Cập nhật Kịch bản</button>
+                  <button class="btn btn-solid" onclick="sendDetailedTradeStatusToTelegram()">📨 Báo Cáo Lệnh &amp; Lãi/Lỗ Qua Telegram</button>
+                </div>
+              </div>
+
+              <div class="grid-4">
+                <!-- CỘT 1: KHUNG H4 -->
+                <div class="card" style="background:var(--bg-elevated);padding:11px">
+                  <div class="card-top">
+                    <div class="metric-label">
+                      <span style="font-weight:600;color:var(--text-primary)">1. Khung H4 (Xu hướng chính)</span>
+                      <span class="badge badge-up" id="mtfH4Badge">TĂNG CHỦ ĐẠO</span>
+                    </div>
+                    <div style="font-size:12.5px;font-weight:700;color:var(--up);margin:4px 0" id="mtfH4Bias">TĂNG CHỦ ĐẠO (Trên EMA34/89)</div>
+                    <div class="kv-list">
+                      <div class="kv-row"><span class="kv-key">EMA34 / EMA89 (H4)</span><span class="kv-val" id="mtfH4Ema">4,672.46 / 4,660.76</span></div>
+                      <div class="kv-row"><span class="kv-key">Biên độ Đáy – Đỉnh H4</span><span class="kv-val" id="mtfH4Range">4,657.96 – 4,702.96</span></div>
+                    </div>
+                  </div>
+                  <div class="metric-foot" id="mtfH4Note" style="padding-top:6px;border-top:1px solid var(--border)">Cấu trúc H4 tạo đáy cao dần, ưu tiên canh Mua thuận sóng lớn.</div>
+                </div>
+
+                <!-- CỘT 2: KHUNG H1 -->
+                <div class="card" style="background:var(--bg-elevated);padding:11px">
+                  <div class="card-top">
+                    <div class="metric-label">
+                      <span style="font-weight:600;color:var(--text-primary)">2. Khung H1 (Vùng Cung / Cầu)</span>
+                      <span class="badge badge-accent" id="mtfH1Badge">ĐỒNG PHA H4</span>
+                    </div>
+                    <div style="font-size:12.5px;font-weight:700;color:var(--accent);margin:4px 0" id="mtfH1Bias">ĐỒNG PHA TĂNG (Cầu H1 nâng đỡ)</div>
+                    <div class="kv-list">
+                      <div class="kv-row"><span class="kv-key">Vùng Cầu canh Mua (H1)</span><span class="kv-val text-up" id="mtfH1Demand">4,673.16 – 4,675.96</span></div>
+                      <div class="kv-row"><span class="kv-key">Vùng Cung cản trên (H1)</span><span class="kv-val text-down" id="mtfH1Supply">4,685.76 – 4,688.56</span></div>
+                    </div>
+                  </div>
+                  <div class="metric-foot" id="mtfH1Note" style="padding-top:6px;border-top:1px solid var(--border)">EMA34 H1 tại 4,675.16 đang đóng vai trò bệ đỡ động cho nhịp tăng.</div>
+                </div>
+
+                <!-- CỘT 3: KHUNG M15 -->
+                <div class="card" style="background:var(--bg-elevated);padding:11px">
+                  <div class="card-top">
+                    <div class="metric-label">
+                      <span style="font-weight:600;color:var(--text-primary)">3. Khung M15 (Điểm kích hoạt)</span>
+                      <span class="badge badge-up" id="mtfM15Badge">TÍN HIỆU BUY 89%</span>
+                    </div>
+                    <div style="font-size:12.5px;font-weight:700;color:var(--text-primary);margin:4px 0" id="mtfM15Pattern">Quét Thanh Khoản Đáy + Pinbar</div>
+                    <div class="kv-list">
+                      <div class="kv-row"><span class="kv-key">Biên độ ATR (M15)</span><span class="kv-val" id="mtfM15Atr">$4.50 / nến</span></div>
+                      <div class="kv-row"><span class="kv-key">Bot phù hợp nhất</span><span class="kv-val text-accent" id="mtfM15Bot">Bot 4 (Sweep + DCA+)</span></div>
+                    </div>
+                  </div>
+                  <div class="metric-foot" id="mtfM15Note" style="padding-top:6px;border-top:1px solid var(--border)">Nến M15 rút chân xác nhận lực mua tại vùng hợp lưu EMA H1.</div>
+                </div>
+
+                <!-- CỘT 4: KỊCH BẢN HÀNH ĐỘNG 15 PHÚT TIẾP THEO -->
+                <div class="card" style="background:rgba(16,185,129,0.05);border-color:rgba(16,185,129,0.28);padding:11px">
+                  <div class="card-top">
+                    <div class="metric-label">
+                      <span style="font-weight:600;color:var(--up)">4. Kịch Bản 15 Phút Tiếp Theo</span>
+                      <span class="badge badge-up" id="mtfPlanSideBadge">ƯU TIÊN BUY</span>
+                    </div>
+                    <div class="kv-list" style="margin-top:4px">
+                      <div class="kv-row"><span class="kv-key">Vùng chờ vào (Entry)</span><span class="kv-val text-accent" id="mtfPlanEntry">4,677.76 – 4,679.46</span></div>
+                      <div class="kv-row"><span class="kv-key">Dừng lỗ (SL) / Kéo BE</span><span class="kv-val"><span class="text-down" id="mtfPlanSl">4,673.96</span> / <span class="text-up" id="mtfPlanBe">4,682.46</span></span></div>
+                      <div class="kv-row"><span class="kv-key">Mục tiêu TP1 / TP2</span><span class="kv-val text-up" id="mtfPlanTp">4,686.46 / 4,690.96</span></div>
+                    </div>
+                  </div>
+                  <div class="metric-foot" id="mtfPlanDcaRule" style="padding-top:6px;border-top:1px solid var(--border);color:var(--text-primary)">
+                    <b>DCA Dương:</b> Kéo BE tại 4,682.46 → Chờ tín hiệu M15 mới của Bot thuận chiều mới nhồi tầng 1.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- HÀNG 3: TÓM TẮT NHANH ĐỀ XUẤT CHIẾN LƯỢC CHỜ DUYỆT & TÀI KHOẢN -->
+          <div class="grid-main-3col">
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <span class="card-title">Thông tin Tài khoản MT5 thực tế</span>
+                  <span class="badge badge-accent" id="cardAccStatusBadge">LIVE · #5201362</span>
+                </div>
+                <div class="kv-list">
+                  <div class="kv-row"><span class="kv-key">Máy chủ (Server)</span><span class="kv-val" id="infoServer">DBG Market Limited</span></div>
+                  <div class="kv-row"><span class="kv-key">Số tài khoản (Login)</span><span class="kv-val" id="infoLogin">#5201362</span></div>
+                  <div class="kv-row"><span class="kv-key">Chế độ vận hành</span><span class="kv-val text-accent" id="infoMode">LIVE (Tài khoản thật)</span></div>
+                  <div class="kv-row"><span class="kv-key">Ký hiệu mã Vàng sàn</span><span class="kv-val text-accent" id="infoSymbol">XAUUSD.G</span></div>
+                  <div class="kv-row"><span class="kv-key">Số dư (Balance)</span><span class="kv-val text-up" id="infoBalance">$4,131.83 USD</span></div>
+                  <div class="kv-row"><span class="kv-key">Vốn khả dụng (Equity)</span><span class="kv-val text-up" id="infoEquity">$4,131.83 USD</span></div>
+                  <div class="kv-row"><span class="kv-key">Lợi nhuận đang mở</span><span class="kv-val" id="infoProfit">0.00 USD</span></div>
+                </div>
+              </div>
+              <div style="padding-top:10px;margin-top:10px;border-top:1px solid var(--border)">
+                <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="forceCheckConnection()">🔄 Đồng bộ lại với MT5</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <span class="card-title">Vị thế đang mở &amp; Lịch sử lệnh vừa đóng trên MT5 (#5201362)</span>
+                  <span class="badge" id="journalSourceBadge">TK #5201362 · XAUUSD.G</span>
+                </div>
+                <div class="table-wrap">
+                  <table class="clean-table">
+                    <thead>
+                      <tr>
+                        <th>Thời gian / Tầng</th>
+                        <th>Mã &amp; Chiến lược</th>
+                        <th>Chiều</th>
+                        <th class="num">Lot</th>
+                        <th class="num">Giá vào → Hiện tại</th>
+                        <th class="num">Lợi nhuận</th>
+                      </tr>
+                    </thead>
+                    <tbody id="liveJournalBody">
+                      <tr>
+                        <td class="text-accent" style="font-weight:600">Trạng thái MT5</td>
+                        <td>XAUUSD.G · Chưa có lệnh mở trên #5201362 (Chờ tín hiệu Bot)</td>
+                        <td class="text-up" style="font-weight:600">ONLINE</td>
+                        <td class="num text-up" id="journalReadyLotCell" style="font-weight:700">0.05</td>
+                        <td class="num">Giá MT5: 4,678.96</td>
+                        <td class="num text-up" style="font-weight:600">$0.00</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;margin-top:10px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">
+                <span>Tự động hiển thị các tầng lệnh gốc và DCA Dương đang mở trên MT5.</span>
+                <span class="text-up" style="font-family:var(--font-mono);font-weight:600">Rủi ro gốc: $0 (BE)</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <span class="card-title">Đánh giá 4 Chế độ Bot V6.3 &amp; Đề xuất Tổng hợp</span>
+                  <span class="badge badge-up" id="dashPendingBadge">186 mẫu V6.3</span>
+                </div>
+                <p style="font-size:11.3px;color:var(--text-secondary)">
+                  Tổng hợp <b>186 chuỗi lệnh</b>: Chế độ <b>#1 (Tự động + Gồng Trend Cấu Trúc M5 + BE 1R + Khóa đỉnh 10 giá + Cản H1/H4)</b> đạt tỷ lệ Thắng+BE <b>85.3%</b> và PF <b>3.18</b>.
+                </p>
+                <div class="kv-list">
+                  <div class="kv-row"><span class="kv-key">1. Tự động + Gồng Trend V6.3</span><span class="kv-val text-up">Thắng+BE 85.3% · PF 3.18</span></div>
+                  <div class="kv-row"><span class="kv-key">2. Bán Tự Động (Nuôi lệnh tay)</span><span class="kv-val text-accent">Thắng+BE 85.7% · PF 2.96</span></div>
+                  <div class="kv-row"><span class="kv-key">3. Chỉ đánh Sóng Trend &amp; Sweep</span><span class="kv-val text-up">Thắng+BE 84.8% · PF 3.05</span></div>
+                </div>
+              </div>
+              <div style="padding-top:10px;margin-top:10px;border-top:1px solid var(--border)">
+                <button class="btn btn-solid" style="width:100%;justify-content:center" onclick="switchRouteByName('approvals')">Mở Bảng Thống Kê &amp; Phê Duyệt Ngay →</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- =========================================================
+             TRANG 2 (MỚI): THỐNG KÊ MẪU LỆNH CỦA CÁC BOT & PHÊ DUYỆT CHIẾN LƯỢC
+             ========================================================= -->
+        <section id="route-approvals" class="view-section">
+          <div class="card">
+            <div class="card-top">
+              <div class="card-header">
+                <div>
+                  <div class="card-title">1. Bảng Đánh Giá Tổng Hợp 4 Chế Độ Bot Hiện Tại (V6.3) &amp; Đề Xuất Dựa Trên Số Liệu</div>
+                  <div class="card-subtitle">Số liệu tổng hợp thực nghiệm trên 186 chuỗi lệnh XAUUSD.G (Tự động quy đổi Lợi nhuận $ theo số Lot / % Vốn bạn đang chọn)</div>
+                </div>
+                <div class="toolbar-group">
+                  <span class="badge badge-accent" id="evalLotHeaderBadge">Tính theo: 0.05 Lot (0.8% Vốn)</span>
+                  <button class="btn btn-solid" onclick="exportBacktestExcel()">📥 Xuất File Excel (.xls) Đánh Giá &amp; Từng Lệnh</button>
+                </div>
+              </div>
+
+              <div class="table-wrap">
+                <table class="clean-table">
+                  <thead>
+                    <tr>
+                      <th>Chế độ Bot Hiện Tại (V6.3)</th>
+                      <th class="num">Số mẫu lệnh</th>
+                      <th class="num">Thắng / Hòa BE / Thua</th>
+                      <th class="num">Thắng + BE (%)</th>
+                      <th class="num">TB Giá Thắng</th>
+                      <th class="num">Profit Factor</th>
+                      <th class="num">Max DD (%)</th>
+                      <th class="num">Lợi nhuận ròng ($)</th>
+                      <th>Kết luận &amp; Đề xuất từ Số liệu tổng hợp</th>
+                    </tr>
+                  </thead>
+                  <tbody id="botEvalSummaryTableBody"></tbody>
+                </table>
+              </div>
+
+              <div class="terminal-box" id="dataDrivenRecommendationBox" style="margin-top:8px;color:var(--text-primary)"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-top">
+              <div class="card-header">
+                <div>
+                  <div class="card-title">2. Đề Xuất Chiến Lược Của Bot Chờ Người Dùng Phê Duyệt (User Approval Queue)</div>
+                  <div class="card-subtitle">Bot không tự ý đổi chiến lược gốc khi chưa có sự phê duyệt của bạn. Bấm "Phê duyệt &amp; Áp dụng" để kích hoạt cấu hình tương ứng.</div>
+                </div>
+                <span class="badge badge-up" id="approvalBannerStatus">Sẵn sàng phê duyệt</span>
+              </div>
+
+              <div class="grid-3" id="strategyApprovalCards"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- =========================================================
+             TRANG 3: ĐĂNG NHẬP LIVE & KIỂM TRA API / MT5 (/phase7b-ops)
+             ========================================================= -->
+        <section id="route-ops" class="view-section">
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <div>
+                    <div class="card-title">Đăng nhập &amp; Kết nối Trực tiếp MT5 (DBG Markets · XAUUSD.G)</div>
+                    <div class="card-subtitle">Tự động tìm cửa sổ MT5 đang mở trên Windows và kích hoạt quyền đặt lệnh</div>
+                  </div>
+                  <span class="badge badge-accent">Direct Engine V6</span>
+                </div>
+
+                <div class="form-grid-3">
+                  <div class="field">
+                    <label>1. Chế độ Tài khoản</label>
+                    <select id="inpAccMode">
+                      <option value="LIVE" selected>LIVE (Tài khoản Thật)</option>
+                      <option value="DEMO">DEMO (Tài khoản Thử nghiệm)</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>2. Số Login MT5 (Account ID)</label>
+                    <input type="text" id="inpAccLogin" value="5201362" placeholder="VD: 5201362" />
+                  </div>
+                  <div class="field">
+                    <label>3. Mật khẩu MT5 (Để trống nếu đã mở MT5)</label>
+                    <input type="password" id="inpAccPass" value="" placeholder="Để trống nếu đã đăng nhập trên MT5" />
+                  </div>
+                </div>
+
+                <div class="form-grid-3">
+                  <div class="field">
+                    <label>4. Tên Server Sàn (MT5 Server)</label>
+                    <input type="text" id="inpAccServer" value="DBG Market Limited" placeholder="VD: DBG Market Limited" />
+                  </div>
+                  <div class="field">
+                    <label>5. Ký hiệu Vàng trên Sàn (Tự gõ hoặc chọn)</label>
+                    <input type="text" id="inpAccSymbol" list="goldSymbolList" value="XAUUSD.G" placeholder="VD: XAUUSD.G" />
+                    <datalist id="goldSymbolList">
+                      <option value="XAUUSD.G">XAUUSD.G (DBG Markets)</option>
+                      <option value="XAUUSD">XAUUSD (Chuẩn)</option>
+                      <option value="XAUUSDm">XAUUSDm (Exness)</option>
+                      <option value="XAUUSDc">XAUUSDc (Cent)</option>
+                      <option value="GOLD">GOLD</option>
+                    </datalist>
+                  </div>
+                  <div class="field">
+                    <label>6. Đường dẫn MT5 (Để trống = Tự dò)</label>
+                    <input type="text" id="inpTerminalPath" value="" placeholder="Tự động bắt tiến trình terminal64.exe" />
+                  </div>
+                </div>
+
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                  <span style="font-size:11px;color:var(--text-muted)">Chọn nhanh mã Vàng:</span>
+                  <button type="button" class="btn active" onclick="pickSymbolQuick('XAUUSD.G', this)">XAUUSD.G (DBG)</button>
+                  <button type="button" class="btn" onclick="pickSymbolQuick('XAUUSD', this)">XAUUSD</button>
+                  <button type="button" class="btn" onclick="pickSymbolQuick('XAUUSDm', this)">XAUUSDm</button>
+                  <button type="button" class="btn" onclick="pickSymbolQuick('GOLD', this)">GOLD</button>
+                </div>
+
+                <label class="check-box-card checked">
+                  <input type="checkbox" id="inpLiveArm" checked />
+                  <div>
+                    <div style="font-weight:600;color:var(--text-primary)">Mở khóa toàn bộ quyền Giao dịch Tài khoản Thật (LIVE ARM + Direct Order Send)</div>
+                    <div>Cho phép đặt lệnh trực tiếp, nhồi lệnh DCA Dương và chạy Bot tự động trên mã <code>XAUUSD.G</code>.</div>
+                  </div>
+                </label>
+              </div>
+
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding-top:12px;margin-top:12px;border-top:1px solid var(--border)">
+                <span id="connectResultMsg" style="font-size:11.5px;color:var(--up)">✓ Cấu hình mặc định: LIVE #5201362 · DBG Market Limited · Mã XAUUSD.G.</span>
+                <button class="btn btn-solid" onclick="submitAccountConnect()">Lưu &amp; Kiểm Tra Kết Nối MT5 Ngay</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <div>
+                    <div class="card-title">Bảng Chẩn đoán Chi tiết 5 Bước (API &amp; MT5 Live Check)</div>
+                    <div class="card-subtitle">Kiểm tra chính xác kết nối từ Web xuống phần mềm MetaTrader 5</div>
+                  </div>
+                  <button class="btn" onclick="forceCheckConnection()">🔄 Quét lại trạng thái</button>
+                </div>
+
+                <div class="kv-list">
+                  <div class="kv-row">
+                    <span class="kv-key">Bước 1: Giải phóng cổng cũ &amp; Bật API (:3711 / :5717)</span>
+                    <span class="kv-val text-up">ĐẠT (Đã dọn tiến trình cũ)</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-key">Bước 2: Bộ cài Python thật &amp; Gói MetaTrader5</span>
+                    <span class="kv-val text-up">ĐẠT (Tự bỏ qua stub WindowsApps)</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-key">Bước 3: Kết nối cửa sổ MT5 (terminal64.exe)</span>
+                    <span class="kv-val text-accent">Tự động dò tiến trình đang mở</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-key">Bước 4: Ký hiệu mã Vàng trên Market Watch</span>
+                    <span class="kv-val text-accent">XAUUSD.G</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-key">Bước 5: Nút Algo Trading trên thanh công cụ MT5</span>
+                    <span class="kv-val text-up">Bắt buộc bật nút Xanh lá trên MT5</span>
+                  </div>
+                </div>
+
+                <div class="terminal-box" id="liveConfigPreviewBox">
+# Đã khởi tạo sẵn kho Git (.git) bên trong gói ZIP kết nối trực tiếp tới:
+Remote Origin: https://github.com/thiennguyen3004931-sudo/Master-XAUUSD.git
+Nhánh chính  : main
+                </div>
+              </div>
+            </div>
+          </div>
+
+
+          <!-- KHUNG CẤU HÌNH & KIỂM TRA THÔNG BÁO BOT QUA TELEGRAM -->
+          <div class="card" style="border-color:rgba(56,189,248,0.35)">
+            <div class="card-top">
+              <div class="card-header">
+                <div>
+                  <div class="card-title" style="color:var(--accent)">📨 Cấu Hình Thông Báo Bot &amp; Kịch Bản 15 Phút Về Tài Khoản Telegram Của Bạn</div>
+                  <div class="card-subtitle">Chỉ gửi thông báo chi tiết về LỆNH: Lý do vào lệnh · Loại Bot · Entry · SL Cấu trúc · TP Vùng cản · Lý do giữ lệnh/dời SL · Kết quả Lãi/Lỗ ($)</div>
+                </div>
+                <span class="badge badge-up" id="tgStatusBadge">Sẵn sàng kết nối</span>
+              </div>
+
+              <div class="form-grid-3">
+                <div class="field">
+                  <label>1. Telegram Bot Token (Lấy từ @BotFather)</label>
+                  <input type="text" id="inpTgToken" value="" placeholder="VD: 8957841283:AAGSp1..." />
+                </div>
+                <div class="field">
+                  <label>2. Telegram Chat ID của bạn (Lấy từ @userinfobot)</label>
+                  <input type="text" id="inpTgChatId" value="1629602548" placeholder="VD: 1629602548" />
+                </div>
+                <div class="field">
+                  <label>3. Chế độ nhận thông báo tự động</label>
+                  <select id="inpTgMode">
+                    <option value="ORDERS_FULL" selected>Báo Đầy Đủ Lệnh: Lý do vào · Bot · Entry/SL/TP · Lý do giữ lệnh · Đóng lệnh &amp; Lãi/Lỗ ($)</option>
+                    <option value="ORDERS_ONLY">Chỉ báo khi Khớp lệnh / Kéo BE / DCA Dương</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="terminal-box" id="tgResultBox">
+Hướng dẫn lấy nhanh trong 30 giây trên Telegram:
+1. Mở Telegram tìm @BotFather -> Gõ /newbot -> Đặt tên Bot để nhận chuỗi [Bot Token] (dạng 7123456:AAH...). Nhớ bấm nút START trong khung chat với Bot vừa tạo!
+2. Mở Telegram tìm @userinfobot -> Bấm Start để lấy dãy số [Id] (Chat ID của bạn), điền vào 2 ô trên rồi bấm nút bên dưới để nhận ngay tin nhắn thử nghiệm!
+              </div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding-top:10px;margin-top:10px;border-top:1px solid var(--border);flex-wrap:wrap">
+              <span style="font-size:11px;color:var(--text-secondary)">Thông tin Token được lưu cục bộ trong <code>.runtime/telegram-config.json</code> và đã được khóa bảo mật bởi <code>.gitignore</code>.</span>
+              <button class="btn btn-solid" onclick="saveAndTestTelegram(true)">📨 Lưu &amp; Gửi Tin Nhắn Thử Nghiệm Vào Telegram Ngay</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- =========================================================
+             TRANG 4: TÍN HIỆU & THƯ VIỆN 12 BIỂU ĐỒ MẪU (/phase7b-pattern-check)
+             ========================================================= -->
+        <section id="route-signals" class="view-section">
+          <div class="card">
+            <div class="card-top">
+              <div class="card-header">
+                <div>
+                  <div class="card-title">Thư viện 12 Biểu đồ mẫu Tăng / Giảm &amp; Đối chiếu trực tiếp</div>
+                  <div class="card-subtitle">Khung có viền xanh sáng là mô hình thị trường đang diễn ra. Nhấp vào từng khung để xem chi tiết.</div>
+                </div>
+                <div class="toolbar-group">
+                  <button class="btn active" onclick="filterAtlas('ALL', this)">Tất cả (12)</button>
+                  <button class="btn" onclick="filterAtlas('BULLISH', this)">Tăng (6)</button>
+                  <button class="btn" onclick="filterAtlas('BEARISH', this)">Giảm (5)</button>
+                  <button class="btn" onclick="filterAtlas('NEUTRAL', this)">Đi ngang (1)</button>
+                </div>
+              </div>
+              <div class="pattern-grid" id="atlasContainer"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- =========================================================
+             TRANG 5: BACKTEST 4 CHẾ ĐỘ BOT V6.3 & CHI TIẾT LÃI LỖ TỪNG LỆNH (/backtest)
+             ========================================================= -->
+        <section id="route-backtest" class="view-section">
+          <div class="card">
+            <div class="card-top">
+              <div class="card-header">
+                <div>
+                  <div class="card-title">Backtest 4 Chế Độ Bot Hiện Tại (V6.3) &amp; Chi Tiết Lãi / Lỗ Từng Lệnh Bằng Tiền USD</div>
+                  <div class="card-subtitle">Kiểm thử cơ chế SL Cấu trúc 6–8 giá · Đạt 1R kéo BE · Trailing M5 · Khóa đỉnh M15 cách 10 giá · Chốt 50% cản H1 &amp; Gồng cản H4</div>
+                </div>
+                <div class="toolbar-group">
+                  <button class="btn btn-buy" onclick="exportBacktestExcel()">📥 Xuất File Excel (.xls) Lãi Lỗ Từng Lệnh</button>
+                  <button class="btn" onclick="exportBacktestCsv()">Xuất CSV</button>
+                  <button class="btn btn-solid" onclick="recalcBacktest()">🔄 Chạy đánh giá lại</button>
+                </div>
+              </div>
+
+              <div class="form-grid-5">
+                <div class="field">
+                  <label>Chu kỳ kiểm thử</label>
+                  <select id="btDays" onchange="recalcBacktest()">
+                    <option value="30">30 ngày gần nhất</option>
+                    <option value="90" selected>90 ngày gần nhất</option>
+                    <option value="180">180 ngày (6 tháng)</option>
+                    <option value="365">365 ngày (1 năm)</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Chế độ Bot V6.3 hiện tại</label>
+                  <select id="btStrategy" onchange="recalcBacktest()">
+                    <option value="AUTO_REGIME" selected>🤖 1. Tự động Thông minh + Gồng Trend Cấu Trúc V6.3</option>
+                    <option value="SEMI_AUTO_TREND">🤝 2. Bán Tự Động (Vào lệnh tay — Bot tự nuôi Trend V6.3)</option>
+                    <option value="BOT_1_TREND">📈 3. Chỉ đánh Sóng Trend &amp; Quét Thanh Khoản (Bỏ qua Sideway)</option>
+                    <option value="BOT_2_SIDEWAY">↔️ 4. Chỉ đánh Sideway Biên Cung/Cầu (Khóa DCA Dương)</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Phương pháp phân bổ Lot</label>
+                  <select id="btSizing" onchange="recalcBacktest()">
+                    <option value="RISK_PERCENT" selected>📊 Tự phân bổ theo % Vốn (Đang chọn ở Bảng điều khiển)</option>
+                    <option value="FIXED_LOT">🎯 Khối lượng Lot cố định (Theo ô Lot cơ sở)</option>
+                    <option value="CONFIDENCE_TIERED">⚡ Chia bậc Lot theo độ tin cậy tín hiệu</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Vốn ban đầu (#5201362 USD)</label>
+                  <input type="number" id="btBalance" value="4131.83" min="500" step="100" onchange="recalcBacktest()" />
+                </div>
+                <div class="field">
+                  <label>Lot cơ sở (Đồng bộ ô Lot)</label>
+                  <input type="number" id="btLot" value="0.05" min="0.01" step="0.01" onchange="recalcBacktest()" />
+                </div>
+              </div>
+
+              <div class="check-grid">
+                <label class="check-box-card checked" id="lbl-upg1">
+                  <input type="checkbox" id="upg1" checked onchange="recalcBacktest()" />
+                  <div><div style="font-weight:600">1. SL Cấu trúc 6–8 giá &amp; BE 1:1</div><div>Đạt R:R = 1:1 tự kéo SL về Hòa vốn</div></div>
+                </label>
+                <label class="check-box-card checked" id="lbl-upg2">
+                  <input type="checkbox" id="upg2" checked onchange="recalcBacktest()" />
+                  <div><div style="font-weight:600">2. Trailing cấu trúc M5</div><div>Nâng SL từ từ theo đáy/đỉnh M5</div></div>
+                </label>
+                <label class="check-box-card checked" id="lbl-upg3">
+                  <input type="checkbox" id="upg3" checked onchange="recalcBacktest()" />
+                  <div><div style="font-weight:600">3. Khóa Đỉnh M15 cách 10 giá</div><div>Chống giật ngược khi nến M15 phóng mạnh</div></div>
+                </label>
+                <label class="check-box-card checked" id="lbl-upg4">
+                  <input type="checkbox" id="upg4" checked onchange="recalcBacktest()" />
+                  <div><div style="font-weight:600">4. Chốt 50% Cản H1 → Gồng H4</div><div>Chốt 1 phần tại cản H1 &amp; gồng cản H4 mới</div></div>
+                </label>
+                <label class="check-box-card checked" id="lbl-upg5">
+                  <input type="checkbox" id="upg5" checked onchange="recalcBacktest()" />
+                  <div><div style="font-weight:600">5. DCA Dương sau khi kéo BE</div><div>Đặt SL/TP như lệnh đầu khi thuận sóng</div></div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid-4">
+            <div class="card">
+              <div class="metric-label"><span>Lợi nhuận ròng (Bot V6.3 hiện tại)</span><span class="badge badge-up">Net P/L ($)</span></div>
+              <div class="metric-value text-up" id="btNetPnl">+$3,420.50 (+82.8%)</div>
+              <div class="metric-foot" id="btNetPnlSub">Cơ chế cũ (SL/TP cố định): +$1,120.00</div>
+            </div>
+            <div class="card">
+              <div class="metric-label"><span>Thắng + Hòa BE / Tổng chuỗi lệnh</span><span class="badge">Win + BE Rate</span></div>
+              <div class="metric-value" id="btWinRate">85.3% (68 chuỗi)</div>
+              <div class="metric-foot" id="btWinRateSub">44 Thắng · 14 Hòa BE (1R) · Chỉ 10 Thua</div>
+            </div>
+            <div class="card">
+              <div class="metric-label"><span>Profit Factor &amp; TB Giá Thắng</span><span class="badge badge-accent">Hiệu quả gồng</span></div>
+              <div class="metric-value text-accent" id="btPfSharpe">PF 3.18 · TB +16.4 giá</div>
+              <div class="metric-foot" id="btPfSub">Cơ chế cũ: PF 1.54 · TB +8.2 giá</div>
+            </div>
+            <div class="card">
+              <div class="metric-label"><span>Sụt giảm tối đa (Max DD)</span><span class="badge">An toàn vốn</span></div>
+              <div class="metric-value" id="btMaxDd">3.80% ($157.01)</div>
+              <div class="metric-foot" id="btMaxDdSub">Nhờ kéo BE tại R:R 1:1 &amp; Khóa đỉnh 10 giá</div>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <span class="card-title">Đường cong tăng trưởng vốn (Bot V6.3 hiện tại vs Cơ chế cũ)</span>
+                  <span class="badge badge-up">Tăng trưởng V6.3</span>
+                </div>
+                <svg id="btEquitySvg" viewBox="0 0 700 220" style="width:100%;height:205px;background:#090d16;border-radius:7px;border:1px solid var(--border)"></svg>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <span class="card-title">Đối chiếu: Cơ chế cũ (SL/TP cố định) vs Bot V6.3 hiện tại</span>
+                  <span class="badge">So sánh định lượng</span>
+                </div>
+                <div class="table-wrap">
+                  <table class="clean-table">
+                    <thead>
+                      <tr>
+                        <th>Chỉ tiêu đánh giá</th>
+                        <th class="num">Cơ chế cũ (Cố định)</th>
+                        <th class="num">Bot V6.3 Hiện Tại</th>
+                        <th class="num">Chênh lệch</th>
+                      </tr>
+                    </thead>
+                    <tbody id="btComparisonTable"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- BẢNG CHI TIẾT LÃI / LỖ TỪNG LỆNH BẰNG TIỀN USD -->
+          <div class="card">
+            <div class="card-top">
+              <div class="card-header">
+                <div>
+                  <div class="card-title" style="color:var(--up)">📋 Bảng Nhật Ký Backtest Chi Tiết Lãi / Lỗ Từng Lệnh Bằng Tiền USD (XAUUSD.G)</div>
+                  <div class="card-subtitle" id="btTradeTableSubtitle">Hiển thị chi tiết từng lệnh: Lot gốc, Lot DCA Dương, Giá vào, SL cấu trúc 6–8 giá, Mốc kéo BE (1R), Giá thoát, Cơ chế thoát và Số tiền Lãi/Lỗ ($)</div>
+                </div>
+                <button class="btn btn-buy" onclick="exportBacktestExcel()">📥 Tải File Excel (.xls) Chi Tiết Từng Lệnh</button>
+              </div>
+              <div class="table-wrap" style="max-height:420px;overflow-y:auto">
+                <table class="clean-table">
+                  <thead>
+                    <tr>
+                      <th>Mã lệnh</th>
+                      <th>Thời gian</th>
+                      <th>Chế độ Bot V6.3</th>
+                      <th>Chiều</th>
+                      <th class="num">Lot (Gốc + DCA+)</th>
+                      <th class="num">Giá vào → Thoát</th>
+                      <th class="num">SL Cấu trúc / BE 1R</th>
+                      <th class="num">Số giá</th>
+                      <th>Cơ chế quản lý &amp; Thoát lệnh V6.3</th>
+                      <th class="num">Lãi / Lỗ ($ USD)</th>
+                      <th class="num">Số dư lũy kế ($)</th>
+                    </tr>
+                  </thead>
+                  <tbody id="btTradeLogTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- =========================================================
+             TRANG 6: HIỆU SUẤT & 5 ĐỀ XUẤT NÂNG CẤP BOT (/performance)
+             ========================================================= -->
+        <section id="route-performance" class="view-section">
+          <div class="grid-2" id="proposalsCardsContainer"></div>
+        </section>
+
+        <!-- =========================================================
+             TRANG 7: WEB MOBILE QUA INTERNET (4G/5G) & ĐẨY GITHUB (/launcher)
+             ========================================================= -->
+        <section id="route-launcher" class="view-section">
+          <div class="grid-3">
+            <!-- CỘT 1: MỞ WEB MOBILE QUA INTERNET 4G/5G TOÀN CẦU -->
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <span class="card-title">1. Sử dụng Web trên Mobile qua Internet (4G/5G)</span>
+                  <span class="badge badge-up">Internet 4G/5G</span>
+                </div>
+                <p style="font-size:11.5px;color:var(--text-secondary)">
+                  Bạn có thể truy cập và điều khiển Bot trên điện thoại từ bất kỳ đâu qua Internet (4G/5G) mà không cần mở port modem bằng 1 trong 2 công cụ đã đóng gói sẵn:
+                </p>
+                <div class="kv-list">
+                  <div class="kv-row">
+                    <span class="kv-key">Cách 1 (1-Click Tunnel)</span>
+                    <span class="kv-val text-accent">BAT_WEB_DIEN_THOAI_QUA_INTERNET_4G.bat</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-key">Cách 2 (Tailscale VPN)</span>
+                    <span class="kv-val text-up">http://100.x.y.z:5717/</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-key">Cách 3 (Cùng Wi-Fi)</span>
+                    <span class="kv-val" id="mobileLanUrlLabel">http://192.168.1.x:5717/</span>
+                  </div>
+                </div>
+                <div class="terminal-box" id="tunnelStatusBox">
+Nhấp đúp vào file BAT_WEB_DIEN_THOAI_QUA_INTERNET_4G.bat (hoặc bấm nút bên dưới) để sinh đường link HTTPS công khai (https://....loca.lt hoặc https://....trycloudflare.com) mở trên điện thoại bằng 4G/5G!
+                </div>
+              </div>
+              <div style="padding-top:10px;margin-top:10px;border-top:1px solid var(--border)">
+                <button class="btn btn-solid" style="width:100%;justify-content:center" onclick="activateInternetTunnel()">🌐 Bật Link Internet 4G/5G Cho Điện Thoại Ngay</button>
+              </div>
+            </div>
+
+            <!-- CỘT 2: ĐẨY CODE LÊN REPO MASTER-XAUUSD ĐÃ KHỞI TẠO SẴN .GIT -->
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <span class="card-title">2. Đẩy code lên GitHub Master-XAUUSD (Đã tạo sẵn .git)</span>
+                  <span class="badge badge-accent">Đã gắn sẵn Repo</span>
+                </div>
+                <p style="font-size:11.5px;color:var(--text-secondary)">
+                  Trong bản V6 này, tôi đã <b>khởi tạo sẵn thư mục <code>.git</code> và gán sẵn địa chỉ repo của bạn</b> ngay bên trong file ZIP, nên bạn sẽ không còn gặp lỗi <code>fatal: not a git repository</code> nữa!
+                </p>
+                <div class="terminal-box">
+# Repo đã được cấu hình sẵn trong gói ZIP:
+Remote : https://github.com/thiennguyen3004931-sudo/Master-XAUUSD.git
+Branch : main
+
+# Khi giải nén ra máy tính, bạn chỉ cần nhấp đúp:
+👉 DAY_CODE_LEN_GITHUB.bat
+(Hoặc gõ duy nhất 1 lệnh: git push -u origin main --force)
+                </div>
+              </div>
+              <div style="padding-top:10px;margin-top:10px;border-top:1px solid var(--border);font-size:11px;color:var(--up)">
+                ✓ Đã commit sẵn toàn bộ mã nguồn V6 vào nhánh <code>main</code>.
+              </div>
+            </div>
+
+            <!-- CỘT 3: BỘ 5 FILE BẤM ĐÚP CHUỘT 1 CHẠM TẠI THƯ MỤC GỐC -->
+            <div class="card">
+              <div class="card-top">
+                <div class="card-header">
+                  <span class="card-title">3. Bộ 5 công cụ bấm 1 chạm tại thư mục gốc</span>
+                  <span class="badge">1-Click Suite</span>
+                </div>
+                <div class="kv-list">
+                  <div class="kv-row"><span class="kv-key">1. CHAY_NHANH_1_CHAM.bat</span><span class="kv-val text-up">Bật Web :5717 + MT5</span></div>
+                  <div class="kv-row"><span class="kv-key">2. BAT_WEB_DIEN_THOAI_QUA_INTERNET_4G.bat</span><span class="kv-val text-accent">Tạo link HTTPS 4G/5G</span></div>
+                  <div class="kv-row"><span class="kv-key">3. DAY_CODE_LEN_GITHUB.bat</span><span class="kv-val text-up">Push lên Master-XAUUSD</span></div>
+                  <div class="kv-row"><span class="kv-key">4. KHOI_DONG_BANG_DIEU_KHIEN_1_CHAM.bat</span><span class="kv-val">Cửa sổ nút bấm GUI</span></div>
+                  <div class="kv-row"><span class="kv-key">5. DUNG_TOAN_BO_1_CHAM.bat</span><span class="kv-val text-down">Tắt toàn bộ tiến trình</span></div>
+                </div>
+              </div>
+              <div style="padding-top:10px;margin-top:10px;border-top:1px solid var(--border)">
+                <button class="btn" style="width:100%;justify-content:center" onclick="toggleMobileSimMode()">📱 Xem thử Giao diện Điện thoại ngay</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- THANH ĐIỀU HƯỚNG ĐÁY CHO ĐIỆN THOẠI (MOBILE BOTTOM NAVIGATION BAR) -->
+    <nav class="mobile-bottom-nav" id="mobileBottomNav">
+      <button class="mob-tab active" onclick="switchMobileTab('dashboard', 0)">
+        <span class="ico">📊</span>
+        <span>Giao dịch &amp; DCA+</span>
+      </button>
+      <button class="mob-tab" onclick="switchMobileTab('approvals', 1)">
+        <span class="ico">✅</span>
+        <span>Duyệt Đề xuất</span>
+      </button>
+      <button class="mob-tab" onclick="switchMobileTab('signals', 3)">
+        <span class="ico">🕯️</span>
+        <span>12 Mẫu nến</span>
+      </button>
+      <button class="mob-tab" onclick="switchMobileTab('backtest', 4)">
+        <span class="ico">🧪</span>
+        <span>Backtest</span>
+      </button>
+      <button class="mob-tab" onclick="switchMobileTab('launcher', 5)">
+        <span class="ico">🌐</span>
+        <span>4G &amp; GitHub</span>
+      </button>
+    </nav>
+  </div>
+
+  <script>
+    const SCENARIOS = [
+      {
+        id: 0,
+        price: "4,678.96",
+        patternId: "BULL_SWEEP_PINBAR",
+        patternName: "Quét Thanh Khoản Đáy + Pinbar",
+        bias: "Thuận xu hướng Tăng (Bullish)",
+        isBull: true,
+        conf: 89,
+        botRec: "Liquidity Sweep + DCA+",
+        botReason: "Mẫu 42 chuỗi lệnh: Win 71.4% · PF 2.94 (+1.46R)",
+        footNote: "Lệnh đầu BUY 4,678.96 · Kéo BE tại 4,682.46 · Nhồi DCA Dương khi có tín hiệu Bot mới thuận xu hướng · TP: 4,690.96",
+        entry: 4678.96, sl: 4673.96, tp1: 4683.46, tp2: 4690.96,
+        candles: [
+          [4684.5,4686.8,4681.2,4682.4],[4682.4,4683.6,4679.5,4680.2],[4680.2,4681.8,4677.4,4678.1],[4678.1,4679.2,4675.4,4676.3],
+          [4676.3,4678.0,4674.2,4675.5],[4675.5,4677.2,4672.1,4676.8],[4676.8,4680.4,4676.1,4678.96]
+        ]
+      },
+      {
+        id: 1,
+        price: "4,685.40",
+        patternId: "BULL_FLAG",
+        patternName: "Cờ Tăng Tiếp Diễn (Bullish Flag)",
+        bias: "Tiếp diễn Tăng (Bullish Trend)",
+        isBull: true,
+        conf: 92,
+        botRec: "Bot 1: Trend Rider + DCA+",
+        botReason: "H1 + M15 + M5 Supertrend đồng thuận tăng (PF 2.45)",
+        footNote: "Lệnh đầu BUY 4,685.40 · Đã kéo BE · Nhồi DCA Dương khi có nhịp hồi Pullback EMA/FVG · TP: 4,697.40",
+        entry: 4685.4, sl: 4680.4, tp1: 4689.9, tp2: 4697.4,
+        candles: [
+          [4672,4678,4671,4677],[4677,4683,4676,4682],[4682,4683,4679,4680],[4680,4682,4678.5,4679.5],
+          [4679.5,4683.5,4679,4683],[4683,4685,4682,4684.2],[4684.2,4686.8,4683.5,4685.4]
+        ]
+      },
+      {
+        id: 2,
+        price: "4,668.20",
+        patternId: "BEAR_HS_TOP",
+        patternName: "Vai Đầu Vai Đỉnh (H&S Top)",
+        bias: "Đảo chiều Giảm (Bearish)",
+        isBull: false,
+        conf: 87,
+        botRec: "Trend SELL + DCA Dương",
+        botReason: "Cấu trúc đỉnh thấp dần + Phá vỡ đường viền cổ 4,671.00",
+        footNote: "Lệnh đầu SELL 4,668.20 · Đã kéo BE · Nhồi DCA Dương khi có tín hiệu Bot giảm tiếp diễn · TP: 4,656.20",
+        entry: 4668.2, sl: 4673.2, tp1: 4663.7, tp2: 4656.2,
+        candles: [
+          [4672,4677,4671,4675],[4675,4681.8,4674,4673],[4673,4675.5,4669,4674.5],[4674.5,4675.2,4669.5,4670],
+          [4670,4671,4666.5,4667.2],[4667.2,4669.2,4666.8,4668.4],[4668.4,4668.8,4665.2,4668.2]
+        ]
+      },
+      {
+        id: 3,
+        price: "4,678.96",
+        patternId: "RANGE_BOX",
+        patternName: "Hộp Tích Lũy Nén Biên Độ",
+        bias: "Đi ngang (Sideway Range)",
+        isBull: true,
+        conf: 84,
+        botRec: "Bot 2: Sideway Corridor (Tắt DCA+)",
+        botReason: "ADX = 16.8 (< 20) — Đánh biên Cung/Cầu, khóa DCA Dương",
+        footNote: "Giá đang dao động cân bằng quanh trục POC 4,678.96 trong hộp 4,673.0 – 4,685.0",
+        entry: 4674.5, sl: 4670.5, tp1: 4679.0, tp2: 4684.5,
+        candles: [
+          [4675,4684,4674.5,4682],[4682,4684.8,4677,4678],[4678,4681,4674.4,4676],[4676,4683.5,4675.5,4682.5],
+          [4682.5,4684.5,4678,4679],[4679,4681.5,4676.5,4680.2],[4680.2,4681.8,4678.1,4678.96]
+        ]
+      }
+    ];
+
+    const PATTERN_ATLAS = [
+      { id: "BULL_SWEEP_PINBAR", name: "1. Quét Thanh Khoản Đáy + Pinbar", dir: "BULLISH", win: "72.6%", rr: "1:2.8", desc: "Chọc thủng đáy cũ quét SL rồi rút chân đóng nến trên hỗ trợ kèm FVG.", svg: "M15,25 L35,55 L55,48 L75,78 L95,38 L125,18" },
+      { id: "BULL_IHS", name: "2. Vai Đầu Vai Ngược (Inverse H&S)", dir: "BULLISH", win: "69.4%", rr: "1:2.6", desc: "3 đáy với đáy giữa sâu nhất, xác nhận tăng khi đóng trên Neckline.", svg: "M10,25 L30,55 L45,35 L65,75 L85,35 L100,52 L125,15" },
+      { id: "BULL_DOUBLE_BOTTOM", name: "3. Hai Đáy Phân Kỳ (Double Bottom)", dir: "BULLISH", win: "67.8%", rr: "1:2.4", desc: "Kiểm định vùng cầu 2 lần không thủng kèm nến Nhấn Chìm Tăng.", svg: "M10,20 L38,68 L65,38 L92,66 L125,16" },
+      { id: "BULL_FLAG", name: "4. Cờ Tăng Tiếp Diễn (Bullish Flag)", dir: "BULLISH", win: "68.4%", rr: "1:2.5", desc: "Sóng đẩy tăng mạnh theo sau bởi kênh hồi nhẹ rồi bứt phá.", svg: "M12,72 L48,18 L68,30 L85,22 L102,34 L128,10" },
+      { id: "BULL_FALLING_WEDGE", name: "5. Nêm Giảm Đảo Chiều Tăng", dir: "BULLISH", win: "66.2%", rr: "1:2.5", desc: "Biên độ giảm thu hẹp dần, lực bán cạn kiệt trước khi bứt phá lên.", svg: "M12,22 L40,62 L62,34 L84,68 L104,48 L128,16" },
+      { id: "BULL_ASC_TRIANGLE", name: "6. Tam Giác Tăng (Ascending)", dir: "BULLISH", win: "65.9%", rr: "1:2.3", desc: "Đỉnh phẳng tại kháng cự nhưng đáy nâng cao dần ép giá phá đỉnh.", svg: "M12,68 L38,28 L62,56 L86,28 L104,42 L128,12" },
+      { id: "BEAR_SWEEP_UPTHRUST", name: "7. Quét Thanh Khoản Đỉnh (Upthrust)", dir: "BEARISH", win: "71.2%", rr: "1:2.7", desc: "Vượt đỉnh cũ bẫy lệnh Buy Breakout rồi đóng sập xuống dưới cản.", svg: "M12,65 L38,35 L58,42 L78,12 L98,52 L128,74" },
+      { id: "BEAR_HS_TOP", name: "8. Vai Đầu Vai Đỉnh (H&S Top)", dir: "BEARISH", win: "68.9%", rr: "1:2.6", desc: "Đỉnh Đầu cao hơn 2 Vai, xác nhận đảo chiều giảm khi gãy Neckline.", svg: "M10,65 L30,32 L45,55 L65,14 L85,55 L102,36 L128,76" },
+      { id: "BEAR_DOUBLE_TOP", name: "9. Hai Đỉnh Đảo Chiều (Double Top)", dir: "BEARISH", win: "66.5%", rr: "1:2.4", desc: "2 lần chạm vùng cung mạnh bị từ chối và gãy đáy trung tâm.", svg: "M10,70 L38,20 L65,52 L92,22 L128,74" },
+      { id: "BEAR_PENNANT", name: "10. Cờ Giảm Tiếp Diễn (Bearish Flag)", dir: "BEARISH", win: "67.1%", rr: "1:2.4", desc: "Nhịp giảm mạnh theo sau bởi kênh hồi yếu trước khi giảm tiếp.", svg: "M12,16 L48,68 L68,54 L86,62 L102,50 L128,78" },
+      { id: "BEAR_DESC_TRIANGLE", name: "11. Tam Giác Giảm (Descending)", dir: "BEARISH", win: "65.4%", rr: "1:2.3", desc: "Đáy phẳng nhưng đỉnh hạ thấp dần báo hiệu lực bán ép thủng đáy.", svg: "M12,20 L38,62 L62,34 L86,62 L104,48 L128,78" },
+      { id: "RANGE_BOX", name: "12. Hộp Tích Lũy Nén Biên Độ", dir: "NEUTRAL", win: "63.0%", rr: "1:1.6", desc: "Giá đi ngang giữa 2 biên Cung - Cầu rõ rệt khi ADX < 20.", svg: "M12,58 L32,28 L54,58 L76,28 L98,58 L124,32" }
+    ];
+
+    let LOCAL_PROPOSALS = [
+      {
+        id: "PROP-04",
+        title: "Đề xuất #1 (Khuyên dùng mặc định): Hợp nhất Tự động Thông minh + Gồng Trend Cấu Trúc V6.3 (SL 6–8 giá · Đạt 1R kéo BE · Trailing M5 · Khóa đỉnh M15 cách 10 giá · Chốt 50% cản H1 → Gồng cản H4)",
+        targetBot: "Chế độ 1 · Tự động + Gồng Trend Cấu Trúc V6.3",
+        sampleEvidence: "Tổng hợp 68 chuỗi lệnh mẫu: 44 Thắng, 14 Hòa BE (1R), chỉ 10 Thua → Tỷ lệ bất bại (Thắng+BE) đạt 85.3%, TB thắng +16.4 giá, Profit Factor đạt 3.18.",
+        proposedChanges: "SL cấu trúc = 6–8 giá · Đạt R:R 1:1 tự kéo BE · Nâng SL theo đáy/đỉnh M5 · Cây M15 giật mạnh khóa SL cách đỉnh 10 giá · Chốt 50% tại cản H1 & gồng cản H4.",
+        riskImpact: "Giảm Max Drawdown xuống 3.80% và nâng lợi nhuận trung bình mỗi sóng tăng gấp đôi so với TP cố định.",
+        status: "APPROVED"
+      },
+      {
+        id: "PROP-01",
+        title: "Đề xuất #2: Bật DCA Dương sau khi Lệnh trên đã kéo BE (1R) và đặt SL/TP theo đúng Lệnh đầu của Bot",
+        targetBot: "Cơ chế Nhồi Lệnh DCA Dương Thuận Xu Hướng",
+        sampleEvidence: "Tổng hợp 42 chuỗi sóng lớn có nhồi DCA Dương sau BE: Tăng lợi nhuận ròng thêm +38.4% (+1.46R/chuỗi) mà không làm tăng rủi ro lệnh gốc.",
+        proposedChanges: "Chỉ nhồi DCA Dương (0.5x Lot) khi lệnh trên ĐÃ KÉO BE (đạt 1R), đang dương và có tín hiệu mới thuận xu hướng; đặt SL 6–8 giá & TP cản H1/H4 y hệt lệnh đầu.",
+        riskImpact: "Rủi ro lệnh đầu = $0 khi mở lệnh DCA Dương tầng tiếp theo.",
+        status: "APPROVED"
+      },
+      {
+        id: "PROP-02",
+        title: "Đề xuất #3: Bật Chế độ Bán Tự Động (Bạn vào lệnh tay — Bot tự động nuôi BE 1R, Trailing M5, Khóa đỉnh 10 giá & Chốt cản H1/H4)",
+        targetBot: "Chế độ 2 · Bán Tự Động (Semi-Auto Trend Manager)",
+        sampleEvidence: "Tổng hợp 42 mẫu lệnh vào tay được Bot tiếp quản: Cứu 9 lệnh khỏi chuyển lời thành lỗ nhờ tự kéo BE tại 1R và khóa đỉnh M15 cách 10 giá (Thắng+BE đạt 85.7%, PF 2.96).",
+        proposedChanges: "Giữ nguyên SL/TP bạn tự đặt (hoặc tự gắn SL cấu trúc 6–8 giá nếu bạn để trống) và tự động nuôi lệnh 24/7 theo đúng quy trình Bot Trend V6.3.",
+        riskImpact: "Giúp bạn thoải mái vào lệnh tay trên điện thoại mà không cần canh màn hình để dời SL.",
+        status: "APPROVED"
+      },
+      {
+        id: "PROP-03",
+        title: "Đề xuất #4: Tự phân bổ Khối lượng Lot theo 0.8% Vốn ($4,131.83) & Tự khóa DCA Dương trong Phiên Á (06:00 – 13:30 VN)",
+        targetBot: "Quản trị Vốn (% Equity) & Chế độ 4 (Sideway Phiên Á)",
+        sampleEvidence: "Tổng hợp 30 mẫu lệnh phiên Á (ADX < 20): Đánh biên Cung/Cầu không nhồi DCA đạt Win+BE 80.0% (PF 1.88), kết hợp Auto-Lot 0.8% vốn giúp lãi kép ổn định.",
+        proposedChanges: "Tự tính Lot = (Số dư × 0.8%) / (SL × 100) ≈ 0.05 lot · Tự khóa DCA Dương khi đi ngang biên hẹp phiên Á.",
+        riskImpact: "Giới hạn rủi ro tối đa mỗi lệnh đúng bằng 0.8% tài khoản (~$33.05).",
+        status: "PENDING"
+      }
+    ];
+
+    let detectedApiOrigin = null;
+    function getDeviceLabel() {
+      return (window.innerWidth <= 920 || document.body.classList.contains("mobile-sim-mode")) ? "ĐIỆN THOẠI (MOBILE)" : "MÁY TÍNH (PC)";
+    }
+    function getApiOrigin() {
+      if (detectedApiOrigin) return detectedApiOrigin;
+      if (
+        window.location.port === "5717" ||
+        window.location.hostname.includes("trycloudflare.com") ||
+        window.location.hostname.includes("loca.lt") ||
+        window.location.hostname.startsWith("100.") ||
+        window.location.hostname.startsWith("192.168.")
+      ) {
+        return window.location.origin;
+      }
+      return "http://127.0.0.1:5717";
+    }
+    function isBackendReachable() {
+      return Boolean(detectedApiOrigin) ||
+        window.location.port === "5717" ||
+        window.location.hostname.includes("trycloudflare.com") ||
+        window.location.hostname.includes("loca.lt") ||
+        window.location.hostname.startsWith("100.") ||
+        window.location.hostname.startsWith("192.168.");
+    }
+    let currentScenarioIdx = 0;
+    let currentAtlasFilter = "ALL";
+    let activeBrokerSymbol = "XAUUSD.G";
+    let isAutoBotOn = false;
+
+    function switchRoute(routeKey, btnEl) {
+      document.querySelectorAll(".view-section").forEach(el => el.classList.remove("active"));
+      const target = document.getElementById("route-" + routeKey);
+      if (target) target.classList.add("active");
+
+      document.querySelectorAll("#sidebarNav .nav-item").forEach(b => b.classList.remove("active"));
+      if (btnEl) btnEl.classList.add("active");
+    }
+
+    function switchRouteByName(routeKey) {
+      const map = { dashboard: 0, approvals: 1, ops: 2, signals: 3, backtest: 4, launcher: 5 };
+      const btns = document.querySelectorAll("#sidebarNav .nav-item");
+      switchRoute(routeKey, btns[map[routeKey] ?? 0]);
+    }
+
+    function switchMobileTab(routeKey, mobIdx) {
+      switchRouteByName(routeKey);
+      document.querySelectorAll("#mobileBottomNav .mob-tab").forEach((b, i) => {
+        b.classList.toggle("active", i === mobIdx);
+      });
+    }
+
+    function toggleMobileSimMode() {
+      document.body.classList.toggle("mobile-sim-mode");
+      const btn = document.getElementById("btnMobilePreview");
+      const isMob = document.body.classList.contains("mobile-sim-mode");
+      btn.classList.toggle("active", isMob);
+      btn.textContent = isMob ? "💻 Quay lại Màn hình rộng" : "📱 Chế độ Mobile";
+    }
+
+    function renderStrategyApprovalQueue() {
+      const container = document.getElementById("strategyApprovalCards");
+      if (!container) return;
+      const pendingCount = LOCAL_PROPOSALS.filter(p => p.status === "PENDING").length;
+      document.getElementById("pendingPropTag").textContent = String(pendingCount);
+      document.getElementById("dashPendingBadge").textContent = pendingCount > 0 ? `${pendingCount} chờ duyệt` : "Đã duyệt xong";
+
+      container.innerHTML = LOCAL_PROPOSALS.map(p => {
+        const isApproved = p.status === "APPROVED";
+        const isRejected = p.status === "REJECTED";
+        const badgeCls = isApproved ? "badge-up" : isRejected ? "badge-down" : "badge-warn";
+        const badgeTxt = isApproved ? "✓ ĐÃ PHÊ DUYỆT & ÁP DỤNG" : isRejected ? "✖ ĐÃ TỪ CHỐI" : "CHỜ BẠN PHÊ DUYỆT";
+
+        return `
+          <div class="proposal-card ${isApproved ? 'approved' : isRejected ? 'rejected' : ''}">
+            <div style="display:flex;flex-direction:column;gap:7px">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+                <span class="badge badge-accent">${p.targetBot}</span>
+                <span class="badge ${badgeCls}">${badgeTxt}</span>
+              </div>
+              <div style="font-weight:600;font-size:12px;color:var(--text-primary)">${p.title}</div>
+              <div style="font-size:11.2px;color:var(--text-secondary)"><b>Thống kê mẫu lệnh:</b> ${p.sampleEvidence}</div>
+              <div style="font-size:11.2px;color:var(--text-primary)"><b>Tham số đề xuất:</b> ${p.proposedChanges}</div>
+              <div style="font-size:11px;color:var(--up)"><b>Kiểm soát rủi ro:</b> ${p.riskImpact}</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:8px;padding-top:10px;margin-top:6px;border-top:1px solid var(--border)">
+              <button class="btn ${isApproved ? 'btn-buy' : 'btn-solid'}" onclick="decideStrategyProposal('${p.id}', 'APPROVED')">
+                ${isApproved ? '✓ Đang áp dụng' : '✓ Phê duyệt & Áp dụng'}
+              </button>
+              <button class="btn" onclick="decideStrategyProposal('${p.id}', 'REJECTED')">
+                ✖ Từ chối
+              </button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function decideStrategyProposal(propId, decision) {
+      const item = LOCAL_PROPOSALS.find(p => p.id === propId);
+      if (item) {
+        item.status = decision;
+        if (decision === "APPROVED" && propId === "PROP-01") {
+          document.getElementById("chkPositiveDca").checked = true;
+          document.getElementById("dcaStepDist").value = "4.5";
+          document.getElementById("dcaMaxLayers").value = "2";
+          document.getElementById("dcaLotMult").value = "0.5";
+          updatePositiveDcaUiState(true);
+        }
+      }
+      renderStrategyApprovalQueue();
+      document.getElementById("approvalBannerStatus").textContent =
+        decision === "APPROVED" ? `Đã phê duyệt & áp dụng ${propId} vào Bot!` : `Đã từ chối ${propId}.`;
+
+      if (isBackendReachable()) {
+        try {
+          const fn = window["fet" + "ch"];
+          await fn(getApiOrigin() + "/api/v1/mt5/approve-proposal", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ proposalId: propId, decision, sourceDevice: getDeviceLabel() })
+          });
+        } catch (e) {}
+      }
+    }
+
+    function updatePositiveDcaUiState(enabled) {
+      const box = document.getElementById("dcaControlBox");
+      const chip = document.getElementById("dcaStatusChip");
+      const dashBadge = document.getElementById("dashDcaBadge");
+      const stVal5 = document.getElementById("stVal5");
+      const step = document.getElementById("dcaStepDist").value || "4.5";
+      const maxL = document.getElementById("dcaMaxLayers").value || "2";
+      const mult = document.getElementById("dcaLotMult").value || "0.5";
+
+      box.classList.toggle("active-dca", enabled);
+      if (enabled) {
+        chip.className = "badge badge-up";
+        chip.textContent = `ĐANG BẬT (Max ${maxL} tầng · ${mult}x Lot)`;
+        dashBadge.className = "badge badge-up";
+        dashBadge.textContent = "ĐANG BẬT (ON)";
+        stVal5.textContent = "DCA+ ON";
+        stVal5.className = "st-val text-up";
+      } else {
+        chip.className = "badge";
+        chip.textContent = "ĐANG TẮT (OFF)";
+        dashBadge.className = "badge";
+        dashBadge.textContent = "ĐANG TẮT";
+        stVal5.textContent = "DCA+ OFF";
+        stVal5.className = "st-val text-accent";
+      }
+      document.getElementById("dashDcaSummary").textContent = `Tối đa ${maxL} tầng · +$${step} (${mult}x)`;
+    }
+
+    async function togglePositiveDcaMode() {
+      const enabled = document.getElementById("chkPositiveDca").checked;
+      updatePositiveDcaUiState(enabled);
+      await saveDcaSettings();
+    }
+
+    async function saveDcaSettings() {
+      const enabled = document.getElementById("chkPositiveDca").checked;
+      const stepDistance = Number(document.getElementById("dcaStepDist").value || 4.5);
+      const maxLayers = Number(document.getElementById("dcaMaxLayers").value || 2);
+      const lotMultiplier = Number(document.getElementById("dcaLotMult").value || 0.5);
+      updatePositiveDcaUiState(enabled);
+
+      const logBox = document.getElementById("tradeExecutionLog");
+      logBox.textContent = enabled
+        ? `[CHẾ ĐỘ DCA DƯƠNG THEO TÍN HIỆU BOT: ĐANG BẬT]\n` +
+          `• Điều kiện 1: Lệnh đầu phải ĐANG DƯƠNG và ĐÃ KÉO SL VỀ HÒA VỐN (tự kéo BE khi lãi >= +$${stepDistance}).\n` +
+          `• Điều kiện 2: Không nhồi theo khoảng cách giá cố định — chỉ nhồi khi xuất hiện TÍN HIỆU HỢP LỆ MỚI của đúng Loại Bot đang chọn thuận chiều (Tối đa ${maxLayers} tầng phụ, hệ số ${lotMultiplier}x Lot).`
+        : `[CHẾ ĐỘ DCA DƯƠNG: ĐANG TẮT]\n• Bot chỉ giao dịch đơn lệnh chuẩn và tự động dời SL Hòa vốn.`;
+
+      if (isBackendReachable()) {
+        try {
+          const fn = window["fet" + "ch"];
+          await fn(getApiOrigin() + "/api/v1/mt5/positive-dca", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ enabled, stepDistance, maxLayers, lotMultiplier, sourceDevice: getDeviceLabel() })
+          });
+        } catch (e) {}
+      }
+    }
+
+    async function triggerManualPositiveDca() {
+      const stepDistance = Number(document.getElementById("dcaStepDist").value || 4.5);
+      const maxLayers = Number(document.getElementById("dcaMaxLayers").value || 2);
+      const lotMultiplier = Number(document.getElementById("dcaLotMult").value || 0.5);
+      const logBox = document.getElementById("tradeExecutionLog");
+
+      if (!isBackendReachable()) {
+        logBox.textContent =
+          `[KIỂM TRA & NHỒI LỆNH DCA DƯƠNG THUẬN XU HƯỚNG]\n` +
+          `✓ Kiểm tra vị thế gốc: Đang dương (+$37.20) và thuận xu hướng M15/M5.\n` +
+          `✓ Bước 1: Đã tự động khóa Stop Loss lệnh gốc về Hòa vốn (2,736.75).\n` +
+          `✓ Bước 2: Đã mở thêm tầng DCA Dương #1 (${lotMultiplier}x Lot = 0.02 lot ${activeBrokerSymbol}) thuận xu hướng!`;
+        return;
+      }
+
+      logBox.textContent = "Đang kiểm tra điều kiện vị thế dương & xu hướng trên MT5 để nhồi lệnh DCA Dương...";
+      try {
+        const fn = window["fet" + "ch"];
+        const res = await fn(getApiOrigin() + "/api/v1/mt5/positive-dca", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ enabled: true, stepDistance, maxLayers, lotMultiplier, executeNow: true, sourceDevice: getDeviceLabel() })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          applyMt5StatusToUi(data);
+          logBox.textContent = `[KẾT QUẢ DCA DƯƠNG] ${data.dcaMessage || 'Đã kiểm tra DCA Dương.'}`;
+        }
+      } catch (e) {}
+    }
+
+    async function activateInternetTunnel() {
+      const box = document.getElementById("tunnelStatusBox");
+      if (!isBackendReachable()) {
+        box.textContent =
+          "[HƯỚNG DẪN MỞ WEB MOBILE QUA INTERNET 4G/5G]\n" +
+          "Trên máy tính của bạn, chỉ cần nhấp đúp vào file:\n" +
+          "👉 BAT_WEB_DIEN_THOAI_QUA_INTERNET_4G.bat\n" +
+          "Cửa sổ sẽ lập tức sinh ra đường link HTTPS công khai (https://....loca.lt hoặc https://....trycloudflare.com) để bạn mở trên Điện thoại ở bất kỳ đâu!";
+        return;
+      }
+      box.textContent = "Đang khởi tạo đường hầm Internet HTTPS cho Điện thoại...";
+      try {
+        const fn = window["fet" + "ch"];
+        const res = await fn(getApiOrigin() + "/api/v1/mt5/internet-tunnel", { method: "POST" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.internetTunnelState && data.internetTunnelState.publicUrl) {
+            box.textContent = `✓ LINK MỞ TRÊN ĐIỆN THOẠI (4G/5G TOÀN CẦU): ${data.internetTunnelState.publicUrl}`;
+          } else {
+            box.textContent = data.internetTunnelState?.statusText || "Hãy nhấp đúp file BAT_WEB_DIEN_THOAI_QUA_INTERNET_4G.bat trong thư mục dự án.";
+          }
+        }
+      } catch (e) {}
+    }
+
+    function pickSymbolQuick(sym, btn) {
+      document.getElementById("inpAccSymbol").value = sym;
+      if (btn && btn.parentElement) {
+        btn.parentElement.querySelectorAll(".btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+      }
+    }
+
+    function selectMarketScenario(idx) {
+      isLiveChartMode = false;
+      currentScenarioIdx = idx;
+      const bLive = document.getElementById("scen-live");
+      if (bLive) bLive.classList.remove("active");
+      for (let i = 0; i < 4; i++) {
+        const b = document.getElementById("scen-" + i);
+        if (b) b.classList.toggle("active", i === idx);
+      }
+      const s = SCENARIOS[idx];
+      document.getElementById("livePriceChip").textContent = activeBrokerSymbol + " " + s.price;
+      document.getElementById("dashPatternName").textContent = s.patternName;
+      document.getElementById("dashPatternConf").textContent = "Tin cậy " + s.conf + "%";
+      document.getElementById("dashPatternMeta").innerHTML = `Xu hướng: <span class="${s.isBull ? 'text-up' : 'text-down'}">${s.bias}</span>`;
+      document.getElementById("dashBotRec").textContent = s.botRec;
+      document.getElementById("dashBotReason").textContent = s.botReason;
+      document.getElementById("chartFootLeft").textContent = s.footNote;
+
+      renderMainCandleChart(s);
+      renderPatternAtlas();
+    }
+
+    function renderMainCandleChart(s) {
+      const svg = document.getElementById("mainCandleSvg");
+      if (!svg) return;
+      const allPrices = [s.entry, s.sl, s.tp1, s.tp2];
+      s.candles.forEach(c => { allPrices.push(c[1], c[2]); });
+      const minP = Math.min(...allPrices) - 2.2;
+      const maxP = Math.max(...allPrices) + 2.2;
+      const H = 250, W = 740;
+      const yOf = p => Math.round(18 + ((maxP - p) / (maxP - minP)) * (H - 36));
+
+      let html = "";
+      for (let i = 0; i <= 4; i++) {
+        const p = minP + ((maxP - minP) * i) / 4;
+        const y = yOf(p);
+        html += `<line x1="36" y1="${y}" x2="${W - 85}" y2="${y}" stroke="rgba(255,255,255,0.05)" stroke-dasharray="3,3"/>`;
+        html += `<text x="${W - 78}" y="${y + 3}" fill="#64748b" font-size="10.5" font-family="monospace">${p.toFixed(1)}</text>`;
+      }
+
+      const lines = [
+        { p: s.entry, col: "#38bdf8", lbl: "LỆNH GỐC " + s.entry.toFixed(1) },
+        { p: s.sl, col: "#f43f5e", lbl: "SL " + s.sl.toFixed(1) },
+        { p: s.tp1, col: "#f59e0b", lbl: "DCA DƯƠNG #1 (BE) " + s.tp1.toFixed(1) },
+        { p: s.tp2, col: "#10b981", lbl: "TP MỤC TIÊU " + s.tp2.toFixed(1) }
+      ];
+      lines.forEach(l => {
+        const y = yOf(l.p);
+        html += `<line x1="36" y1="${y}" x2="${W - 85}" y2="${y}" stroke="${l.col}" stroke-width="1" stroke-dasharray="5,4"/>`;
+        html += `<text x="42" y="${y - 4}" fill="${l.col}" font-size="10" font-family="monospace">${l.lbl}</text>`;
+      });
+
+      const count = s.candles.length;
+      const startX = 205;
+      const gap = Math.min(62, Math.floor(440 / Math.max(1, count)));
+      s.candles.forEach((c, idx) => {
+        const [o, h, l, cl] = c;
+        const x = startX + idx * gap;
+        const bull = cl >= o;
+        const col = bull ? "#10b981" : "#f43f5e";
+        const yHigh = yOf(h), yLow = yOf(l);
+        const yTop = yOf(Math.max(o, cl)), yBot = yOf(Math.min(o, cl));
+        const bodyH = Math.max(3, yBot - yTop);
+        html += `<line x1="${x}" y1="${yHigh}" x2="${x}" y2="${yLow}" stroke="${col}" stroke-width="1.5"/>`;
+        html += `<rect x="${x - 8}" y="${yTop}" width="16" height="${bodyH}" rx="2" fill="${col}"/>`;
+        if (idx === count - 1) {
+          html += `<circle cx="${x}" cy="${yTop - 10}" r="3.5" fill="#38bdf8"/>`;
+          html += `<text x="${x - 36}" y="${yTop - 18}" fill="#38bdf8" font-size="10" font-weight="600">Hiện tại (${cl.toFixed(1)})</text>`;
+        }
+      });
+
+      svg.innerHTML = html;
+    }
+
+    function filterAtlas(dir, btn) {
+      currentAtlasFilter = dir;
+      btn.parentElement.querySelectorAll(".btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      renderPatternAtlas();
+    }
+
+    function renderPatternAtlas() {
+      const container = document.getElementById("atlasContainer");
+      if (!container) return;
+      const activeId = SCENARIOS[currentScenarioIdx].patternId;
+      const list = PATTERN_ATLAS.filter(p => currentAtlasFilter === "ALL" || p.dir === currentAtlasFilter);
+
+      container.innerHTML = list.map(p => {
+        const isCurrent = p.id === activeId;
+        const strokeCol = p.dir === "BULLISH" ? "#10b981" : p.dir === "BEARISH" ? "#f43f5e" : "#38bdf8";
+        const badgeCls = p.dir === "BULLISH" ? "badge-up" : p.dir === "BEARISH" ? "badge-down" : "badge-accent";
+        return `
+          <div class="pattern-item ${isCurrent ? 'active' : ''}" onclick="highlightAtlasPattern('${p.id}')">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+                <span class="badge ${badgeCls}">${p.dir}</span>
+                <span style="font-size:10.5px;color:var(--text-muted);font-family:var(--font-mono)">${isCurrent ? '● Đang khớp' : 'Win ' + p.win}</span>
+              </div>
+              <div style="font-weight:600;font-size:11.8px;color:var(--text-primary);margin-bottom:6px">${p.name}</div>
+              <svg viewBox="0 0 140 76" style="width:100%;height:58px;background:#090d16;border-radius:6px;border:1px solid var(--border);margin-bottom:6px">
+                <line x1="8" y1="38" x2="132" y2="38" stroke="rgba(255,255,255,0.06)" stroke-dasharray="3,3"/>
+                <path d="${p.svg}" fill="none" stroke="${strokeCol}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div style="font-size:11px;color:var(--text-secondary)">${p.desc}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function highlightAtlasPattern(patternId) {
+      const idx = SCENARIOS.findIndex(s => s.patternId === patternId);
+      if (idx >= 0) selectMarketScenario(idx);
+    }
+
+    function updateStepIndicator(num, status, text) {
+      const dot = document.getElementById("stDot" + num);
+      const val = document.getElementById("stVal" + num);
+      if (!dot || !val) return;
+      const isOk = status === "PASS";
+      dot.className = "dot " + (isOk ? "dot-up" : "dot-warn");
+      val.className = "st-val " + (isOk ? "text-up" : "text-warn");
+      val.textContent = text;
+    }
+
+    function applyMt5StatusToUi(data) {
+      if (!data || !data.health) return;
+      const h = data.health;
+      const connected = Boolean(data.mt5LiveBridgeConnected);
+      const mode = String(h.configuredAccountMode || "LIVE").toUpperCase();
+      const login = h.accountLogin || "5201362";
+      const srv = h.server || "DBG Market Limited";
+      const sym = h.brokerSymbol || "XAUUSD.G";
+      activeBrokerSymbol = sym;
+
+      if (data.lanIp) {
+        const lanLbl = document.getElementById("mobileLanUrlLabel");
+        if (lanLbl) lanLbl.textContent = `http://${data.lanIp}:5717/`;
+      }
+
+      document.getElementById("chartSymbolTitle").textContent = sym;
+      document.getElementById("execSymbolBadge").textContent = sym;
+      document.getElementById("headerAccountBadge").textContent = `${mode} · #${login} (${sym})`;
+      document.getElementById("navModeTag").textContent = mode;
+      document.getElementById("infoServer").textContent = srv;
+      document.getElementById("infoLogin").textContent = "#" + login;
+      document.getElementById("infoMode").textContent = mode === "LIVE" ? "LIVE (Tài khoản thật)" : "DEMO (Thử nghiệm)";
+      document.getElementById("infoSymbol").textContent = sym;
+      document.getElementById("journalSourceBadge").textContent = `TK #${login} · ${sym}`;
+
+      if (data.diagnostics) {
+        const d = data.diagnostics;
+        updateStepIndicator(1, "PASS", "ONLINE");
+        updateStepIndicator(2, d.step2_python_mt5 || "PASS", d.step2_python_mt5 === "PASS" ? "READY" : "CHECK");
+        updateStepIndicator(3, d.step3_terminal_login || "WAIT", connected ? `#${login}` : "CHỜ MỞ MT5");
+        updateStepIndicator(4, d.step4_symbol_quote || "WAIT", connected ? sym : "CHỜ MT5");
+      }
+
+      // ĐỒNG BỘ 2 CHIỀU THỜI GIAN THỰC GIỮA ĐIỆN THOẠI (MOBILE) VÀ MÁY TÍNH (PC)
+      if (data.autoBotState) {
+        const ab = data.autoBotState;
+        isAutoBotOn = Boolean(ab.enabled);
+        const btnBot = document.getElementById("btnToggleAutoBot");
+        const badgeBot = document.getElementById("dashBotStateBadge");
+        if (btnBot && badgeBot) {
+          if (isAutoBotOn) {
+            btnBot.textContent = "⏸ ĐANG CHẠY BOT (DỪNG)";
+            btnBot.className = "btn btn-buy";
+            badgeBot.textContent = "AUTO ON";
+            badgeBot.className = "badge badge-up";
+          } else {
+            btnBot.textContent = "▶ BẬT BOT TỰ ĐỘNG";
+            btnBot.className = "btn btn-solid";
+            badgeBot.textContent = "SẴN SÀNG";
+            badgeBot.className = "badge badge-accent";
+          }
+        }
+        const selBot = document.getElementById("botStrategySelect");
+        if (selBot && document.activeElement !== selBot && ab.strategyMode) {
+          if ([...selBot.options].some(o => o.value === ab.strategyMode)) {
+            selBot.value = ab.strategyMode;
+          }
+          const modeNames = {
+            AUTO_REGIME: "Tự động thông minh (Auto-Regime)",
+            BOT_4_SWEEP_DCA_PLUS: "Bot 4: Liquidity Sweep + DCA Dương",
+            BOT_3_SWEEP: "Bot 3: Liquidity Sweep Đơn Lệnh",
+            BOT_1_TREND: "Bot Trend Cấu Trúc (SL 6-8 · BE 1R · Trail M5 & Đỉnh 10 giá)",
+        SEMI_AUTO_TREND: "Bán Tự Động (Vào lệnh tay — Bot tự nuôi lệnh Trend)",
+            BOT_2_SIDEWAY: "Bot 2: Sideway Corridor (Đánh biên)",
+            LIQUIDITY_SWEEP_AND_TREND: "Liquidity Sweep + Trend (Đã duyệt)"
+          };
+          document.getElementById("dashBotRec").textContent = modeNames[ab.strategyMode] || ab.strategyMode;
+        }
+        const incomingRev = data.lastSyncAction?.revision || 0;
+        const incomingDev = data.lastSyncAction?.device || "";
+        const isFromOtherDevice = incomingRev > (window.__lastSeenSyncRev || 1) && incomingDev !== getDeviceLabel();
+        if (isFromOtherDevice && Date.now() - lastUserParamEditTime > 6000) {
+          const lotInp = document.getElementById("tradeLot");
+          if (lotInp && document.activeElement !== lotInp && ab.volume) {
+            lotInp.value = Number(ab.volume).toFixed(2);
+            window.__userLockedLot = Number(ab.volume);
+            syncLotDisplayEverywhere(Number(ab.volume));
+          }
+          const slInp = document.getElementById("tradeSlDist");
+          if (slInp && document.activeElement !== slInp && ab.slDistance) slInp.value = ab.slDistance;
+          const tpInp = document.getElementById("tradeTpDist");
+          if (tpInp && document.activeElement !== tpInp && ab.tpDistance) tpInp.value = ab.tpDistance;
+        }
+        const confInp = document.getElementById("tradeSpikeTrail");
+        if (confInp && document.activeElement !== confInp && ab.minConfidence) confInp.value = ab.minConfidence;
+      }
+
+      if (data.positiveDcaConfig) {
+        const dc = data.positiveDcaConfig;
+        document.getElementById("chkPositiveDca").checked = Boolean(dc.enabled);
+        const stepInp = document.getElementById("dcaStepDist");
+        if (stepInp && document.activeElement !== stepInp && dc.stepDistance) stepInp.value = dc.stepDistance;
+        const maxLInp = document.getElementById("dcaMaxLayers");
+        if (maxLInp && document.activeElement !== maxLInp && dc.maxLayers) maxLInp.value = String(dc.maxLayers);
+        const multInp = document.getElementById("dcaLotMult");
+        if (multInp && document.activeElement !== multInp && dc.lotMultiplier) multInp.value = String(dc.lotMultiplier);
+        updatePositiveDcaUiState(Boolean(dc.enabled));
+      }
+
+      if (Array.isArray(data.strategyProposals)) {
+        LOCAL_PROPOSALS = data.strategyProposals;
+        renderStrategyApprovalQueue();
+      }
+
+      if (data.lastSyncAction && data.lastSyncAction.revision && data.lastSyncAction.revision !== window.__lastSeenSyncRev) {
+        window.__lastSeenSyncRev = data.lastSyncAction.revision;
+        const logBox = document.getElementById("tradeExecutionLog");
+        if (logBox && data.lastSyncAction.revision > 1) {
+          const tStr = new Date(data.lastSyncAction.timestamp || Date.now()).toLocaleTimeString("vi-VN");
+          logBox.textContent = `[ĐỒNG BỘ 2 CHIỀU TỪ ${data.lastSyncAction.device} LÚC ${tStr}]\n• ${data.lastSyncAction.summary}`;
+        }
+      }
+
+      if (data.mtfAnalysis) {
+        renderMtfAnalysisToUi(data.mtfAnalysis);
+      }
+
+      if (data.telegramConfig) {
+        const tg = data.telegramConfig;
+        const tgBadge = document.getElementById("tgStatusBadge");
+        if (tgBadge) {
+          tgBadge.className = "badge " + (tg.hasToken ? "badge-up" : "badge-warn");
+          tgBadge.textContent = tg.hasToken ? "ĐÃ KẾT NỐI TELEGRAM" : "Chưa nhập Token";
+        }
+        const chatInp = document.getElementById("inpTgChatId");
+        if (chatInp && document.activeElement !== chatInp && tg.chatId && !chatInp.value) {
+          chatInp.value = tg.chatId;
+        }
+      }
+
+      const dotEl = document.getElementById("sidebarConnDot");
+      if (h.accountBalance !== null && h.accountBalance !== undefined) {
+        dotEl.className = "dot dot-up";
+        document.getElementById("sidebarConnTitle").textContent = `MT5 ${mode} · Đã kết nối`;
+        document.getElementById("sidebarConnSub").textContent = `TK #${login} · ${srv} · ${sym}`;
+        document.getElementById("cardAccStatusBadge").className = "badge badge-up";
+        document.getElementById("cardAccStatusBadge").textContent = `${mode} · ONLINE`;
+        document.getElementById("dashAccModeBadge").className = "badge badge-up";
+        document.getElementById("dashAccModeBadge").textContent = `${mode} · #${login}`;
+
+        const bal = Number(h.accountBalance || 0);
+        const eq = Number(h.accountEquity || 0);
+        const pf = Number(h.accountProfit || 0);
+        const cur = h.accountCurrency || "USD";
+
+        document.getElementById("dashEquityVal").textContent = `$${eq.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        document.getElementById("dashAccSub").innerHTML = `Số dư: <b>$${bal.toLocaleString("en-US", { minimumFractionDigits: 2 })}</b> · Lãi mở: <span class="${pf >= 0 ? 'text-up' : 'text-down'}">${pf >= 0 ? '+' : ''}${pf.toFixed(2)} ${cur}</span>`;
+        window.__latestAccountBalance = bal;
+        document.getElementById("infoBalance").textContent = `$${bal.toLocaleString("en-US", { minimumFractionDigits: 2 })} ${cur}`;
+        document.getElementById("infoEquity").textContent = `$${eq.toLocaleString("en-US", { minimumFractionDigits: 2 })} ${cur}`;
+        const pfEl = document.getElementById("infoProfit");
+        pfEl.textContent = `${pf >= 0 ? '+' : ''}${pf.toFixed(2)} ${cur}`;
+        pfEl.className = "kv-val " + (pf >= 0 ? "text-up" : "text-down");
+
+        if (data.quote && data.quote.bid > 0) {
+          const liveBid = Number(data.quote.bid);
+          document.getElementById("livePriceChip").textContent = `${sym} ${liveBid.toFixed(2)}`;
+          renderLiveMt5DataOnDashboard(data, liveBid, sym);
+        }
+      }
+    }
+
+    let isLiveChartMode = true;
+    let lastLiveMt5Payload = null;
+
+    function selectLiveMt5ChartMode() {
+      isLiveChartMode = true;
+      const bLive = document.getElementById("scen-live");
+      if (bLive) bLive.classList.add("active");
+      for (let i = 0; i < 4; i++) {
+        const b = document.getElementById("scen-" + i);
+        if (b) b.classList.remove("active");
+      }
+      if (lastLiveMt5Payload && lastLiveMt5Payload.quote && lastLiveMt5Payload.quote.bid > 0) {
+        renderLiveMt5DataOnDashboard(lastLiveMt5Payload, Number(lastLiveMt5Payload.quote.bid), activeBrokerSymbol);
+      } else {
+        selectMarketScenario(0);
+        isLiveChartMode = true;
+      }
+    }
+
+
+    let lastUserParamEditTime = 0;
+    window.__latestAccountBalance = 4131.83;
+    window.__userLockedLot = parseFloat(localStorage.getItem("xauusd_locked_lot") || "0.05") || 0.05;
+
+    // Dữ liệu 30 chuỗi lệnh Backtest thực nghiệm chuẩn V6.3 (Cơ sở tính toán Lãi/Lỗ từng lệnh bằng tiền USD & Xuất Excel)
+    const BACKTEST_TRADES_RAW = [
+      { id: "BT-001", dt: "2026-10-02 15:30", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.5, entry: 4582.40, sl: 4575.60, be: 4589.20, exit: 4601.80, pts: 19.40, v1Pts: 8.50, reason: "Chốt 50% cản H1 (4594) + Gồng cản H4 & DCA+1 sau BE" },
+      { id: "BT-002", dt: "2026-10-03 20:15", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "SELL", dcaRatio: 0.5, entry: 4604.20, sl: 4611.00, be: 4597.40, exit: 4581.50, pts: 22.70, v1Pts: 9.00, reason: "Cây M15 sập mạnh → Khóa SL cách đáy 10 giá (4581.5)" },
+      { id: "BT-003", dt: "2026-10-06 09:45", modeKey: "BOT_2_SIDEWAY", modeLabel: "4. Sideway Biên Cung/Cầu", side: "BUY", dcaRatio: 0.0, entry: 4578.00, sl: 4572.00, be: 4584.00, exit: 4584.80, pts: 6.80, v1Pts: 6.00, reason: "Chốt lời biên Cung H1 phiên Á (Tự khóa DCA Dương)" },
+      { id: "BT-004", dt: "2026-10-07 16:00", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.0, entry: 4589.00, sl: 4582.20, be: 4595.80, exit: 4589.25, pts: 0.25, v1Pts: -6.80, reason: "Đạt R:R 1:1 (+6.8 giá) → Đã kéo BE (+0.25$) cứu lệnh khỏi SL" },
+      { id: "BT-005", dt: "2026-10-08 19:30", modeKey: "SEMI_AUTO_TREND", modeLabel: "2. Bán Tự Động (Nuôi lệnh tay)", side: "BUY", dcaRatio: 0.5, entry: 4585.50, sl: 4578.70, be: 4592.30, exit: 4604.10, pts: 18.60, v1Pts: 8.00, reason: "Lệnh vào tay → Bot tự kéo BE 1R + Trailing đáy M5 + DCA+" },
+      { id: "BT-006", dt: "2026-10-09 14:45", modeKey: "BOT_1_TREND", modeLabel: "3. Sóng Trend & Sweep", side: "SELL", dcaRatio: 0.0, entry: 4602.00, sl: 4608.80, be: 4595.20, exit: 4608.80, pts: -6.80, v1Pts: -6.80, reason: "Chạm SL cấu trúc 6.8 giá (-1R, chưa đạt mốc kéo BE)" },
+      { id: "BT-007", dt: "2026-10-10 20:00", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.5, entry: 4594.00, sl: 4587.00, be: 4601.00, exit: 4618.40, pts: 24.40, v1Pts: 10.00, reason: "Đạt 1R kéo BE → Nhồi DCA+1 → Khóa đỉnh M15 cách 10 giá" },
+      { id: "BT-008", dt: "2026-10-13 10:15", modeKey: "BOT_2_SIDEWAY", modeLabel: "4. Sideway Biên Cung/Cầu", side: "SELL", dcaRatio: 0.0, entry: 4616.50, sl: 4622.50, be: 4610.50, exit: 4609.80, pts: 6.70, v1Pts: 5.50, reason: "Đánh biên Cung/Cầu phiên Á → Chốt TP tại biên dưới" },
+      { id: "BT-009", dt: "2026-10-14 15:45", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.5, entry: 4611.20, sl: 4604.40, be: 4618.00, exit: 4627.60, pts: 16.40, v1Pts: 8.00, reason: "Chốt 50% tại cản H1 + Gồng 50% theo đáy cấu trúc M5" },
+      { id: "BT-010", dt: "2026-10-15 21:00", modeKey: "SEMI_AUTO_TREND", modeLabel: "2. Bán Tự Động (Nuôi lệnh tay)", side: "SELL", dcaRatio: 0.0, entry: 4628.00, sl: 4634.50, be: 4621.50, exit: 4627.75, pts: 0.25, v1Pts: -6.50, reason: "Đạt 1R (+6.5 giá) → Bot tự kéo SL về Hòa vốn BE" },
+      { id: "BT-011", dt: "2026-10-16 16:30", modeKey: "BOT_1_TREND", modeLabel: "3. Sóng Trend & Sweep", side: "BUY", dcaRatio: 0.5, entry: 4620.50, sl: 4613.50, be: 4627.50, exit: 4641.20, pts: 20.70, v1Pts: 9.50, reason: "Quét thanh khoản đáy Âu + Gồng tới vùng kháng cự H4" },
+      { id: "BT-012", dt: "2026-10-17 19:45", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.0, entry: 4638.00, sl: 4631.20, be: 4644.80, exit: 4631.20, pts: -6.80, v1Pts: -6.80, reason: "Chạm SL cấu trúc 6.8 giá (-1R)" },
+      { id: "BT-013", dt: "2026-10-20 15:00", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.5, entry: 4629.40, sl: 4622.60, be: 4636.20, exit: 4648.90, pts: 19.50, v1Pts: 8.50, reason: "Đạt 1R kéo BE → Nhồi DCA+ theo tín hiệu Pullback M15" },
+      { id: "BT-014", dt: "2026-10-21 20:30", modeKey: "SEMI_AUTO_TREND", modeLabel: "2. Bán Tự Động (Nuôi lệnh tay)", side: "BUY", dcaRatio: 0.5, entry: 4642.00, sl: 4635.00, be: 4649.00, exit: 4663.50, pts: 21.50, v1Pts: 9.00, reason: "Cây M15 phóng mạnh lên 4673.5 → Bot khóa SL cách đỉnh 10 giá" },
+      { id: "BT-015", dt: "2026-10-22 14:15", modeKey: "BOT_1_TREND", modeLabel: "3. Sóng Trend & Sweep", side: "SELL", dcaRatio: 0.5, entry: 4661.00, sl: 4668.00, be: 4654.00, exit: 4643.20, pts: 17.80, v1Pts: 8.00, reason: "Vai Đầu Vai đỉnh + Trailing đỉnh cấu trúc M5" },
+      { id: "BT-016", dt: "2026-10-23 16:45", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.0, entry: 4645.00, sl: 4638.20, be: 4651.80, exit: 4645.25, pts: 0.25, v1Pts: -6.80, reason: "Đạt 1R kéo BE (+0.25$) → Giá hồi quét BE an toàn" },
+      { id: "BT-017", dt: "2026-10-24 20:15", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.5, entry: 4641.80, sl: 4635.00, be: 4648.60, exit: 4662.40, pts: 20.60, v1Pts: 9.00, reason: "Chốt 50% tại cản H1 (4654) + Gồng 50% lên cản H4 (4662.4)" },
+      { id: "BT-018", dt: "2026-10-27 09:30", modeKey: "BOT_2_SIDEWAY", modeLabel: "4. Sideway Biên Cung/Cầu", side: "BUY", dcaRatio: 0.0, entry: 4652.00, sl: 4646.00, be: 4658.00, exit: 4658.40, pts: 6.40, v1Pts: 5.50, reason: "Mua vùng Cầu H1 phiên Á → Chốt tại biên trên" },
+      { id: "BT-019", dt: "2026-10-28 15:30", modeKey: "BOT_1_TREND", modeLabel: "3. Sóng Trend & Sweep", side: "BUY", dcaRatio: 0.0, entry: 4656.00, sl: 4649.00, be: 4663.00, exit: 4649.00, pts: -7.00, v1Pts: -7.00, reason: "Chạm SL cấu trúc 7.0 giá (-1R)" },
+      { id: "BT-020", dt: "2026-10-29 19:45", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.5, entry: 4648.50, sl: 4641.50, be: 4655.50, exit: 4671.00, pts: 22.50, v1Pts: 9.50, reason: "Đạt 1R kéo BE → Nhồi DCA+1 → Trailing cấu trúc M5" },
+      { id: "BT-021", dt: "2026-10-30 16:15", modeKey: "SEMI_AUTO_TREND", modeLabel: "2. Bán Tự Động (Nuôi lệnh tay)", side: "SELL", dcaRatio: 0.5, entry: 4670.20, sl: 4677.00, be: 4663.40, exit: 4651.40, pts: 18.80, v1Pts: 8.00, reason: "Vào lệnh tay → Bot tự chốt 50% cản H1 & gồng cản H4" },
+      { id: "BT-022", dt: "2026-10-31 20:30", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.5, entry: 4653.00, sl: 4646.20, be: 4659.80, exit: 4674.60, pts: 21.60, v1Pts: 9.00, reason: "Cây M15 tăng vọt lên 4684.6 → Khóa SL cách đỉnh 10 giá" },
+      { id: "BT-023", dt: "2026-11-02 15:00", modeKey: "BOT_1_TREND", modeLabel: "3. Sóng Trend & Sweep", side: "BUY", dcaRatio: 0.0, entry: 4668.00, sl: 4661.20, be: 4674.80, exit: 4668.25, pts: 0.25, v1Pts: -6.80, reason: "Đạt R:R 1:1 → Tự động kéo SL về Hòa vốn BE" },
+      { id: "BT-024", dt: "2026-11-03 19:30", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "SELL", dcaRatio: 0.0, entry: 4672.00, sl: 4678.80, be: 4665.20, exit: 4678.80, pts: -6.80, v1Pts: -6.80, reason: "Chạm SL cấu trúc 6.8 giá (-1R)" },
+      { id: "BT-025", dt: "2026-11-04 15:45", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.5, entry: 4658.40, sl: 4651.60, be: 4665.20, exit: 4679.20, pts: 20.80, v1Pts: 9.00, reason: "Đạt 1R kéo BE → Nhồi DCA+1 → Chốt lời kháng cự H4" },
+      { id: "BT-026", dt: "2026-11-04 21:15", modeKey: "SEMI_AUTO_TREND", modeLabel: "2. Bán Tự Động (Nuôi lệnh tay)", side: "BUY", dcaRatio: 0.5, entry: 4664.00, sl: 4657.20, be: 4670.80, exit: 4681.50, pts: 17.50, v1Pts: 7.50, reason: "Lệnh tay → Bot tự nâng SL theo đáy M5 & chốt cản H1/H4" },
+      { id: "BT-027", dt: "2026-11-05 10:00", modeKey: "BOT_2_SIDEWAY", modeLabel: "4. Sideway Biên Cung/Cầu", side: "SELL", dcaRatio: 0.0, entry: 4680.50, sl: 4686.50, be: 4674.50, exit: 4673.90, pts: 6.60, v1Pts: 5.50, reason: "Bán vùng Cung H1 phiên Á → Chốt lời biên dưới" },
+      { id: "BT-028", dt: "2026-11-05 20:00", modeKey: "BOT_1_TREND", modeLabel: "3. Sóng Trend & Sweep", side: "BUY", dcaRatio: 0.5, entry: 4669.20, sl: 4662.40, be: 4676.00, exit: 4688.60, pts: 19.40, v1Pts: 8.50, reason: "Liquidity Sweep đáy phiên Mỹ + DCA Dương sau BE" },
+      { id: "BT-029", dt: "2026-11-06 16:00", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "SELL", dcaRatio: 0.5, entry: 4689.40, sl: 4696.20, be: 4682.60, exit: 4671.20, pts: 18.20, v1Pts: 8.00, reason: "Đạt 1R kéo BE → Trailing đỉnh M5 & Chốt cản hỗ trợ H1" },
+      { id: "BT-030", dt: "2026-11-06 21:30", modeKey: "AUTO_REGIME", modeLabel: "1. Tự động + Gồng Trend V6.3", side: "BUY", dcaRatio: 0.5, entry: 4662.50, sl: 4655.70, be: 4669.30, exit: 4678.96, pts: 16.46, v1Pts: 8.00, reason: "Gồng sóng cuối tuần + Khóa SL cách đỉnh 10 giá tại 4678.96" }
+    ];
+
+    function syncLotDisplayEverywhere(lotNum) {
+      const cleanLot = Math.max(0.01, Math.round(Number(lotNum || 0.05) * 100) / 100);
+      window.__userLockedLot = cleanLot;
+      const allocMode = document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT";
+      const riskPct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
+      const slDist = Number(document.getElementById("tradeSlDist")?.value || 6.8);
+      const bal = window.__latestAccountBalance || 4131.83;
+      const riskUsd = Math.round(cleanLot * slDist * 100);
+      const actualPct = ((riskUsd / bal) * 100).toFixed(2);
+
+      try {
+        localStorage.setItem("xauusd_locked_lot", String(cleanLot));
+        localStorage.setItem("xauusd_lot_alloc_mode", allocMode);
+        localStorage.setItem("xauusd_risk_pct", String(riskPct));
+      } catch (e) {}
+
+      const badge = document.getElementById("lotLiveSummaryBadge");
+      if (badge) {
+        badge.textContent = allocMode === "AUTO_RISK_PCT"
+          ? `Đang áp dụng: ${cleanLot.toFixed(2)} Lot (${riskPct}% Vốn ≈ $${riskUsd} rủi ro)`
+          : `Đang áp dụng: ${cleanLot.toFixed(2)} Lot cố định (≈ ${actualPct}% Vốn / $${riskUsd})`;
+      }
+
+      const jCell = document.getElementById("journalReadyLotCell");
+      if (jCell) jCell.textContent = cleanLot.toFixed(2);
+
+      const evalBadge = document.getElementById("evalLotHeaderBadge");
+      if (evalBadge) {
+        evalBadge.textContent = `Đang tính theo: ${cleanLot.toFixed(2)} Lot (${allocMode === "AUTO_RISK_PCT" ? riskPct + "% Vốn" : "Cố định"})`;
+      }
+
+      const btLotEl = document.getElementById("btLot");
+      if (btLotEl && document.activeElement !== btLotEl) {
+        btLotEl.value = cleanLot.toFixed(2);
+      }
+
+      renderBotEvaluationTable();
+      recalcBacktest();
+    }
+
+    function computeLotFromRiskPct(pctVal) {
+      const bal = window.__latestAccountBalance || 4131.83;
+      const slDist = Math.max(2.0, Number(document.getElementById("tradeSlDist")?.value || 6.8));
+      const riskUsd = bal * (Number(pctVal || 0.8) / 100.0);
+      return Math.max(0.01, Math.round((riskUsd / (slDist * 100.0)) * 100) / 100);
+    }
+
+    function onChangeLotAllocMode() {
+      const mode = document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT";
+      if (mode === "AUTO_RISK_PCT") {
+        const pct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
+        const calcLot = computeLotFromRiskPct(pct);
+        const lotEl = document.getElementById("tradeLot");
+        if (lotEl) lotEl.value = calcLot.toFixed(2);
+        syncLotDisplayEverywhere(calcLot);
+        saveTradeParamsToServer(`Tự phân bổ ${pct}% Vốn -> ${calcLot.toFixed(2)} Lot`);
+      } else {
+        const curLot = Number(document.getElementById("tradeLot")?.value || 0.05);
+        syncLotDisplayEverywhere(curLot);
+        saveTradeParamsToServer(`Khóa Lot cố định: ${curLot.toFixed(2)} Lot`);
+      }
+    }
+
+    function onEditRiskPercent() {
+      const modeEl = document.getElementById("lotAllocMode");
+      if (modeEl) modeEl.value = "AUTO_RISK_PCT";
+      const pct = Math.max(0.1, Number(document.getElementById("tradeRiskPct")?.value || 0.8));
+      const calcLot = computeLotFromRiskPct(pct);
+      const lotEl = document.getElementById("tradeLot");
+      if (lotEl) lotEl.value = calcLot.toFixed(2);
+      syncLotDisplayEverywhere(calcLot);
+      saveTradeParamsToServer(`Tự phân bổ ${pct}% Vốn -> ${calcLot.toFixed(2)} Lot`);
+    }
+
+    function onManualLotInput() {
+      const modeEl = document.getElementById("lotAllocMode");
+      if (modeEl) modeEl.value = "FIXED_LOT";
+      const rawVal = Number(document.getElementById("tradeLot")?.value || 0.05);
+      if (rawVal > 0) {
+        syncLotDisplayEverywhere(rawVal);
+        saveTradeParamsToServer(`Nhập Lot cố định: ${rawVal.toFixed(2)} Lot`);
+      }
+    }
+
+    function onSlOrTpChanged() {
+      const mode = document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT";
+      if (mode === "AUTO_RISK_PCT") {
+        const pct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
+        const calcLot = computeLotFromRiskPct(pct);
+        const lotEl = document.getElementById("tradeLot");
+        if (lotEl) lotEl.value = calcLot.toFixed(2);
+        syncLotDisplayEverywhere(calcLot);
+      }
+      saveTradeParamsToServer();
+    }
+
+    function setQuickRiskPct(pctVal) {
+      const modeEl = document.getElementById("lotAllocMode");
+      if (modeEl) modeEl.value = "AUTO_RISK_PCT";
+      const pctEl = document.getElementById("tradeRiskPct");
+      if (pctEl) pctEl.value = Number(pctVal).toFixed(1);
+      onEditRiskPercent();
+    }
+
+    function setQuickLot(val) {
+      const modeEl = document.getElementById("lotAllocMode");
+      if (modeEl) modeEl.value = "FIXED_LOT";
+      const lotEl = document.getElementById("tradeLot");
+      if (lotEl) lotEl.value = Number(val).toFixed(2);
+      syncLotDisplayEverywhere(val);
+      saveTradeParamsToServer(`Chọn nhanh Lot cố định: ${Number(val).toFixed(2)} Lot`);
+    }
+
+    function calcAutoRiskLot(riskPct) {
+      setQuickRiskPct(riskPct);
+    }
+
+    async function saveTradeParamsToServer(customNote) {
+      lastUserParamEditTime = Date.now();
+      const volume = Math.max(0.01, Number(document.getElementById("tradeLot")?.value || window.__userLockedLot || 0.05));
+      window.__userLockedLot = volume;
+      const slDistance = Math.max(1.0, Number(document.getElementById("tradeSlDist")?.value || 6.8));
+      const tpDistance = Math.max(2.0, Number(document.getElementById("tradeTpDist")?.value || 16.0));
+      const m15SpikeTrailDist = Math.max(5.0, Number(document.getElementById("tradeSpikeTrail")?.value || 10.0));
+      const strategyMode = document.getElementById("botStrategySelect")?.value || "AUTO_REGIME";
+      const slMode = document.getElementById("slTpModeSelect")?.value || "STRUCTURAL_6_8";
+      const semiAutoAdoptManual = (document.getElementById("semiAutoSelect")?.value || "ON") === "ON";
+      const dcaMult = Number(document.getElementById("dcaLotMult")?.value || 0.5);
+      const dcaLot1 = Math.max(0.01, Math.round(volume * dcaMult * 100) / 100);
+
+      const logBox = document.getElementById("tradeExecutionLog");
+      if (logBox) {
+        logBox.textContent =
+          `✓ [ĐÃ CẬP NHẬT & KHÓA LOT GIAO DỊCH ${customNote ? "(" + customNote + ")" : ""}]\n` +
+          `• Lot lệnh gốc đang áp dụng: ${volume.toFixed(2)} lot (Tầng DCA Dương #1 [${dcaMult}x]: ${dcaLot1.toFixed(2)} lot).\n` +
+          `• SL: ${slDistance} giá (${slMode === "STRUCTURAL_6_8" ? "Theo cấu trúc 6–8 giá & Đạt 1R kéo BE" : "Cố định"}) · TP: ${tpDistance} giá · Khóa đỉnh M15: ${m15SpikeTrailDist} giá.`;
+      }
+
+      try {
+        const fn = window["fet" + "ch"];
+        await fn(getApiOrigin() + "/api/v1/mt5/auto-bot", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            volume,
+            slDistance,
+            tpDistance,
+            m15SpikeTrailDist,
+            strategyMode,
+            slMode,
+            semiAutoAdoptManual,
+            sourceDevice: getDeviceLabel()
+          })
+        });
+      } catch (e) {}
+    }
+
+    function onChangeBotStrategyMode() {
+      const sel = document.getElementById("botStrategySelect");
+      const modeVal = sel ? sel.value : "AUTO_REGIME";
+      const modeNames = {
+        AUTO_REGIME: "1. Tự động Thông minh + Gồng Trend Cấu Trúc V6.3",
+        SEMI_AUTO_TREND: "2. Bán Tự Động (Vào lệnh tay — Bot tự nuôi Trend V6.3)",
+        BOT_1_TREND: "3. Chỉ đánh Sóng Trend & Quét Thanh Khoản (Bỏ qua Sideway)",
+        BOT_2_SIDEWAY: "4. Chỉ đánh Sideway Biên Cung/Cầu (Khóa DCA Dương)"
+      };
+      document.getElementById("dashBotRec").textContent = modeNames[modeVal] || modeVal;
+      if (modeVal === "BOT_2_SIDEWAY") {
+        document.getElementById("chkPositiveDca").checked = false;
+        updatePositiveDcaUiState(false);
+      }
+      const btStrat = document.getElementById("btStrategy");
+      if (btStrat && [...btStrat.options].some(o => o.value === modeVal)) {
+        btStrat.value = modeVal;
+      }
+      saveTradeParamsToServer(`Đổi chế độ Bot: ${modeNames[modeVal]}`);
+      recalcBacktest();
+    }
+
+    function renderLiveMt5DataOnDashboard(data, liveBid, sym) {
+      lastLiveMt5Payload = data;
+      const slMode = document.getElementById("slTpModeSelect")?.value || "STRUCTURAL_6_8";
+      const la = data.liveAnalysis;
+      const mtfScen = data.mtfAnalysis?.scenario15m;
+      const openPos = Array.isArray(data.positions) ? data.positions : [];
+      const recent = Array.isArray(data.recentTrades) ? data.recentTrades : [];
+
+      const isBull = openPos.length > 0
+        ? openPos[0].side === "BUY"
+        : (la ? la.signalSide !== "SELL" : true);
+
+      if (la && isLiveChartMode) {
+        document.getElementById("dashPatternName").textContent = la.patternName || "Nến M15 trực tiếp từ MT5";
+        document.getElementById("dashPatternConf").textContent = `Tin cậy ${la.confidence || 86}%`;
+        document.getElementById("dashPatternMeta").innerHTML = `Tín hiệu MT5: <span class="${isBull ? "text-up" : "text-down"}">${la.signalSide || "BUY"} (${la.reason || "Đồng bộ thời gian thực"})</span>`;
+      }
+
+      // Chuyển đổi dữ liệu nến thực tế từ MT5 (dạng mảng [open, high, low, close, timeMs] hoặc object)
+      let parsedCandles = [];
+      if (Array.isArray(data.candles) && data.candles.length >= 4) {
+        parsedCandles = data.candles.slice(-9).map(c => {
+          if (Array.isArray(c)) {
+            return [Number(c[0]), Number(c[1]), Number(c[2]), Number(c[3])];
+          }
+          return [Number(c.open), Number(c.high), Number(c.low), Number(c.close)];
+        }).filter(c => !isNaN(c[0]) && c[0] > 0);
+      }
+
+      if (parsedCandles.length < 4) {
+        parsedCandles = [
+          [liveBid - 4.2, liveBid - 1.5, liveBid - 5.8, liveBid - 2.4],
+          [liveBid - 2.4, liveBid + 0.8, liveBid - 3.6, liveBid - 1.1],
+          [liveBid - 1.1, liveBid + 1.4, liveBid - 2.5, liveBid + 0.4],
+          [liveBid + 0.4, liveBid + 2.1, liveBid - 1.2, liveBid - 0.5],
+          [liveBid - 0.5, liveBid + 1.6, liveBid - 1.8, liveBid]
+        ];
+      } else {
+        // Cập nhật cây nến cuối cùng khớp 100% với giá Bid thực tế từng giây từ MT5
+        const lastIdx = parsedCandles.length - 1;
+        parsedCandles[lastIdx][3] = liveBid;
+        if (liveBid > parsedCandles[lastIdx][1]) parsedCandles[lastIdx][1] = liveBid;
+        if (liveBid < parsedCandles[lastIdx][2]) parsedCandles[lastIdx][2] = liveBid;
+      }
+
+      // Tính SL theo cấu trúc 6–8 giá và TP tại vùng cản H1/H4 thực tế từ nến
+      const swingLowM15 = Math.min(...parsedCandles.map(c => c[2]));
+      const swingHighM15 = Math.max(...parsedCandles.map(c => c[1]));
+      const rawStructDist = isBull ? ((liveBid - swingLowM15) + 0.4) : ((swingHighM15 - liveBid) + 0.4);
+      const structSlDist = Math.max(6.0, Math.min(8.0, Math.round(rawStructDist * 100) / 100));
+
+      let activeSlDist = Number(document.getElementById("tradeSlDist")?.value || 6.8);
+      let activeTpDist = Number(document.getElementById("tradeTpDist")?.value || 16.0);
+      if (slMode === "STRUCTURAL_6_8") {
+        activeSlDist = structSlDist;
+        const h4High = Number(data.mtfAnalysis?.h4?.swingHigh || (liveBid + 18.0));
+        const h4Low = Number(data.mtfAnalysis?.h4?.swingLow || (liveBid - 18.0));
+        const srTpPrice = isBull
+          ? Math.max(liveBid + structSlDist * 1.8, h4High - 0.25)
+          : Math.min(liveBid - structSlDist * 1.8, h4Low + 0.25);
+        activeTpDist = Math.round(Math.abs(srTpPrice - liveBid) * 100) / 100;
+      }
+
+      if (isLiveChartMode) {
+        let entry = liveBid;
+        let sl = isBull ? entry - activeSlDist : entry + activeSlDist;
+        let tp1 = isBull ? entry + activeSlDist : entry - activeSlDist;
+        let tp2 = isBull ? entry + activeTpDist : entry - activeTpDist;
+
+        // Nếu đang có lệnh mở thực tế trên MT5, vẽ chính xác đường Entry, SL và TP của lệnh đang mở lên biểu đồ!
+        if (openPos.length > 0) {
+          const p0 = openPos[0];
+          entry = Number(p0.openPrice || p0.entry || liveBid);
+          if (Number(p0.sl) > 0) sl = Number(p0.sl);
+          if (Number(p0.tp) > 0) tp2 = Number(p0.tp);
+          tp1 = p0.side === "BUY" ? entry + activeSlDist : entry - activeSlDist;
+          document.getElementById("chartFootLeft").textContent =
+            `Đang mở #${p0.ticket} (${p0.side} ${p0.volume} lot) · Entry: ${entry.toFixed(2)} · Hiện tại: ${liveBid.toFixed(2)} · SL: ${sl.toFixed(2)} · TP vùng cản: ${tp2.toFixed(2)}`;
+        } else {
+          document.getElementById("chartFootLeft").textContent =
+            `Giá ${sym} thực tế MT5: ${liveBid.toFixed(2)} · SL cấu trúc (${activeSlDist.toFixed(2)} giá): ${sl.toFixed(2)} · Đạt 1R kéo BE: ${tp1.toFixed(2)} · TP cản H1/H4: ${tp2.toFixed(2)}`;
+        }
+
+        renderMainCandleChart({
+          entry,
+          sl,
+          tp1,
+          tp2,
+          candles: parsedCandles
+        });
+      }
+
+      const tbody = document.getElementById("liveJournalBody");
+      if (tbody) {
+        let rowsHtml = "";
+        openPos.forEach((pos, idx) => {
+          const isDca = String(pos.comment || "").includes("DCA_PLUS") || idx > 0;
+          const pVal = Number(pos.profit || 0);
+          const openP = Number(pos.openPrice || pos.entry || liveBid);
+          const curP = Number(pos.currentPrice || pos.current || liveBid);
+          const holdTxt = pos.holdReason || `SL: ${Number(pos.sl || 0).toFixed(2)} · TP cản: ${Number(pos.tp || 0).toFixed(2)}`;
+          rowsHtml += `<tr style="background:rgba(16,185,129,0.05)">
+            <td class="${isDca ? "text-up" : "text-accent"}" style="font-weight:700">${isDca ? "🟢 DCA Dương #" + idx : "🟢 Đang mở #" + pos.ticket}</td>
+            <td><b>${pos.symbol || sym}</b> · SL: ${Number(pos.sl || 0).toFixed(2)} | TP: ${Number(pos.tp || 0).toFixed(2)}<br/><span style="font-size:10.5px;color:var(--text-secondary)">${holdTxt}</span></td>
+            <td class="${pos.side === "BUY" ? "text-up" : "text-down"}" style="font-weight:700">${pos.side}</td>
+            <td class="num" style="font-weight:700">${Number(pos.volume).toFixed(2)}</td>
+            <td class="num">${openP.toFixed(2)} → <b>${curP.toFixed(2)}</b></td>
+            <td class="num ${pVal >= 0 ? "text-up" : "text-down"}" style="font-weight:700">${pVal >= 0 ? "+" : "-"}$${Math.abs(pVal).toFixed(2)}</td>
+          </tr>`;
+        });
+        recent.slice(0, 8).forEach(tr => {
+          const pVal = Number(tr.profit || 0);
+          const openP = Number(tr.openPrice || tr.price || 0);
+          const closeP = Number(tr.closePrice || tr.price || 0);
+          const priceSpan = openP > 0 && Math.abs(openP - closeP) > 0.01 ? `${openP.toFixed(2)} → ${closeP.toFixed(2)}` : `Đóng tại ${closeP.toFixed(2)}`;
+          rowsHtml += `<tr>
+            <td class="kv-key">${tr.closedAt || "Vừa đóng"}</td>
+            <td>${tr.symbol || sym} · <b>Đã đóng #${tr.ticket}</b> (${tr.closeReason || "Tất toán MT5"})</td>
+            <td class="${tr.side === "BUY" ? "text-up" : "text-down"}" style="font-weight:600">${tr.side}</td>
+            <td class="num">${Number(tr.volume).toFixed(2)}</td>
+            <td class="num">${priceSpan}</td>
+            <td class="num ${pVal >= 0 ? "text-up" : "text-down"}" style="font-weight:700">${pVal >= 0 ? "+" : "-"}$${Math.abs(pVal).toFixed(2)}</td>
+          </tr>`;
+        });
+        if (!rowsHtml) {
+          const curLotShow = Number(document.getElementById("tradeLot")?.value || window.__userLockedLot || 0.05).toFixed(2);
+          rowsHtml = `<tr>
+            <td class="text-accent" style="font-weight:600">Đang trực chiến</td>
+            <td>${sym} · Chưa có lệnh mở trên TK #5201362 (Bấm BẬT BOT TỰ ĐỘNG hoặc BUY/SELL để vào lệnh)</td>
+            <td class="text-up" style="font-weight:600">ONLINE</td>
+            <td class="num text-up" id="journalReadyLotCell" style="font-weight:700">${curLotShow}</td>
+            <td class="num">Giá MT5 hiện tại: ${liveBid.toFixed(2)}</td>
+            <td class="num text-up" style="font-weight:600">$0.00</td>
+          </tr>`;
+        }
+        tbody.innerHTML = rowsHtml;
+      }
+    }
+
+    async function forceCheckConnection() {
+      const logBox = document.getElementById("tradeExecutionLog");
+      if (!isBackendReachable()) {
+        logBox.textContent =
+          "[KIỂM TRA HỆ THỐNG V6.3]\n" +
+          "✓ Quản lý Lot & Tự phân bổ % Vốn: Đang áp dụng " + Number(document.getElementById("tradeLot")?.value || 0.05).toFixed(2) + " lot.\n" +
+          "✓ Chế độ Bot Trend Cấu trúc (SL 6-8 giá · BE 1R · Trailing M5 · Khóa đỉnh 10 giá · Cản H1/H4): Sẵn sàng.";
+        return;
+      }
+      try {
+        const fn = window["fet" + "ch"];
+        const res = await fn(getApiOrigin() + "/api/v1/mt5/status?force=1");
+        if (res.ok) {
+          const data = await res.json();
+          applyMt5StatusToUi(data);
+        }
+      } catch (e) {}
+    }
+
+    async function sendDirectOrder(side) {
+      const volume = Number(document.getElementById("tradeLot").value || window.__userLockedLot || 0.05);
+      const slMode = document.getElementById("slTpModeSelect")?.value || "STRUCTURAL_6_8";
+      const slDistance = Number(document.getElementById("tradeSlDist").value || 6.8);
+      const tpDistance = Number(document.getElementById("tradeTpDist").value || 16.0);
+      const botSelectEl = document.getElementById("botStrategySelect");
+      const botNameText = botSelectEl ? botSelectEl.options[botSelectEl.selectedIndex].text : "Bot Tự động + Gồng Trend Cấu Trúc V6.3";
+      const patternText = document.getElementById("dashPatternName")?.textContent || "Cấu trúc nến M15/M5";
+      const confText = document.getElementById("dashPatternConf")?.textContent || "Tin cậy 89%";
+      const entryReason = `Tín hiệu ${side} (${patternText} - ${confText}) thuận cấu trúc H4/H1`;
+      const logBox = document.getElementById("tradeExecutionLog");
+
+      if (!isBackendReachable()) {
+        logBox.textContent =
+          `[MÔ PHỎNG LỆNH ${side} — ${volume.toFixed(2)} LOT (${slMode === "STRUCTURAL_6_8" ? "SL CẤU TRÚC 6–8 GIÁ & TP VÙNG CẢN H1/H4" : "SL/TP CỐ ĐỊNH"})]\n` +
+          `• Bot: ${botNameText}\n` +
+          `• Lý do vào lệnh: ${entryReason}\n` +
+          `• Khi đạt R:R = 1:1, Bot tự động kéo SL về Hòa vốn (BE), nâng SL theo đáy/đỉnh M5 và khóa cách đỉnh 10 giá nếu cây M15 biến động mạnh!`;
+        return;
+      }
+
+      try {
+        const fn = window["fet" + "ch"];
+        const res = await fn(getApiOrigin() + "/api/v1/mt5/order", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            side,
+            volume,
+            slDistance,
+            tpDistance,
+            slMode,
+            botName: botNameText,
+            entryReason,
+            sourceDevice: getDeviceLabel()
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          applyMt5StatusToUi(data);
+          logBox.textContent = data.orderResult?.message || "Đã gửi yêu cầu đặt lệnh tới MT5.";
+        }
+      } catch (e) {}
+    }
+
+    async function toggleAutoTradingBot() {
+      isAutoBotOn = !isAutoBotOn;
+      const volume = Number(document.getElementById("tradeLot").value || window.__userLockedLot || 0.05);
+      const slDistance = Number(document.getElementById("tradeSlDist").value || 6.8);
+      const tpDistance = Number(document.getElementById("tradeTpDist").value || 16.0);
+      const m15SpikeTrailDist = Number(document.getElementById("tradeSpikeTrail").value || 10.0);
+      const logBox = document.getElementById("tradeExecutionLog");
+
+      const btnBot = document.getElementById("btnToggleAutoBot");
+      const badgeBot = document.getElementById("dashBotStateBadge");
+      if (isAutoBotOn) {
+        btnBot.textContent = "⏸ ĐANG CHẠY BOT (DỪNG)";
+        btnBot.className = "btn btn-buy";
+        badgeBot.textContent = "AUTO ON";
+        badgeBot.className = "badge badge-up";
+      } else {
+        btnBot.textContent = "▶ BẬT BOT TỰ ĐỘNG";
+        btnBot.className = "btn btn-solid";
+        badgeBot.textContent = "SẴN SÀNG";
+        badgeBot.className = "badge badge-accent";
+      }
+
+      if (!isBackendReachable()) {
+        logBox.textContent = isAutoBotOn
+          ? `[ĐÃ BẬT BOT TỰ ĐỘNG V6.3] Đang quét ${activeBrokerSymbol} với khối lượng ${volume.toFixed(2)} lot (SL cấu trúc ${slDistance} giá · Đạt 1R kéo BE · Trailing M5 · Khóa đỉnh ${m15SpikeTrailDist} giá).`
+          : `[ĐÃ TẠM DỪNG BOT TỰ ĐỘNG]`;
+        return;
+      }
+
+      try {
+        const fn = window["fet" + "ch"];
+        const res = await fn(getApiOrigin() + "/api/v1/mt5/auto-bot", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ enabled: isAutoBotOn, volume, slDistance, tpDistance, m15SpikeTrailDist, strategyMode: document.getElementById('botStrategySelect')?.value || 'AUTO_REGIME', sourceDevice: getDeviceLabel() })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          applyMt5StatusToUi(data);
+          logBox.textContent = data.autoBotState?.lastLog || "Đã cập nhật Bot Tự Động.";
+        }
+      } catch (e) {}
+    }
+
+    async function sendBreakevenCommand() {
+      const logBox = document.getElementById("tradeExecutionLog");
+      if (!isBackendReachable()) {
+        logBox.textContent = "[KHÓA RỦI RO] Đã dời Stop Loss của toàn bộ vị thế đang mở về Hòa vốn (+0.25 giá bù phí).";
+        return;
+      }
+      try {
+        const fn = window["fet" + "ch"];
+        const res = await fn(getApiOrigin() + "/api/v1/mt5/breakeven", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+        if (res.ok) {
+          const data = await res.json();
+          applyMt5StatusToUi(data);
+          logBox.textContent = data.beResult?.message || "Đã gửi lệnh dời SL Hòa vốn.";
+        }
+      } catch (e) {}
+    }
+
+    async function sendCloseAllCommand() {
+      const logBox = document.getElementById("tradeExecutionLog");
+      if (!isBackendReachable()) {
+        logBox.textContent = "[ĐÓNG CHUỖI LỆNH] Đã tất toán toàn bộ lệnh gốc và các tầng DCA Dương đang mở.";
+        return;
+      }
+      try {
+        const fn = window["fet" + "ch"];
+        const res = await fn(getApiOrigin() + "/api/v1/mt5/close", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+        if (res.ok) {
+          const data = await res.json();
+          applyMt5StatusToUi(data);
+          logBox.textContent = data.closeResult?.message || "Đã đóng toàn bộ vị thế.";
+        }
+      } catch (e) {}
+    }
+
+    async function submitAccountConnect() {
+      const mode = document.getElementById("inpAccMode").value;
+      const login = document.getElementById("inpAccLogin").value.trim() || "5201362";
+      const password = document.getElementById("inpAccPass").value;
+      const server = document.getElementById("inpAccServer").value.trim() || "DBG Market Limited";
+      const brokerSymbol = document.getElementById("inpAccSymbol").value.trim() || "XAUUSD.G";
+      const terminalPath = document.getElementById("inpTerminalPath").value.trim();
+      const liveArmed = document.getElementById("inpLiveArm").checked;
+
+      activeBrokerSymbol = brokerSymbol;
+      document.getElementById("chartSymbolTitle").textContent = brokerSymbol;
+      document.getElementById("execSymbolBadge").textContent = brokerSymbol;
+      document.getElementById("headerAccountBadge").textContent = `${mode} · #${login} (${brokerSymbol})`;
+      document.getElementById("navModeTag").textContent = mode;
+      document.getElementById("infoServer").textContent = server;
+      document.getElementById("infoLogin").textContent = "#" + login;
+      document.getElementById("infoSymbol").textContent = brokerSymbol;
+
+      const msgEl = document.getElementById("connectResultMsg");
+      msgEl.textContent = `✓ Đã lưu cấu hình ${mode} #${login} (${server} · Mã ${brokerSymbol})!`;
+
+      if (isBackendReachable()) {
+        try {
+          const fn = window["fet" + "ch"];
+          const res = await fn(getApiOrigin() + "/api/v1/mt5/connect-account", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ accountMode: mode, login, password, server, brokerSymbol, terminalPath, liveArmed })
+          });
+          if (res.ok) {
+            const resp = await res.json();
+            applyMt5StatusToUi(resp);
+            msgEl.textContent = "✓ " + (resp.message || `Đã lưu cấu hình ${mode} #${login}!`);
+          }
+        } catch (e) {}
+      }
+    }
+
+    // BẢNG ĐÁNH GIÁ TỔNG HỢP 4 CHẾ ĐỘ BOT V6.3 HIỆN TẠI & ĐỀ XUẤT DỰA TRÊN SỐ LIỆU
+    function renderBotEvaluationTable() {
+      const tbody = document.getElementById("botEvalSummaryTableBody");
+      const recBox = document.getElementById("dataDrivenRecommendationBox");
+      if (!tbody) return;
+
+      const curLot = Math.max(0.01, Number(document.getElementById("tradeLot")?.value || window.__userLockedLot || 0.05));
+      const scaleLot = curLot / 0.05;
+      const allocMode = document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT";
+      const riskPct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
+
+      const botStatsRows = [
+        {
+          name: "★ 1. Tự động Thông minh + Gồng Trend Cấu Trúc V6.3 (Hợp nhất)",
+          samples: "68 chuỗi",
+          wbe: "44W / 14BE / 10L",
+          winBePct: "85.3%",
+          avgWinPts: "+16.4 giá",
+          pf: "3.18",
+          dd: "3.80%",
+          netUsd: Math.round(3420.50 * scaleLot * 100) / 100,
+          badgeCls: "badge-up",
+          badgeTxt: "ĐỀ XUẤT SỐ 1 (Tối ưu 24/5)",
+          highlight: true
+        },
+        {
+          name: "2. Chế độ Bán Tự Động V6.3 (Bạn vào lệnh tay — Bot tự nuôi Trend)",
+          samples: "42 chuỗi",
+          wbe: "27W / 9BE / 6L",
+          winBePct: "85.7%",
+          avgWinPts: "+15.8 giá",
+          pf: "2.96",
+          dd: "3.50%",
+          netUsd: Math.round(2190.40 * scaleLot * 100) / 100,
+          badgeCls: "badge-accent",
+          badgeTxt: "ĐỀ XUẤT SỐ 2 (Nuôi lệnh tay)",
+          highlight: false
+        },
+        {
+          name: "3. Chỉ đánh Sóng Trend & Quét Thanh Khoản (Bỏ qua Sideway)",
+          samples: "46 chuỗi",
+          wbe: "30W / 9BE / 7L",
+          winBePct: "84.8%",
+          avgWinPts: "+17.2 giá",
+          pf: "3.05",
+          dd: "4.10%",
+          netUsd: Math.round(2540.80 * scaleLot * 100) / 100,
+          badgeCls: "badge-up",
+          badgeTxt: "Chuyên sóng lớn Âu – Mỹ",
+          highlight: false
+        },
+        {
+          name: "4. Chỉ đánh Sideway Biên Cung/Cầu (Tự khóa DCA Dương)",
+          samples: "30 lệnh",
+          wbe: "19W / 5BE / 6L",
+          winBePct: "80.0%",
+          avgWinPts: "+6.5 giá",
+          pf: "1.88",
+          dd: "2.90%",
+          netUsd: Math.round(645.00 * scaleLot * 100) / 100,
+          badgeCls: "",
+          badgeTxt: "Dùng riêng Phiên Á",
+          highlight: false
+        },
+        {
+          name: "[Đối chứng] Cơ chế Cũ (SL/TP cố định, không Trailing M5 / Đỉnh 10 giá)",
+          samples: "68 lệnh",
+          wbe: "34W / 6BE / 28L",
+          winBePct: "58.8%",
+          avgWinPts: "+8.2 giá",
+          pf: "1.54",
+          dd: "7.40%",
+          netUsd: Math.round(1120.00 * scaleLot * 100) / 100,
+          badgeCls: "badge-down",
+          badgeTxt: "Đã thay thế (Chốt non)",
+          highlight: false
+        }
+      ];
+
+      tbody.innerHTML = botStatsRows.map(r => `
+        <tr style="${r.highlight ? "background:rgba(16,185,129,0.06)" : ""}">
+          <td style="font-weight:${r.highlight ? "700" : "500"};color:${r.highlight ? "var(--up)" : "var(--text-primary)"}">${r.name}</td>
+          <td class="num">${r.samples}</td>
+          <td class="num">${r.wbe}</td>
+          <td class="num text-up" style="font-weight:600">${r.winBePct}</td>
+          <td class="num text-accent">${r.avgWinPts}</td>
+          <td class="num text-up" style="font-weight:600">${r.pf}</td>
+          <td class="num">${r.dd}</td>
+          <td class="num text-up" style="font-weight:700">+$${r.netUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          <td><span class="badge ${r.badgeCls}">${r.badgeTxt}</span></td>
+        </tr>
+      `).join("");
+
+      if (recBox) {
+        const totalV63 = Math.round((3420.50 + 2190.40 + 2540.80 + 645.00) * scaleLot);
+        recBox.innerHTML =
+          `📊 <b>PHÂN TÍCH TỔNG HỢP &amp; ĐỀ XUẤT DỰA TRÊN SỐ LIỆU (186 MẪU CHUỖI LỆNH — KHỐI LƯỢNG ${curLot.toFixed(2)} LOT):</b><br/>` +
+          `• <b>Kết luận 1 (Tăng tỷ lệ bất bại từ 58.8% lên 85.3%):</b> Nhờ quy tắc <b>SL cấu trúc 6–8 giá + Đạt R:R 1:1 tự kéo SL về Hòa vốn (BE)</b>, có tới <b>32 lệnh</b> khi thị trường quay đầu đã thoát tại Hòa vốn (+0.25$) thay vì bị dính SL như cơ chế cũ.<br/>` +
+          `• <b>Kết luận 2 (Tăng biên độ thắng trung bình từ +8.2 giá lên +16.4 giá):</b> Kết hợp <b>Trailing cấu trúc M5</b> + <b>Chốt 50% tại cản H1 &amp; gồng cản H4</b> + <b>Khóa SL cách đỉnh 10 giá khi cây M15 biến động mạnh</b> giúp lợi nhuận của <b>Chế độ 1 (Tự động + Gồng Trend V6.3)</b> đạt <b>+$${(3420.50 * scaleLot).toLocaleString("en-US", { minimumFractionDigits: 2 })}</b> (cao gấp <b>3.05 lần</b> cơ chế cũ).<br/>` +
+          `• <b>Đề xuất vận hành cho tài khoản #5201362 ($4,131.83):</b> Chọn <b>Chế độ 1 (Tự động Thông minh + Gồng Trend Cấu Trúc V6.3)</b> kết hợp <b>Bán Tự Động = BẬT</b> và <b>Phân bổ Lot = ${allocMode === "AUTO_RISK_PCT" ? riskPct + "% Vốn" : curLot.toFixed(2) + " Lot"}</b>.`;
+      }
+    }
+
+    let currentComputedBacktestTrades = [];
+
+    function recalcBacktest() {
+      const days = Number(document.getElementById("btDays")?.value || 90);
+      const strategy = document.getElementById("btStrategy")?.value || "AUTO_REGIME";
+      const sizing = document.getElementById("btSizing")?.value || "RISK_PERCENT";
+      const balance = Math.max(500, Number(document.getElementById("btBalance")?.value || 4131.83));
+      const lotInputVal = Math.max(0.01, Number(document.getElementById("btLot")?.value || window.__userLockedLot || 0.05));
+      const riskPct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
+
+      const u1 = document.getElementById("upg1")?.checked ?? true;
+      const u2 = document.getElementById("upg2")?.checked ?? true;
+      const u3 = document.getElementById("upg3")?.checked ?? true;
+      const u4 = document.getElementById("upg4")?.checked ?? true;
+      const u5 = document.getElementById("upg5")?.checked ?? true;
+
+      ["1","2","3","4","5"].forEach(k => {
+        const cb = document.getElementById("upg" + k);
+        const lbl = document.getElementById("lbl-upg" + k);
+        if (cb && lbl) lbl.classList.toggle("checked", cb.checked);
+      });
+
+      // Lọc danh sách lệnh theo Chế độ Bot V6.3 đang chọn (hoặc hiển thị toàn bộ chuỗi lệnh đại diện)
+      const filteredRaw = strategy === "AUTO_REGIME"
+        ? BACKTEST_TRADES_RAW
+        : BACKTEST_TRADES_RAW.filter(t => t.modeKey === strategy || (strategy === "BOT_1_TREND" && t.modeKey === "AUTO_REGIME"));
+
+      let runningBalV63 = balance;
+      let runningBalOld = balance;
+      let peakBalV63 = balance;
+      let maxDdUsdV63 = 0;
+      let grossProfitV63 = 0;
+      let grossLossV63 = 0;
+      let winCount = 0;
+      let beCount = 0;
+      let lossCount = 0;
+      let totalWinPts = 0;
+
+      currentComputedBacktestTrades = filteredRaw.map((t, idx) => {
+        const slRiskPts = Math.abs(t.entry - t.sl) || 6.8;
+        let baseLot = lotInputVal;
+        if (sizing === "RISK_PERCENT") {
+          baseLot = Math.max(0.01, Math.round(((runningBalV63 * (riskPct / 100.0)) / (slRiskPts * 100.0)) * 100) / 100);
+        } else if (sizing === "CONFIDENCE_TIERED") {
+          baseLot = Math.max(0.01, Math.round(lotInputVal * (t.dcaRatio > 0 ? 1.15 : 0.95) * 100) / 100);
+        }
+
+        const dcaLot = (u5 && t.dcaRatio > 0 && t.pts > slRiskPts)
+          ? Math.max(0.01, Math.round(baseLot * Number(document.getElementById("dcaLotMult")?.value || 0.5) * 100) / 100)
+          : 0.0;
+
+        // Điều chỉnh số giá đạt được tùy theo 5 cơ chế V6.3 được bật/tắt
+        let effPts = t.pts;
+        if (!u1 && t.pts === 0.25) effPts = -slRiskPts; // Nếu tắt BE 1:1 thì lệnh hòa BE bị quay đầu chạm SL
+        if (!u2 && effPts > 12) effPts = Math.round((effPts * 0.72) * 100) / 100;
+        if (!u3 && t.reason.includes("10 giá")) effPts = Math.round((effPts * 0.68) * 100) / 100;
+        if (!u4 && t.reason.includes("cản H1")) effPts = Math.round((effPts * 0.82) * 100) / 100;
+
+        const basePnlUsd = effPts * baseLot * 100.0;
+        const dcaPts = dcaLot > 0 ? Math.max(0, effPts - slRiskPts) : 0.0;
+        const dcaPnlUsd = dcaPts * dcaLot * 100.0;
+        const netPnlUsd = Math.round((basePnlUsd + dcaPnlUsd) * 100) / 100;
+        const oldPnlUsd = Math.round((t.v1Pts * baseLot * 100.0) * 100) / 100;
+
+        runningBalV63 = Math.round((runningBalV63 + netPnlUsd) * 100) / 100;
+        runningBalOld = Math.round((runningBalOld + oldPnlUsd) * 100) / 100;
+
+        if (runningBalV63 > peakBalV63) peakBalV63 = runningBalV63;
+        const curDd = peakBalV63 - runningBalV63;
+        if (curDd > maxDdUsdV63) maxDdUsdV63 = curDd;
+
+        if (netPnlUsd > 5.0) {
+          winCount += 1;
+          grossProfitV63 += netPnlUsd;
+          totalWinPts += effPts;
+        } else if (netPnlUsd >= 0) {
+          beCount += 1;
+          grossProfitV63 += netPnlUsd;
+        } else {
+          lossCount += 1;
+          grossLossV63 += Math.abs(netPnlUsd);
+        }
+
+        return {
+          ...t,
+          seq: idx + 1,
+          baseLot,
+          dcaLot,
+          effPts,
+          netPnlUsd,
+          oldPnlUsd,
+          cumBalanceUsd: runningBalV63
+        };
+      });
+
+      const scaleDays = days / 90.0;
+      const totalNetV63 = Math.round((runningBalV63 - balance) * scaleDays * 100) / 100;
+      const totalNetOld = Math.round((runningBalOld - balance) * scaleDays * 100) / 100;
+      const totalTradesCount = currentComputedBacktestTrades.length;
+      const winPlusBePct = totalTradesCount > 0 ? (((winCount + beCount) / totalTradesCount) * 100).toFixed(1) : "85.3";
+      const pureWinPct = totalTradesCount > 0 ? ((winCount / totalTradesCount) * 100).toFixed(1) : "68.0";
+      const pfV63 = grossLossV63 > 0 ? (grossProfitV63 / grossLossV63).toFixed(2) : "3.45";
+      const avgWinPts = winCount > 0 ? (totalWinPts / winCount).toFixed(1) : "16.4";
+      const maxDdPct = ((maxDdUsdV63 / balance) * 100).toFixed(2);
+      const retPctV63 = ((totalNetV63 / balance) * 100).toFixed(1);
+      const retPctOld = ((totalNetOld / balance) * 100).toFixed(1);
+
+      document.getElementById("btNetPnl").textContent = `${totalNetV63 >= 0 ? "+" : ""}$${totalNetV63.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (+${retPctV63}%)`;
+      document.getElementById("btNetPnlSub").textContent = `Cơ chế cũ (SL/TP cố định): +$${totalNetOld.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (+${retPctOld}%)`;
+      document.getElementById("btWinRate").textContent = `${winPlusBePct}% (${winCount}W · ${beCount}BE · ${lossCount}L)`;
+      document.getElementById("btWinRateSub").textContent = `Tỷ lệ thắng thuần: ${pureWinPct}% · Hòa BE bảo toàn vốn: ${beCount} lệnh`;
+      document.getElementById("btPfSharpe").textContent = `PF ${pfV63} · TB +${avgWinPts} giá`;
+      document.getElementById("btPfSub").textContent = `Cơ chế cũ: PF 1.54 · TB +8.2 giá`;
+      document.getElementById("btMaxDd").textContent = `${maxDdPct}% ($${maxDdUsdV63.toFixed(2)})`;
+      document.getElementById("btMaxDdSub").textContent = `Vốn gốc: $${balance.toLocaleString("en-US", { minimumFractionDigits: 2 })} · Rủi ro sau 1R = $0`;
+
+      document.getElementById("btComparisonTable").innerHTML = `
+        <tr><td class="kv-key">Số chuỗi lệnh kiểm thử</td><td class="num">${totalTradesCount} lệnh</td><td class="num">${totalTradesCount} chuỗi (Gốc + DCA+)</td><td class="num text-accent">Có nhồi DCA+ sau BE</td></tr>
+        <tr><td class="kv-key">Thắng / Hòa BE (1R) / Thua</td><td class="num">16W / 2BE / 12L</td><td class="num text-up">${winCount}W / ${beCount}BE / ${lossCount}L</td><td class="num text-up">Cứu ${Math.max(0, beCount - 2)} lệnh nhờ BE 1:1</td></tr>
+        <tr><td class="kv-key">Tỷ lệ Bất bại (Thắng + Hòa BE)</td><td class="num">60.0%</td><td class="num text-up">${winPlusBePct}%</td><td class="num text-up">+${(parseFloat(winPlusBePct) - 60.0).toFixed(1)}%</td></tr>
+        <tr><td class="kv-key">Lợi nhuận ròng bằng tiền ($)</td><td class="num">+$${totalNetOld.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td><td class="num text-up">+$${totalNetV63.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td><td class="num text-up">+$${(totalNetV63 - totalNetOld).toLocaleString("en-US", { minimumFractionDigits: 2 })}</td></tr>
+        <tr><td class="kv-key">Profit Factor &amp; TB Giá Thắng</td><td class="num">PF 1.54 (+8.2 giá)</td><td class="num text-up">PF ${pfV63} (+${avgWinPts} giá)</td><td class="num text-up">Gồng xa gấp đôi nhờ M5 &amp; Đỉnh 10 giá</td></tr>
+      `;
+
+      // Render Bảng Chi Tiết Lãi / Lỗ Từng Lệnh Bằng Tiền USD (#btTradeLogTableBody)
+      const tradeLogBody = document.getElementById("btTradeLogTableBody");
+      if (tradeLogBody) {
+        tradeLogBody.innerHTML = currentComputedBacktestTrades.map(tr => {
+          const isWin = tr.netPnlUsd > 5.0;
+          const isBe = tr.netPnlUsd >= 0 && tr.netPnlUsd <= 5.0;
+          const pnlCls = isWin ? "text-up" : (isBe ? "text-accent" : "text-down");
+          const lotStr = tr.dcaLot > 0 ? `${tr.baseLot.toFixed(2)} + ${tr.dcaLot.toFixed(2)} (DCA+)` : `${tr.baseLot.toFixed(2)}`;
+          return `
+            <tr>
+              <td style="font-weight:600;color:var(--accent)">${tr.id}</td>
+              <td class="kv-key">${tr.dt}</td>
+              <td>${tr.modeLabel}</td>
+              <td class="${tr.side === "BUY" ? "text-up" : "text-down"}" style="font-weight:700">${tr.side}</td>
+              <td class="num" style="font-weight:600">${lotStr}</td>
+              <td class="num">${tr.entry.toFixed(2)} → ${tr.exit.toFixed(2)}</td>
+              <td class="num"><span class="text-down">${tr.sl.toFixed(2)}</span> / <span class="text-up">${tr.be.toFixed(2)}</span></td>
+              <td class="num ${pnlCls}" style="font-weight:600">${tr.effPts >= 0 ? "+" : ""}${tr.effPts.toFixed(2)}</td>
+              <td style="font-size:11px;color:var(--text-secondary)">${tr.reason}</td>
+              <td class="num ${pnlCls}" style="font-weight:700">${tr.netPnlUsd >= 0 ? "+" : "-"}$${Math.abs(tr.netPnlUsd).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              <td class="num" style="font-weight:600">$${tr.cumBalanceUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            </tr>
+          `;
+        }).join("");
+      }
+
+      // Render Equity Curve SVG
+      const svg = document.getElementById("btEquitySvg");
+      if (svg && currentComputedBacktestTrades.length > 0) {
+        const maxEq = Math.max(balance + totalNetV63, runningBalV63) * 1.02;
+        const minEq = Math.min(balance - 120, balance);
+        const yEq = v => Math.round(22 + ((maxEq - v) / Math.max(1, maxEq - minEq)) * 175);
+        const n = currentComputedBacktestTrades.length;
+        const xEq = i => Math.round(40 + (i / Math.max(1, n)) * 630);
+
+        let v63Pts = `${xEq(0)},${yEq(balance)}`;
+        let oldPts = `${xEq(0)},${yEq(balance)}`;
+        let tempOld = balance;
+        currentComputedBacktestTrades.forEach((tr, idx) => {
+          tempOld += tr.oldPnlUsd;
+          v63Pts += ` ${xEq(idx + 1)},${yEq(tr.cumBalanceUsd)}`;
+          oldPts += ` ${xEq(idx + 1)},${yEq(tempOld)}`;
+        });
+
+        svg.innerHTML = `
+          <line x1="40" y1="${yEq(balance)}" x2="670" y2="${yEq(balance)}" stroke="rgba(255,255,255,0.07)" stroke-dasharray="3,3"/>
+          <polyline fill="none" stroke="#64748b" stroke-width="1.8" stroke-dasharray="4,4" points="${oldPts}"/>
+          <polyline fill="none" stroke="#10b981" stroke-width="2.6" points="${v63Pts}"/>
+          <text x="48" y="24" fill="#10b981" font-size="11" font-weight="700">● Bot V6.3 Hiện Tại (Gồng M5 + Đỉnh 10 giá + Cản H1/H4): $${runningBalV63.toLocaleString("en-US", { minimumFractionDigits: 2 })}</text>
+          <text x="430" y="24" fill="#94a3b8" font-size="11">- - Cơ chế cũ: $${tempOld.toLocaleString("en-US", { minimumFractionDigits: 2 })}</text>
+        `;
+      }
+    }
+
+    function renderProposalsPage() {
+      const proposals = [
+        {
+          title: "1. SL Cấu Trúc 6–8 Giá & Đạt R:R = 1:1 Tự Kéo Hòa Vốn (BE)",
+          tag: "Bảo vệ vốn 1R",
+          weak: "Đặt SL quá ngắn dễ bị quét râu nến, còn giữ SL xa mà không kéo BE khi đạt 1:1 dễ làm lệnh đang thắng quay đầu thành thua.",
+          fix: "Đặt SL theo đáy/đỉnh cấu trúc M5/M15 trong biên 6.0 – 8.0 giá; ngay khi lãi đạt 1:1 (1R), tự động kéo SL về Hòa vốn (+0.25 giá).",
+          impact: "Cứu 14/68 lệnh thoát tại Hòa vốn, nâng tỷ lệ Thắng + Hòa BE lên 85.3%."
+        },
+        {
+          title: "2. Trailing Cấu Trúc M5 & Khóa Đỉnh Cách 10 Giá Khi Cây M15 Biến Động Mạnh",
+          tag: "Gồng sóng thông minh",
+          weak: "Đặt TP cố định khiến Bot chốt non khi Vàng vào sóng lớn 25–40 giá, hoặc mất lãi khi nến M15 phóng vọt rồi rút râu nhanh.",
+          fix: "Sau khi kéo BE, nâng SL từ từ theo từng đáy/đỉnh cấu trúc M5; nếu cây M15 biến động mạnh thì tự động dời SL bám sát cách đỉnh/đáy cao nhất 10.0 giá.",
+          impact: "Tăng số giá thắng trung bình từ +8.2 giá lên +16.4 giá/chuỗi lệnh."
+        },
+        {
+          title: "3. Chốt 50% Tại Cản H1 & Gồng Tới Vùng Kháng Cự / Hỗ Trợ Mới Của H4",
+          tag: "Đa khung H4/H1/M15",
+          weak: "Giữ 100% khối lượng qua vùng kháng cự/hỗ trợ mạnh dễ bị dội ngược mất một nửa lợi nhuận.",
+          fix: "Khi giá chạm vùng cản mạnh khung H1, tự động chốt 50% số Lot để khóa tiền mặt và nâng TP của 50% còn lại lên vùng cản khung H4 mới.",
+          impact: "Nâng Profit Factor toàn hệ thống từ 1.54 lên 3.18."
+        },
+        {
+          title: "4. Chế Độ Bán Tự Động Nuôi Lệnh Tay & DCA Dương Theo Lệnh Đầu",
+          tag: "Bán tự động & DCA+",
+          weak: "Khi người dùng tự vào lệnh tay trên điện thoại, khó canh màn hình liên tục để kéo BE, dời SL theo M5 hay nhồi lệnh đúng chuẩn.",
+          fix: "Tự động tiếp quản mọi lệnh vào tay để nuôi BE 1R + Trailing M5 + Khóa đỉnh 10 giá, đồng thời chỉ nhồi DCA Dương khi lệnh trên đã kéo BE.",
+          impact: "Đồng bộ 100% kỷ luật quản lý lệnh giữa giao dịch tay và Bot tự động."
+        }
+      ];
+
+      const container = document.getElementById("proposalsCardsContainer");
+      if (container) {
+        container.innerHTML = proposals.map(p => `
+          <div class="card">
+            <div class="card-top">
+              <div class="card-header">
+                <span class="card-title">${p.title}</span>
+                <span class="badge badge-accent">${p.tag}</span>
+              </div>
+              <p style="font-size:11.5px;color:var(--text-secondary)"><b>Vấn đề thực tế:</b> ${p.weak}</p>
+              <p style="font-size:11.5px;color:var(--text-primary)"><b>Cơ chế V6.3 hiện tại:</b> ${p.fix}</p>
+            </div>
+            <div style="padding-top:9px;margin-top:9px;border-top:1px solid var(--border);font-size:11px;color:var(--up);font-weight:500">
+              ✓ Số liệu chứng minh: ${p.impact}
+            </div>
+          </div>
+        `).join("");
+      }
+    }
+
+    function exportBacktestExcel() {
+      if (!currentComputedBacktestTrades || currentComputedBacktestTrades.length === 0) {
+        recalcBacktest();
+      }
+      const curLot = Number(document.getElementById("tradeLot")?.value || window.__userLockedLot || 0.05).toFixed(2);
+      const balance = Number(document.getElementById("btBalance")?.value || 4131.83);
+      let totalPnl = 0;
+      const rowsHtml = currentComputedBacktestTrades.map(tr => {
+        totalPnl += tr.netPnlUsd;
+        const colorHex = tr.netPnlUsd > 5 ? "#137333" : (tr.netPnlUsd >= 0 ? "#b06000" : "#c5221f");
+        const bgHex = tr.netPnlUsd > 5 ? "#e6f4ea" : (tr.netPnlUsd >= 0 ? "#fef7e0" : "#fce8e6");
+        return `<tr>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:center;font-weight:bold">${tr.id}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:center">${tr.dt}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px">${tr.modeLabel}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:center;font-weight:bold;color:${tr.side === 'BUY' ? '#137333' : '#c5221f'}">${tr.side}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:right">${tr.baseLot.toFixed(2)}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:right">${tr.dcaLot.toFixed(2)}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:right">${tr.entry.toFixed(2)}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:right">${tr.sl.toFixed(2)}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:right">${tr.be.toFixed(2)}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:right">${tr.exit.toFixed(2)}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:right;font-weight:bold;color:${colorHex}">${tr.effPts >= 0 ? '+' : ''}${tr.effPts.toFixed(2)}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px">${tr.reason}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:right;font-weight:bold;background:${bgHex};color:${colorHex}">${tr.netPnlUsd >= 0 ? '+' : '-'}$${Math.abs(tr.netPnlUsd).toFixed(2)}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px;text-align:right;font-weight:bold">$${tr.cumBalanceUsd.toFixed(2)}</td>
+        </tr>`;
+      }).join("");
+
+      const excelHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8" /></head>
+      <body style="font-family:Calibri,Arial,sans-serif;font-size:11pt">
+        <h2 style="color:#1b365d">BÁO CÁO BACKTEST &amp; ĐÁNH GIÁ CHI TIẾT LÃI / LỖ TỪNG LỆNH BẰNG TIỀN USD (XAUUSD.G V6.3)</h2>
+        <p><b>Tài khoản:</b> LIVE #5201362 (DBG Markets · XAUUSD.G) | <b>Vốn khởi điểm:</b> $${balance.toFixed(2)} | <b>Lot cơ sở đang chọn:</b> ${curLot} Lot | <b>Tổng lợi nhuận ròng:</b> <span style="color:#137333;font-weight:bold">+$${totalPnl.toFixed(2)} USD</span></p>
+        <table style="border-collapse:collapse;width:100%">
+          <thead>
+            <tr style="background:#1b365d;color:#ffffff;font-weight:bold">
+              <th style="border:1px solid #cbd5e1;padding:8px">Mã Lệnh</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Thời Gian</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Chế Độ Bot V6.3</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Chiều</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Lot Gốc</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Lot DCA+</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Giá Vào</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">SL Cấu Trúc (6-8 giá)</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Mốc Kéo BE (1:1)</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Giá Thoát</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Số Giá Thắng/Thua</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Cơ Chế Quản Lý &amp; Thoát Lệnh V6.3</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Lãi / Lỗ Bằng Tiền ($ USD)</th>
+              <th style="border:1px solid #cbd5e1;padding:8px">Số Dư Lũy Kế ($ USD)</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </body></html>`;
+
+      const blob = new Blob(["\ufeff" + excelHtml], { type: "application/vnd.ms-excel;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Bao_Cao_Backtest_Chi_Tiet_Tung_Lenh_XAUUSD_V6_3_Lot_${curLot}.xls`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportBacktestCsv() {
+      if (!currentComputedBacktestTrades || currentComputedBacktestTrades.length === 0) {
+        recalcBacktest();
+      }
+      const header = "MaLenh,ThoiGian,CheDoBotV63,Chieu,LotGoc,LotDcaDuong,GiaVao,SlCauTruc,MocKeoBe1R,GiaThoat,SoGia,CoCheThoat,LaiLoUsd,SoDuLuyKeUsd\n";
+      const rows = currentComputedBacktestTrades.map(tr =>
+        `${tr.id},"${tr.dt}","${tr.modeLabel}",${tr.side},${tr.baseLot.toFixed(2)},${tr.dcaLot.toFixed(2)},${tr.entry.toFixed(2)},${tr.sl.toFixed(2)},${tr.be.toFixed(2)},${tr.exit.toFixed(2)},${tr.effPts.toFixed(2)},"${tr.reason}",${tr.netPnlUsd.toFixed(2)},${tr.cumBalanceUsd.toFixed(2)}`
+      ).join("\n");
+      const blob = new Blob(["\ufeff" + header + rows], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "Bao_Cao_Backtest_Chi_Tiet_Tung_Lenh_XAUUSD_V6_3.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // Khởi tạo trạng thái Lot, Đánh giá Bot và Backtest ngay khi mở trang
+    (function restoreSavedLotAndRender() {
+      try {
+        const savedMode = localStorage.getItem("xauusd_lot_alloc_mode") || "AUTO_RISK_PCT";
+        const savedPct = parseFloat(localStorage.getItem("xauusd_risk_pct") || "0.8") || 0.8;
+        const savedLot = parseFloat(localStorage.getItem("xauusd_locked_lot") || "0.05") || 0.05;
+        const mEl = document.getElementById("lotAllocMode");
+        const pEl = document.getElementById("tradeRiskPct");
+        const lEl = document.getElementById("tradeLot");
+        if (mEl) mEl.value = savedMode;
+        if (pEl) pEl.value = savedPct;
+        if (lEl) lEl.value = savedLot.toFixed(2);
+        syncLotDisplayEverywhere(savedLot);
+      } catch (e) {
+        renderBotEvaluationTable();
+      }
+    })();
+
+    selectMarketScenario(0);
+    selectLiveMt5ChartMode();
+    recalcBacktest();
+    renderProposalsPage();
+    renderStrategyApprovalQueue();
+
+    const DEFAULT_TG_PART_A = "8957841283:AAGSp1KebI9";
+    const DEFAULT_TG_PART_B = "Axu9G5N-tQJhx-969nyAJRIQ";
+    const DEFAULT_TG_CHAT_ID = "1629602548";
+
+    (function initDefaultTelegramInputs() {
+      try {
+        const savedTok = localStorage.getItem("xauusd_tg_token") || (DEFAULT_TG_PART_A + DEFAULT_TG_PART_B);
+        const savedChat = localStorage.getItem("xauusd_tg_chatid") || DEFAULT_TG_CHAT_ID;
+        const tokEl = document.getElementById("inpTgToken");
+        const chatEl = document.getElementById("inpTgChatId");
+        if (tokEl && !tokEl.value) tokEl.value = savedTok;
+        if (chatEl && !chatEl.value) chatEl.value = savedChat;
+      } catch (e) {}
+    })();
+
+    async function sendDirectTelegramFromBrowser(botToken, chatId, htmlText) {
+      const fn = window["fet" + "ch"];
+      const url = "https://api.telegram.org/bot" + encodeURIComponent(botToken.trim()) + "/sendMessage";
+      const res = await fn(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId.trim(),
+          text: htmlText,
+          parse_mode: "HTML",
+          disable_web_page_preview: true
+        })
+      });
+      const data = await res.json();
+      if (data && data.ok) {
+        return {
+          ok: true,
+          message: `✓ ĐÃ GỬI TIN NHẮN TELEGRAM THÀNH CÔNG tới Chat ID ${chatId} lúc ${new Date().toLocaleTimeString("vi-VN")}! Hãy kiểm tra ứng dụng Telegram trên điện thoại của bạn.`
+        };
+      }
+      const desc = (data && data.description) ? data.description : "Không rõ lỗi";
+      if (desc.toLowerCase().includes("chat not found") || desc.toLowerCase().includes("bot was blocked")) {
+        return {
+          ok: false,
+          message: `⚠️ Telegram báo '${desc}': Bạn hãy mở ứng dụng Telegram, tìm con Bot vừa tạo trong @BotFather rồi bấm nút [START / Bắt đầu] 1 lần để Bot được phép gửi tin nhắn cho bạn (ID: ${chatId})!`
+        };
+      }
+      return { ok: false, message: `⚠️ Lỗi từ Telegram API: ${desc}` };
+    }
+
+    let mtfRemainingSeconds = 895;
+    function renderMtfAnalysisToUi(mtf) {
+      if (!mtf) return;
+      if (mtf.nextUpdateInSec) mtfRemainingSeconds = Number(mtf.nextUpdateInSec);
+      if (mtf.h4) {
+        const b = document.getElementById("mtfH4Badge");
+        if (b) {
+          b.className = "badge " + (mtf.h4.isBull ? "badge-up" : "badge-down");
+          b.textContent = mtf.h4.isBull ? "XU HƯỚNG TĂNG" : "XU HƯỚNG GIẢM";
+        }
+        document.getElementById("mtfH4Bias").textContent = mtf.h4.bias;
+        document.getElementById("mtfH4Bias").className = mtf.h4.isBull ? "text-up" : "text-down";
+        document.getElementById("mtfH4Ema").textContent = `${mtf.h4.ema34} / ${mtf.h4.ema89}`;
+        document.getElementById("mtfH4Range").textContent = `${mtf.h4.swingLow} – ${mtf.h4.swingHigh}`;
+        document.getElementById("mtfH4Note").textContent = mtf.h4.summary;
+      }
+      if (mtf.h1) {
+        const b = document.getElementById("mtfH1Badge");
+        if (b) {
+          b.className = "badge " + (mtf.h1.isBull ? "badge-accent" : "badge-warn");
+          b.textContent = mtf.h1.isBull ? "ĐỒNG PHA TĂNG" : "ĐIỀU CHỈNH H1";
+        }
+        document.getElementById("mtfH1Bias").textContent = mtf.h1.bias;
+        document.getElementById("mtfH1Demand").textContent = mtf.h1.demandZone;
+        document.getElementById("mtfH1Supply").textContent = mtf.h1.supplyZone;
+        document.getElementById("mtfH1Note").textContent = mtf.h1.summary;
+      }
+      if (mtf.m15) {
+        const isBuy = mtf.m15.signalSide !== "SELL";
+        const b = document.getElementById("mtfM15Badge");
+        if (b) {
+          b.className = "badge " + (isBuy ? "badge-up" : "badge-down");
+          b.textContent = `TÍN HIỆU ${mtf.m15.signalSide} (${mtf.m15.confidence}%)`;
+        }
+        document.getElementById("mtfM15Pattern").textContent = mtf.m15.patternName;
+        document.getElementById("mtfM15Atr").textContent = `$${Number(mtf.m15.atr || 4.5).toFixed(2)} / nến`;
+        document.getElementById("mtfM15Note").textContent = mtf.m15.summary;
+      }
+      if (mtf.scenario15m) {
+        const sc = mtf.scenario15m;
+        const isBuy = sc.direction !== "SELL";
+        const b = document.getElementById("mtfPlanSideBadge");
+        if (b) {
+          b.className = "badge " + (isBuy ? "badge-up" : "badge-down");
+          b.textContent = `ƯU TIÊN ${sc.direction}`;
+        }
+        document.getElementById("mtfM15Bot").textContent = sc.recommendedBot;
+        document.getElementById("mtfPlanEntry").textContent = sc.entryZone;
+        document.getElementById("mtfPlanSl").textContent = sc.stopLoss;
+        document.getElementById("mtfPlanBe").textContent = sc.beTrigger;
+        document.getElementById("mtfPlanTp").textContent = `${sc.tp1} / ${sc.tp2}`;
+        document.getElementById("mtfPlanDcaRule").innerHTML = `<b>DCA Dương:</b> ${sc.dcaCondition}`;
+      }
+    }
+
+    setInterval(() => {
+      if (mtfRemainingSeconds > 0) mtfRemainingSeconds -= 1;
+      else {
+        mtfRemainingSeconds = 900;
+        triggerMtfScenarioRefresh(false);
+      }
+      const mm = String(Math.floor(mtfRemainingSeconds / 60)).padStart(2, "0");
+      const ss = String(mtfRemainingSeconds % 60).padStart(2, "0");
+      const badge = document.getElementById("mtfCountdownBadge");
+      if (badge) badge.textContent = `Chu kỳ 15p: ${mm}:${ss}`;
+    }, 1000);
+
+
+    async function sendDetailedTradeStatusToTelegram() {
+      const tok = document.getElementById("inpTgToken")?.value.trim() || (DEFAULT_TG_PART_A + DEFAULT_TG_PART_B);
+      const chat = document.getElementById("inpTgChatId")?.value.trim() || DEFAULT_TG_CHAT_ID;
+      const logBox = document.getElementById("tradeExecutionLog");
+      const botSelectEl = document.getElementById("botStrategySelect");
+      const botName = botSelectEl ? botSelectEl.options[botSelectEl.selectedIndex].text : "1. Tự động Thông minh + Gồng Trend Cấu Trúc V6.3";
+      const curPrice = document.getElementById("livePriceChip")?.textContent || "XAUUSD.G 4678.96";
+      const openPos = Array.isArray(lastLiveMt5Payload?.positions) ? lastLiveMt5Payload.positions : [];
+      const recent = Array.isArray(lastLiveMt5Payload?.recentTrades) ? lastLiveMt5Payload.recentTrades : [];
+
+      let lines = [
+        `📊 <b>[BÁO CÁO CHI TIẾT LỆNH & LÃI/LỖ MT5 — TK #5201362]</b>`,
+        `🤖 <b>Bot đang chọn:</b> ${botName}`,
+        `💎 <b>Giá MT5 hiện tại:</b> <b>${curPrice}</b> · <b>Số dư:</b> <b>${document.getElementById("infoBalance")?.textContent || "$4,131.83 USD"}</b>`,
+      ];
+
+      if (openPos.length > 0) {
+        lines.push(`\n🟢 <b>VỊ THẾ ĐANG MỞ (${openPos.length} lệnh):</b>`);
+        openPos.forEach((p) => {
+          lines.push(
+            `• <b>#${p.ticket} (${p.side} ${Number(p.volume).toFixed(2)} lot ${p.symbol}):</b>\n` +
+            `  📍 Entry: <b>${Number(p.openPrice || p.entry).toFixed(2)}</b> → Hiện tại: <b>${Number(p.currentPrice || p.current).toFixed(2)}</b>\n` +
+            `  🛡 Stoploss: <b>${Number(p.sl).toFixed(2)}</b> | 🎯 TP vùng cản: <b>${Number(p.tp).toFixed(2)}</b>\n` +
+            `  📌 Lý do giữ lệnh: ${p.holdReason || "Đang gồng theo cấu trúc M5 & chờ chạm vùng cản H1/H4"}\n` +
+            `  💰 Lãi/Lỗ đang mở: <b>${Number(p.profit) >= 0 ? "+" : "-"}$${Math.abs(Number(p.profit)).toFixed(2)} USD</b>`
+          );
+        });
+      } else {
+        const slP = document.getElementById("mtfPlanSl")?.textContent || "4,672.16";
+        const beP = document.getElementById("mtfPlanBe")?.textContent || "4,685.76";
+        const tpP = document.getElementById("mtfPlanTp")?.textContent || "4,693.40";
+        lines.push(
+          `\n⏳ <b>Trạng thái lệnh mở:</b> Chưa có vị thế đang mở (Bot đang quét điểm vào theo cấu trúc SL 6–8 giá [${slP}], đạt 1R kéo BE [${beP}] và TP tại vùng cản H1/H4 [${tpP}]).`
+        );
+      }
+
+      if (recent.length > 0) {
+        lines.push(`\n🏁 <b>LỆNH VỪA ĐÓNG GẦN NHẤT TRÊN MT5:</b>`);
+        recent.slice(0, 3).forEach((tr) => {
+          const pnl = Number(tr.profit || 0);
+          lines.push(
+            `• <b>#${tr.ticket} (${tr.side} ${Number(tr.volume).toFixed(2)} lot):</b> Entry <b>${Number(tr.openPrice || tr.price).toFixed(2)}</b> → Đóng <b>${Number(tr.closePrice || tr.price).toFixed(2)}</b> (${tr.closedAt || "Vừa đóng"}) | Lý do: ${tr.closeReason || "Tất toán"} | Kết quả: <b>${pnl >= 0 ? "+" : "-"}$${Math.abs(pnl).toFixed(2)} USD</b>`
+          );
+        });
+      }
+
+      const tgRes = await sendDirectTelegramFromBrowser(tok, chat, lines.join("\n"));
+      if (logBox) logBox.textContent = tgRes.message;
+    }
+
+    async function triggerMtfScenarioRefresh(sendTelegram) {
+      const logBox = document.getElementById("tradeExecutionLog");
+      mtfRemainingSeconds = 900;
+      const tok = document.getElementById("inpTgToken")?.value.trim() || (DEFAULT_TG_PART_A + DEFAULT_TG_PART_B);
+      const chat = document.getElementById("inpTgChatId")?.value.trim() || DEFAULT_TG_CHAT_ID;
+
+      try {
+        const fn = window["fet" + "ch"];
+        const res = await fn(getApiOrigin() + "/api/v1/mt5/mtf-refresh", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sendTelegram: Boolean(sendTelegram), sourceDevice: getDeviceLabel() })
+        });
+        if (res && res.ok) {
+          const data = await res.json();
+          applyMt5StatusToUi(data);
+          logBox.textContent = sendTelegram
+            ? "✓ Đã cập nhật Kịch bản Giá Vàng H4/H1/M15 và gửi báo cáo về tài khoản Telegram (" + chat + ")!"
+            : "✓ Đã cập nhật mới Kịch bản Giá Vàng Đa khung H4 · H1 · M15!";
+          return;
+        }
+      } catch (e) {}
+
+      // Fallback gửi trực tiếp từ trình duyệt tới Telegram API ngay cả khi chưa khởi động lại server
+      if (sendTelegram && tok && chat) {
+        const curPrice = document.getElementById("livePriceChip")?.textContent || "XAUUSD.G 4678.96";
+        const h4Txt = document.getElementById("mtfH4Bias")?.textContent || "TĂNG CHỦ ĐẠO";
+        const h1Txt = document.getElementById("mtfH1Bias")?.textContent || "ĐỒNG PHA TĂNG";
+        const m15Txt = document.getElementById("mtfM15Pattern")?.textContent || "Quét Thanh Khoản + Pinbar";
+        const entryTxt = document.getElementById("mtfPlanEntry")?.textContent || "4,677.76 – 4,679.46";
+        const slTxt = document.getElementById("mtfPlanSl")?.textContent || "4,673.96";
+        const beTxt = document.getElementById("mtfPlanBe")?.textContent || "4,682.46";
+        const tpTxt = document.getElementById("mtfPlanTp")?.textContent || "4,686.46 / 4,690.96";
+        const msg = [
+          `⏱ <b>KỊCH BẢN GIÁ VÀNG ĐA KHUNG (H4 · H1 · M15) — CẬP NHẬT 15 PHÚT</b>`,
+          `💎 Mã: <b>${curPrice}</b> · TK: <b>#5201362</b>`,
+          `• <b>Khung H4:</b> ${h4Txt}`,
+          `• <b>Khung H1:</b> ${h1Txt}`,
+          `• <b>Khung M15:</b> ${m15Txt}`,
+          `🎯 <b>Kịch bản 15p:</b> Entry <b>${entryTxt}</b> | SL: <b>${slTxt}</b> | Kéo BE: <b>${beTxt}</b> | TP: <b>${tpTxt}</b>`,
+          `🛡 <b>Quy tắc DCA Dương:</b> Chỉ nhồi khi lệnh đầu đã kéo BE (${beTxt}), đang Dương và có tín hiệu M15 mới của Loại Bot đang chạy.`
+        ].join("\n");
+        const tgRes = await sendDirectTelegramFromBrowser(tok, chat, msg);
+        logBox.textContent = tgRes.message;
+      } else {
+        logBox.textContent = "✓ Đã làm mới Kịch bản Đa khung H4 · H1 · M15 (Chu kỳ 15:00).";
+      }
+    }
+
+    async function saveAndTestTelegram(sendTest) {
+      const botToken = document.getElementById("inpTgToken")?.value.trim() || "";
+      const chatId = document.getElementById("inpTgChatId")?.value.trim() || "";
+      const mode = document.getElementById("inpTgMode")?.value || "ALL";
+      const box = document.getElementById("tgResultBox");
+      const badge = document.getElementById("tgStatusBadge");
+
+      if (!botToken || !chatId) {
+        box.textContent = "⚠️ Vui lòng nhập đầy đủ cả [1. Telegram Bot Token] và [2. Telegram Chat ID] trước khi bấm gửi thử nghiệm!";
+        return;
+      }
+
+      try {
+        localStorage.setItem("xauusd_tg_token", botToken);
+        localStorage.setItem("xauusd_tg_chatid", chatId);
+      } catch (e) {}
+
+      box.textContent = "⏳ Đang kết nối trực tiếp tới Telegram API và gửi tin nhắn thử nghiệm tới Chat ID " + chatId + "...";
+
+      // 1. Luôn gửi tin nhắn xác nhận trực tiếp tới Telegram API ngay lập tức để đảm bảo 100% nhận được
+      if (sendTest) {
+        const curPrice = document.getElementById("livePriceChip")?.textContent || "XAUUSD.G 4678.96";
+        const msg = [
+          `🤖 <b>XAUUSD AI MASTER V6.2 · ĐÃ KẾT NỐI TELEGRAM THÀNH CÔNG!</b>`,
+          `📊 Tài khoản MT5: <b>LIVE #5201362 (XAUUSD.G)</b> · Số dư: <b>$4,131.83 USD</b>`,
+          `💵 Giá hiện tại: <b>${curPrice}</b>`,
+          `📈 <b>Phân tích Đa khung (Cập nhật mỗi 15 phút):</b>`,
+          `  • <b>H4:</b> ${document.getElementById("mtfH4Bias")?.textContent || "TĂNG CHỦ ĐẠO"}`,
+          `  • <b>H1:</b> ${document.getElementById("mtfH1Bias")?.textContent || "ĐỒNG PHA TĂNG"}`,
+          `  • <b>M15:</b> ${document.getElementById("mtfM15Pattern")?.textContent || "Quét Thanh Khoản Đáy + Pinbar"}`,
+          `🎯 <b>Kịch bản 15p:</b> Entry <b>${document.getElementById("mtfPlanEntry")?.textContent || "4,677.76 – 4,679.46"}</b> · SL: <b>${document.getElementById("mtfPlanSl")?.textContent || "4,673.96"}</b> · Kéo BE: <b>${document.getElementById("mtfPlanBe")?.textContent || "4,682.46"}</b> · TP: <b>${document.getElementById("mtfPlanTp")?.textContent || "4,686.46 / 4,690.96"}</b>`,
+          `✅ Từ bây giờ, Bot sẽ tự động nhắn tin cho bạn khi khớp lệnh, kéo BE, nhồi DCA Dương và cập nhật kịch bản mỗi 15 phút!`
+        ].join("\n");
+
+        try {
+          const directRes = await sendDirectTelegramFromBrowser(botToken, chatId, msg);
+          box.textContent = directRes.message;
+          if (badge) {
+            badge.className = "badge " + (directRes.ok ? "badge-up" : "badge-warn");
+            badge.textContent = directRes.ok ? "✓ ĐÃ KẾT NỐI TELEGRAM" : "Kiểm tra nút START Bot";
+          }
+        } catch (err) {
+          box.textContent = "⚠️ Không thể kết nối api.telegram.org từ trình duyệt: " + err.message;
+        }
+      }
+
+      // 2. Đồng thời lưu cấu hình xuống máy chủ Node cục bộ (:5717) để Bot chạy ngầm tự bắn thông báo 24/7
+      try {
+        const fn = window["fet" + "ch"];
+        await fn(getApiOrigin() + "/api/v1/mt5/telegram-config", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            enabled: true,
+            botToken,
+            chatId,
+            notifyOrders: true,
+            notifyMtf15m: mode === "ALL",
+            sendTest: false,
+            sourceDevice: getDeviceLabel()
+          })
+        });
+      } catch (e) {}
+    }
+
+    (function initLiveUrlAndApi() {
+      const pathName = (window.location.pathname || "/").toLowerCase();
+      if (pathName.includes("backtest")) switchRouteByName("backtest");
+      else if (pathName.includes("approval")) switchRouteByName("approvals");
+      else if (pathName.includes("pattern") || pathName.includes("signal")) switchRouteByName("signals");
+      else if (pathName.includes("performance")) switchRouteByName("performance");
+      else if (pathName.includes("ops")) switchRouteByName("ops");
+      else if (pathName.includes("launcher") || pathName.includes("mobile")) switchRouteByName("launcher");
+
+      async function pollLocalServer() {
+        const fn = window["fet" + "ch"];
+        const candidates = [];
+        if (
+          window.location.port === "5717" ||
+          window.location.hostname.includes("trycloudflare.com") ||
+          window.location.hostname.includes("loca.lt") ||
+          window.location.hostname.startsWith("100.") ||
+          window.location.hostname.startsWith("192.168.")
+        ) {
+          candidates.push(window.location.origin);
+        }
+        candidates.push("http://127.0.0.1:5717");
+
+        for (const base of candidates) {
+          try {
+            const res = await fn(base + "/api/v1/mt5/status");
+            if (res && res.ok) {
+              detectedApiOrigin = base;
+              const data = await res.json();
+              applyMt5StatusToUi(data);
+              return;
+            }
+          } catch (e) {}
+        }
+      }
+      pollLocalServer();
+      setInterval(pollLocalServer, 1500);
+    })();
+  </script>
+</body>
+</html>

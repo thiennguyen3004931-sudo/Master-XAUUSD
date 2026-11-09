@@ -1,0 +1,115 @@
+name: Phase7C Recommendation Intelligence CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/api/src/contracts/phase7c-recommendation-intelligence.schema.ts"
+      - "apps/api/src/services/phase7c-recommendation-evaluator.service.ts"
+      - "apps/api/src/services/phase7c-recommendation-intelligence.service.ts"
+      - "apps/api/src/routes/phase7c-recommendation-intelligence.route.ts"
+      - "apps/api/src/app.ts"
+      - "apps/web/src/phase7c-recommendation-intelligence-types.ts"
+      - "apps/web/src/phase7c-recommendation-intelligence-api.ts"
+      - "apps/web/src/ui/Phase7CRecommendationIntelligenceCard.tsx"
+      - "apps/web/src/pages/Phase7CControlCenterShellPage.tsx"
+      - "scripts/test-phase7c-recommendation-intelligence-source.mjs"
+      - "scripts/test-phase7c-recommendation-api-source.mjs"
+      - "scripts/phase7c-recommendation-evaluator.test.ts"
+      - "scripts/phase7c-recommendation-intelligence.test.ts"
+      - "scripts/test-phase7c-p5-production-acceptance-source.ps1"
+      - "scripts/verify-phase7c-p5-production-acceptance-local.ps1"
+      - "docs/superpowers/specs/2026-09-05-p5-recommendation-intelligence-v1-design.md"
+      - "docs/superpowers/plans/2026-09-05-p5-recommendation-intelligence-v1.md"
+      - ".github/workflows/phase7c-recommendation-intelligence-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Scope long-path support to CI git processes, including checkout cleanup.
+env:
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: core.longpaths
+  GIT_CONFIG_VALUE_0: "true"
+
+jobs:
+  contract-and-build:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 22
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline --network-concurrency=4 --fetch-retries=4 --fetch-retry-maxtimeout=30000
+
+      - name: P5 source and safety contract
+        run: node scripts/test-phase7c-recommendation-intelligence-source.mjs
+
+      - name: P5 GET-only API source contract
+        run: node scripts/test-phase7c-recommendation-api-source.mjs
+
+      - name: P5 deterministic evaluator semantics
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-recommendation-evaluator.test.ts
+
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+
+      - name: P5 composition semantics
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-recommendation-intelligence.test.ts
+
+      - name: P2 performance correlation regression
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-performance-correlation-schema.test.ts
+
+      - name: P2 performance intelligence regression
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-performance-intelligence.test.ts
+
+      - name: P3 effectiveness source regression
+        run: node scripts/test-phase7c-performance-effectiveness-source.mjs
+
+      - name: P3 effectiveness aggregate regression
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-performance-effectiveness.test.ts
+
+      - name: P4 evaluator regression
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-counterfactual-evaluator.test.ts
+
+      - name: P4 snapshot regression
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-counterfactual-intelligence.test.ts
+
+      - name: P4 GET-only source regression
+        run: node scripts/test-phase7c-counterfactual-api-source.mjs
+
+      - name: Build web dependency graph
+        run: pnpm --filter @xauusd/web... build
+
+      - name: Diff hygiene
+        run: git diff --check origin/${{ github.base_ref }}...HEAD
+
+  production-acceptance-source-contract:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: P5 production acceptance source contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-p5-production-acceptance-source.ps1 -ProjectRoot $PWD
+
+      - name: P5 production acceptance source contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-p5-production-acceptance-source.ps1 -ProjectRoot $PWD

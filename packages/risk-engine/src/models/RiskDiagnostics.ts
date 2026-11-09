@@ -1,0 +1,24 @@
+export type RiskRejectionCode =
+  | "SIGNAL_NOT_ACCEPTED"
+  | "INVALID_LEVELS"
+  | "RISK_REWARD_TOO_LOW"
+  | "ACCOUNT_UNHEALTHY"
+  | "DAILY_LOSS_LIMIT_REACHED"
+  | "DRAWDOWN_LIMIT_REACHED"
+  | "MAX_POSITIONS_REACHED"
+  | "MAX_SYMBOL_POSITIONS_REACHED"
+  | "TOTAL_EXPOSURE_LIMIT_REACHED"
+  | "SPREAD_TOO_HIGH"
+  | "LOSS_COOLDOWN_ACTIVE"
+  | "CONSECUTIVE_LOSS_LIMIT_REACHED"
+  | "POSITION_SIZE_BELOW_MINIMUM"
+  | "POSITION_SIZE_INVALID"
+  | "MARGIN_LIMIT_REACHED"
+  | "FREE_MARGIN_TOO_LOW";
+
+export interface RiskDiagnostics {
+  accepted: boolean;
+  rejectionCodes: RiskRejectionCode[];
+  warnings: string[];
+  notes: string[];
+}

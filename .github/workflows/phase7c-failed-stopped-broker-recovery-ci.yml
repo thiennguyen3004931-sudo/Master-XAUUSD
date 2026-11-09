@@ -1,0 +1,32 @@
+name: Phase7C Failed Stopped Broker Recovery CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-failed-stopped-broker-recovery
+    paths:
+      - "scripts/transition-phase7c-failed-stopped-broker-source-local.ps1"
+      - "scripts/test-phase7c-failed-stopped-broker-source-transition.ps1"
+      - ".github/workflows/phase7c-failed-stopped-broker-recovery-ci.yml"
+  pull_request:
+    paths:
+      - "scripts/transition-phase7c-failed-stopped-broker-source-local.ps1"
+      - "scripts/test-phase7c-failed-stopped-broker-source-transition.ps1"
+      - ".github/workflows/phase7c-failed-stopped-broker-recovery-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  failed-stopped-broker-recovery:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: FAILED_STOPPED_BROKER source-transition regression - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-failed-stopped-broker-source-transition.ps1
+      - name: FAILED_STOPPED_BROKER source-transition regression - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-failed-stopped-broker-source-transition.ps1

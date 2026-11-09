@@ -1,0 +1,133 @@
+name: Phase7C Portable Deploy Mobile Dev CI
+
+on:
+  pull_request:
+    branches:
+      - fix/phase7c-legacy-background-cleanup
+    paths:
+      - ".devcontainer/**"
+      - "docs/PORTABLE-DEPLOYMENT.md"
+      - "docs/MOBILE-DEVELOPMENT.md"
+      - "scripts/package-phase7c-portable-release.ps1"
+      - "scripts/bootstrap-phase7c-new-pc.ps1"
+      - "scripts/test-phase7c-portable-deploy-source.mjs"
+      - ".github/workflows/phase7c-portable-deploy-mobile-dev-ci.yml"
+      - ".gitignore"
+      - "README.md"
+  push:
+    branches:
+      - fix/phase7c-legacy-background-cleanup
+    paths:
+      - ".devcontainer/**"
+      - "docs/PORTABLE-DEPLOYMENT.md"
+      - "docs/MOBILE-DEVELOPMENT.md"
+      - "scripts/package-phase7c-portable-release.ps1"
+      - "scripts/bootstrap-phase7c-new-pc.ps1"
+      - "scripts/test-phase7c-portable-deploy-source.mjs"
+      - ".github/workflows/phase7c-portable-deploy-mobile-dev-ci.yml"
+      - ".gitignore"
+      - "README.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Portable/mobile source assertions
+        run: node scripts/test-phase7c-portable-deploy-source.mjs
+
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+
+      - name: Build Web dependency graph
+        run: pnpm --filter @xauusd/web... build
+
+  windows-package:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Parse scripts - PowerShell 7
+        shell: pwsh
+        run: |
+          [void][scriptblock]::Create((Get-Content .\scripts\package-phase7c-portable-release.ps1 -Raw))
+          [void][scriptblock]::Create((Get-Content .\scripts\bootstrap-phase7c-new-pc.ps1 -Raw))
+          Write-Host "PHASE7C_PORTABLE_PWSH_PARSE=PASS"
+
+      - name: Parse scripts - Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          [void][scriptblock]::Create((Get-Content .\scripts\package-phase7c-portable-release.ps1 -Raw))
+          [void][scriptblock]::Create((Get-Content .\scripts\bootstrap-phase7c-new-pc.ps1 -Raw))
+          Write-Host "PHASE7C_PORTABLE_WINPS_PARSE=PASS"
+
+      - name: Portable/mobile source assertions on Windows
+        shell: powershell
+        run: node .\scripts\test-phase7c-portable-deploy-source.mjs
+
+      - name: Build source-only portable package
+        shell: powershell
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "xauusd-portable"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File .\scripts\package-phase7c-portable-release.ps1 `
+            -OutputDir $out
+          if ($LASTEXITCODE -ne 0) { throw "Portable package generation failed." }
+          $zip = @(Get-ChildItem -LiteralPath $out -Filter *.zip)
+          if ($zip.Count -ne 1) { throw "Expected exactly one portable ZIP." }
+          $extract = Join-Path $env:RUNNER_TEMP "xauusd-portable-verify"
+          Expand-Archive -LiteralPath $zip[0].FullName -DestinationPath $extract -Force
+          if (-not (Test-Path -LiteralPath (Join-Path $extract "PORTABLE-RELEASE-MANIFEST.json"))) {
+            throw "Portable release manifest is missing."
+          }
+          $bad = @(Get-ChildItem -LiteralPath $extract -Recurse -File -Force | Where-Object {
+            $_.FullName -match '[\\/](?:\.runtime|node_modules|dist|\.next|\.turbo|coverage)[\\/]' -or
+            $_.Name -eq '.env' -or
+            ($_.Name -like '.env.*' -and $_.Name -notlike '*.example')
+          })
+          if ($bad.Count -gt 0) { throw "Portable ZIP contains forbidden local/runtime files." }
+          Write-Host "PHASE7C_PORTABLE_CI_PACKAGE_VERIFY=PASS"
+
+      - name: Upload portable source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XAUUSD-AI-MASTER-portable-${{ github.sha }}
+          path: ${{ runner.temp }}\xauusd-portable\*
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,12 @@
+{
+  "accountMode": "LIVE",
+  "login": "5201362",
+  "server": "DBG Market Limited",
+  "brokerSymbol": "XAUUSD.G",
+  "terminalPath": "",
+  "liveArmed": true,
+  "riskPercent": 0.8,
+  "fixedLot": 0.12,
+  "connectedAt": 1794127574776,
+  "password": ""
+}

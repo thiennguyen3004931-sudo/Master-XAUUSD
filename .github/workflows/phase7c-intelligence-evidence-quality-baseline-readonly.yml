@@ -1,0 +1,68 @@
+name: Phase7C Intelligence Evidence Quality Baseline Read-Only
+
+on:
+  pull_request:
+    paths:
+      - "scripts/verify-phase7c-intelligence-evidence-quality-baseline-local.ps1"
+      - "scripts/test-phase7c-intelligence-evidence-quality-baseline-source.ps1"
+      - ".github/workflows/phase7c-intelligence-evidence-quality-baseline-readonly.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/verify-phase7c-intelligence-evidence-quality-baseline-local.ps1"
+      - "scripts/test-phase7c-intelligence-evidence-quality-baseline-source.ps1"
+      - ".github/workflows/phase7c-intelligence-evidence-quality-baseline-readonly.yml"
+
+permissions:
+  contents: read
+
+env:
+  EXPECTED_PRODUCTION_COMMIT: 8514fafffea7e7cde6a3bddfbb3cd23474bc20f7
+  PRODUCTION_ROOT: F:\Project\XAUUSD_AI_MASTER\xauusd-ai-master
+  API_BASE_URL: http://127.0.0.1:3711
+
+jobs:
+  validate:
+    name: intelligence-evidence-quality-baseline-validate
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+
+      - name: Baseline read-only source contract
+        shell: powershell
+        run: .\scripts\test-phase7c-intelligence-evidence-quality-baseline-source.ps1 -ProjectRoot $PWD
+
+  production-baseline:
+    name: intelligence-evidence-quality-production-baseline
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact merged source
+        uses: actions/checkout@v4
+
+      - name: Capture Intelligence evidence quality baseline
+        shell: powershell
+        run: |
+          .\scripts\verify-phase7c-intelligence-evidence-quality-baseline-local.ps1 `
+            -ProjectRoot $env:PRODUCTION_ROOT `
+            -ExpectedCommit $env:EXPECTED_PRODUCTION_COMMIT `
+            -ApiBaseUrl $env:API_BASE_URL
+
+      - name: Safety boundary
+        shell: powershell
+        run: |
+          Write-Host "INTELLIGENCE_BASELINE_WORKFLOW_HTTP_METHODS=GET_ONLY"
+          Write-Host "INTELLIGENCE_BASELINE_WORKFLOW_HUMAN_REVIEW_ONLY=TRUE"
+          Write-Host "INTELLIGENCE_BASELINE_WORKFLOW_AUTO_APPLY=FALSE"
+          Write-Host "INTELLIGENCE_BASELINE_WORKFLOW_AUTO_RETUNE=FALSE"
+          Write-Host "INTELLIGENCE_BASELINE_WORKFLOW_PRODUCTION_MUTATION=NONE"
+          Write-Host "INTELLIGENCE_BASELINE_WORKFLOW_MODE_MUTATION=NONE"
+          Write-Host "INTELLIGENCE_BASELINE_WORKFLOW_ARM_MUTATION=NONE"
+          Write-Host "INTELLIGENCE_BASELINE_WORKFLOW_ORDER_MUTATION=NONE"
+          Write-Host "INTELLIGENCE_BASELINE_WORKFLOW_POSITION_MUTATION=NONE"
+          Write-Host "INTELLIGENCE_BASELINE_WORKFLOW_LIVE_TEST_ORDER=NONE"

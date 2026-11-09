@@ -1,0 +1,112 @@
+name: Phase7C Web Auto Account Start CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-legacy-background-cleanup
+      - fix/phase7c-web-api-canonical-account-env-bootstrap
+    paths:
+      - "apps/api/src/routes/phase7c.route.ts"
+      - "apps/api/src/services/mt5.service.ts"
+      - "apps/api/src/services/phase7c-account-mode.service.ts"
+      - "apps/api/src/services/phase7c-account-profile-selection.service.ts"
+      - "apps/api/src/services/phase7c-lifecycle.service.ts"
+      - "apps/api/src/services/phase7c-live-authorization.service.ts"
+      - "apps/api/src/services/phase7c-lot-settings.service.ts"
+      - "apps/api/src/services/phase7c-web-account-start-policy.ts"
+      - "apps/web/src/pages/Phase7CControlCenterPage.tsx"
+      - "apps/web/src/phase7c-types.ts"
+      - "scripts/lib/phase7c-account-mode.ps1"
+      - "scripts/switch-phase7c-account-mode-local.ps1"
+      - "scripts/run-phase7b-api-runtime-local.ps1"
+      - "scripts/test-phase7c-web-auto-account-start.ts"
+      - "scripts/test-phase7c-api-canonical-account-env-bootstrap.mjs"
+      - ".github/workflows/phase7c-web-auto-account-start-ci.yml"
+  pull_request:
+    paths:
+      - "apps/api/src/routes/phase7c.route.ts"
+      - "apps/api/src/services/mt5.service.ts"
+      - "apps/api/src/services/phase7c-account-mode.service.ts"
+      - "apps/api/src/services/phase7c-account-profile-selection.service.ts"
+      - "apps/api/src/services/phase7c-lifecycle.service.ts"
+      - "apps/api/src/services/phase7c-live-authorization.service.ts"
+      - "apps/api/src/services/phase7c-lot-settings.service.ts"
+      - "apps/api/src/services/phase7c-web-account-start-policy.ts"
+      - "apps/web/src/pages/Phase7CControlCenterPage.tsx"
+      - "apps/web/src/phase7c-types.ts"
+      - "scripts/lib/phase7c-account-mode.ps1"
+      - "scripts/switch-phase7c-account-mode-local.ps1"
+      - "scripts/run-phase7b-api-runtime-local.ps1"
+      - "scripts/test-phase7c-web-auto-account-start.ts"
+      - "scripts/test-phase7c-api-canonical-account-env-bootstrap.mjs"
+      - ".github/workflows/phase7c-web-auto-account-start-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  web-auto-account-start:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate PowerShell safety script syntax
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in @(
+            "scripts/lib/phase7c-account-mode.ps1",
+            "scripts/switch-phase7c-account-mode-local.ps1",
+            "scripts/run-phase7b-api-runtime-local.ps1"
+          )) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file).Path,
+              [ref]$tokens,
+              [ref]$parseErrors
+            )
+            if (@($parseErrors).Count -gt 0) {
+              $failed = $true
+              Write-Host "POWERSHELL_PARSE_FAIL=$file"
+              $parseErrors | ForEach-Object { Write-Host $_.Message }
+            } else {
+              Write-Host "POWERSHELL_PARSE_PASS=$file"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Canonical API account env bootstrap regression
+        run: node scripts/test-phase7c-api-canonical-account-env-bootstrap.mjs
+
+      - name: Web auto-account start regression
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/test-phase7c-web-auto-account-start.ts
+
+      - name: Existing dual-account regression
+        run: node scripts/test-phase7c-dual-account-mode.mjs
+
+      - name: Build risk engine dependency graph
+        run: pnpm --filter @xauusd/risk-engine... build
+
+      - name: Build API
+        run: pnpm --filter @xauusd/api... build
+
+      - name: Build Web
+        run: pnpm --filter @xauusd/web... build

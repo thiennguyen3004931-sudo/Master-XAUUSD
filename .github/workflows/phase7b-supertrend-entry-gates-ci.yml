@@ -1,0 +1,188 @@
+name: Phase7B Supertrend Entry Gates CI
+
+on:
+  push:
+    branches:
+      - phase7c-sideway-supply-demand
+    paths:
+      - "scripts/apply-phase7b-supertrend-entry-gates-local.mjs"
+      - "scripts/apply-phase7b-supertrend-entry-gates-v2-local.mjs"
+      - "scripts/apply-phase7b-canonical-entry-v3-local.mjs"
+      - "scripts/apply-phase7b-canonical-runner-v4-local.mjs"
+      - "scripts/apply-phase7b-canonical-runner-v4b-local.mjs"
+      - "scripts/apply-phase7b-canonical-runner-windows-local.mjs"
+      - "scripts/apply-phase7b-three-candle-pattern-local.mjs"
+      - "scripts/apply-phase7c-broker-clock-fix-local.mjs"
+      - "scripts/apply-phase7b-pattern-ui-clock-local.mjs"
+      - ".github/workflows/phase7b-supertrend-entry-gates-ci.yml"
+  pull_request:
+    paths:
+      - "scripts/apply-phase7b-supertrend-entry-gates-local.mjs"
+      - "scripts/apply-phase7b-supertrend-entry-gates-v2-local.mjs"
+      - "scripts/apply-phase7b-canonical-entry-v3-local.mjs"
+      - "scripts/apply-phase7b-canonical-runner-v4-local.mjs"
+      - "scripts/apply-phase7b-canonical-runner-v4b-local.mjs"
+      - "scripts/apply-phase7b-canonical-runner-windows-local.mjs"
+      - "scripts/apply-phase7b-three-candle-pattern-local.mjs"
+      - "scripts/apply-phase7c-broker-clock-fix-local.mjs"
+      - "scripts/apply-phase7b-pattern-ui-clock-local.mjs"
+      - ".github/workflows/phase7b-supertrend-entry-gates-ci.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply three-candle prerequisite
+        run: |
+          node scripts/apply-phase7b-three-candle-pattern-local.mjs --apply
+          grep -q 'THREE_CANDLE_BODY_DOMINANCE' scripts/run-phase7b-demo-controller.ts
+
+      - name: Apply broker clock prerequisite
+        run: |
+          node scripts/apply-phase7c-broker-clock-fix-local.mjs --apply
+          grep -q 'const now = Number(quote.timestamp)' scripts/run-phase7b-demo-controller.ts
+
+      - name: Apply UI clock prerequisite
+        run: |
+          node scripts/apply-phase7b-pattern-ui-clock-local.mjs --apply
+          grep -q 'inferBrokerClockOffset' apps/api/src/routes/phase7b-demo.route.ts
+
+      - name: Simulate full Windows CRLF checkout
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          paths = [
+              'scripts/run-phase7b-demo-controller.ts',
+              'apps/api/src/routes/phase7b-demo.route.ts',
+              'apps/web/src/ui/DashboardLayout.tsx',
+              'apps/web/src/pages/Phase7BPatternCheckPage.tsx',
+              'scripts/apply-phase7b-supertrend-entry-gates-local.mjs',
+              'scripts/apply-phase7b-supertrend-entry-gates-v2-local.mjs',
+              'scripts/apply-phase7b-canonical-entry-v3-local.mjs',
+              'scripts/apply-phase7b-canonical-runner-v4-local.mjs',
+              'scripts/apply-phase7b-canonical-runner-v4b-local.mjs',
+          ]
+          for name in paths:
+              p = Path(name)
+              data = p.read_bytes().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+              p.write_bytes(data)
+              assert b'\r\n' in data
+          print('PHASE7B_CANONICAL_RUNNER_CI_ALL_EOL=CRLF')
+          PY
+
+      - name: Check Windows-safe canonical runner without mutation
+        run: |
+          node --check scripts/apply-phase7b-canonical-runner-windows-local.mjs
+          node scripts/apply-phase7b-canonical-runner-windows-local.mjs | tee /tmp/canonical-windows-check.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_WINDOWS_PREFLIGHT=PASS' /tmp/canonical-windows-check.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_WINDOWS_NESTED_PATCHERS_NORMALIZED=True' /tmp/canonical-windows-check.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_WINDOWS_CURRENT_CANONICAL=True' /tmp/canonical-windows-check.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_WINDOWS_TEMP_VALIDATION=PASS' /tmp/canonical-windows-check.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_WINDOWS_ORIGINAL_MUTATION=False' /tmp/canonical-windows-check.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_WINDOWS_CHECK=PASS' /tmp/canonical-windows-check.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_V4_RUNNER_SL=M15_CONFIRMED_STRUCTURE_TRAILING' /tmp/canonical-windows-check.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_V4_RUNNER_EXIT=M15_CLOSE_BREAKS_MA50_AFTER_PLUS10_PARTIAL_ONLY' /tmp/canonical-windows-check.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_V4_MA200=MACRO_CONTEXT_ONLY_NOT_ENTRY_OR_EXIT_GATE' /tmp/canonical-windows-check.log
+
+      - name: Apply Windows-safe canonical runner in CI checkout
+        run: |
+          node scripts/apply-phase7b-canonical-runner-windows-local.mjs --apply | tee /tmp/canonical-windows-apply.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_WINDOWS_CURRENT_CANONICAL=True' /tmp/canonical-windows-apply.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_WINDOWS_APPLY=PASS' /tmp/canonical-windows-apply.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_WINDOWS_LINE_ENDINGS=PRESERVED' /tmp/canonical-windows-apply.log
+          grep -q 'PHASE7B_CANONICAL_RUNNER_WINDOWS_DEMO_ONLY=True' /tmp/canonical-windows-apply.log
+
+      - name: Build risk-engine dependency graph
+        run: pnpm --filter @xauusd/risk-engine... build
+
+      - name: Test Supertrend service and risk engine
+        run: |
+          pnpm --filter @xauusd/risk-engine typecheck
+          pnpm --filter @xauusd/risk-engine test
+
+      - name: Build API
+        run: pnpm --filter @xauusd/api... build
+
+      - name: Build Web
+        run: pnpm --filter @xauusd/web... build
+
+      - name: Validate Trend controller TypeScript transform
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const ts = require("typescript");
+          const source = fs.readFileSync("scripts/run-phase7b-demo-controller.ts", "utf8");
+          const transformed = ts.transpileModule(source, {
+            fileName: "run-phase7b-demo-controller.ts",
+            reportDiagnostics: true,
+            compilerOptions: {
+              target: ts.ScriptTarget.ES2022,
+              module: ts.ModuleKind.ESNext,
+              moduleResolution: ts.ModuleResolutionKind.Bundler,
+              verbatimModuleSyntax: false,
+            },
+          });
+          const errors = (transformed.diagnostics || []).filter(
+            (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+          );
+          if (errors.length) {
+            for (const diagnostic of errors) {
+              console.error(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "));
+            }
+            process.exit(1);
+          }
+          NODE
+
+      - name: Verify canonical entry and runner roles
+        run: |
+          grep -q 'PATTERN_PLUS_SUPERTREND_M15_M5_PLUS_VALID_STRUCTURE' scripts/run-phase7b-demo-controller.ts
+          grep -q 'PHASE7B_DEMO_MA20_MA50=CONFIDENCE_ONLY_NOT_ENTRY_GATE' scripts/run-phase7b-demo-controller.ts
+          grep -q 'PHASE7B_DEMO_MA50=RUNNER_HOLD_EXIT_AFTER_PLUS10_PARTIAL_ONLY' scripts/run-phase7b-demo-controller.ts
+          grep -q 'PHASE7B_DEMO_RUNNER_SL=M15_CONFIRMED_STRUCTURE_TRAILING' scripts/run-phase7b-demo-controller.ts
+          grep -q 'PHASE7B_DEMO_MA200=MACRO_CONTEXT_ONLY_NOT_ENTRY_OR_EXIT_GATE' scripts/run-phase7b-demo-controller.ts
+          grep -q 'latestConfirmedStructureStop' scripts/run-phase7b-demo-controller.ts
+          grep -q 'STRUCTURAL_SL_TIGHTEN' scripts/run-phase7b-demo-controller.ts
+          grep -q 'runnerTrendBroken = managed.partialApplied && !ma50TrendIntact' scripts/run-phase7b-demo-controller.ts
+          grep -q 'RUNNER_TREND_MA50' scripts/run-phase7b-demo-controller.ts
+          ! grep -q 'TREND_MA20' scripts/run-phase7b-demo-controller.ts
+          ! grep -q 'TREND_MA200' scripts/run-phase7b-demo-controller.ts
+          ! grep -q 'if (!trendMatches(trigger.side, current.close, ma20, ma50, ma200)) return null;' scripts/run-phase7b-demo-controller.ts
+          grep -q '&& supertrendAligned' apps/api/src/routes/phase7b-demo.route.ts
+          grep -q '&& structuralStopDistance <= 10' apps/api/src/routes/phase7b-demo.route.ts
+          grep -q 'THREE_CANDLE_BODY_DOMINANCE' scripts/run-phase7b-demo-controller.ts
+          grep -q 'inferBrokerClockOffset' apps/api/src/routes/phase7b-demo.route.ts
+          grep -q 'const now = Number(quote.timestamp)' scripts/run-phase7b-demo-controller.ts
+          if grep -q 'SL cấu trúc 6–10; >10 chờ hồi' apps/web/src/ui/DashboardLayout.tsx; then
+            echo 'PHASE7B_CANONICAL_RUNNER_LAYOUT=LEGACY_CANONICAL_UI'
+          else
+            grep -q 'SEMANTIC UI v2' apps/web/src/pages/Phase7BPatternCheckPage.tsx
+            grep -q 'fetchPhase7CWebStatus' apps/web/src/pages/Phase7BPatternCheckPage.tsx
+            echo 'PHASE7B_CANONICAL_RUNNER_LAYOUT=SUPERSEDED_BY_SEMANTIC_UI_V2'
+          fi
+          if grep -q 'Chỉ xác nhận xu hướng khung lớn' apps/web/src/pages/Phase7BPatternCheckPage.tsx; then
+            echo 'PHASE7B_CANONICAL_RUNNER_WEB=LEGACY_CANONICAL_UI'
+          else
+            grep -q 'SEMANTIC UI v2' apps/web/src/pages/Phase7BPatternCheckPage.tsx
+            grep -q 'fetchPhase7CWebStatus' apps/web/src/pages/Phase7BPatternCheckPage.tsx
+            echo 'PHASE7B_CANONICAL_RUNNER_WEB=SUPERSEDED_BY_SEMANTIC_UI_V2'
+          fi

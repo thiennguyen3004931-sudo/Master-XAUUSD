@@ -1,0 +1,96 @@
+name: Customer Activation CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/customer-activation/**"
+      - "packages/customer-product-access/**"
+      - "packages/installation-proof/**"
+      - "packages/license-service/**"
+      - "scripts/test-customer-activation-boundary.mjs"
+      - ".github/workflows/customer-activation-ci.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/customer-activation/**"
+      - "packages/customer-product-access/**"
+      - "packages/installation-proof/**"
+      - "packages/license-service/**"
+      - "scripts/test-customer-activation-boundary.mjs"
+      - ".github/workflows/customer-activation-ci.yml"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: customer-activation-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  customer-activation:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build copy protocol dependency
+        run: pnpm --filter @xauusd/copy-protocol build
+
+      - name: Build license service dependency
+        run: pnpm --filter @xauusd/license-service build
+
+      - name: Build customer product access dependency
+        run: pnpm --filter @xauusd/customer-product-access build
+
+      - name: Build installation proof dependency
+        run: pnpm --filter @xauusd/installation-proof build
+
+      - name: Customer activation tests
+        run: pnpm --filter @xauusd/customer-activation test
+
+      - name: Customer activation typecheck
+        run: pnpm --filter @xauusd/customer-activation typecheck
+
+      - name: Customer activation build
+        run: pnpm --filter @xauusd/customer-activation build
+
+      - name: Private activation boundary contract
+        run: node --test scripts/test-customer-activation-boundary.mjs
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Safety summary
+        shell: powershell
+        run: |
+          Write-Host 'CUSTOMER_ACTIVATION=PASS'
+          Write-Host 'PRODUCTION_MUTATION=NONE'
+          Write-Host 'BOT_RUNTIME_MUTATION=NONE'
+          Write-Host 'MODE_MUTATION=NONE'
+          Write-Host 'ARM_MUTATION=NONE'
+          Write-Host 'ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'
+          Write-Host 'LIVE_TEST_ORDER=NONE'
+          Write-Host 'PERSISTENCE_MUTATION=NONE'
+          Write-Host 'NETWORK_MUTATION=NONE'

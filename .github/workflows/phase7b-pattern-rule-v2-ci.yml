@@ -1,0 +1,109 @@
+name: Phase7B Pattern Rule V2 CI
+
+on:
+  push:
+    branches:
+      - phase7c-sideway-supply-demand
+    paths:
+      - "scripts/apply-phase7b-pattern-rule-v2-local.mjs"
+      - "scripts/finalize-phase7b-pattern-rule-v2-local.mjs"
+      - ".github/workflows/phase7b-pattern-rule-v2-ci.yml"
+  pull_request:
+    paths:
+      - "scripts/apply-phase7b-pattern-rule-v2-local.mjs"
+      - "scripts/finalize-phase7b-pattern-rule-v2-local.mjs"
+      - "packages/risk-engine/src/services/Phase7BDualPatternTrendRiderService.ts"
+      - "packages/risk-engine/tests/Phase7BDualPatternTrendRiderService.test.ts"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "apps/api/src/routes/phase7b-demo.route.ts"
+      - ".github/workflows/phase7b-pattern-rule-v2-ci.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check migration without mutation
+        run: |
+          node --check scripts/apply-phase7b-pattern-rule-v2-local.mjs
+          node --check scripts/finalize-phase7b-pattern-rule-v2-local.mjs
+          node scripts/apply-phase7b-pattern-rule-v2-local.mjs | tee /tmp/pattern-v2-check.log
+          grep -q 'PHASE7B_PATTERN_V2_ORIGINAL_MUTATION=False' /tmp/pattern-v2-check.log
+
+      - name: Apply canonical Pattern Rule V2
+        run: |
+          node scripts/apply-phase7b-pattern-rule-v2-local.mjs --apply
+          node scripts/finalize-phase7b-pattern-rule-v2-local.mjs
+
+      - name: Verify canonical formulas and priority
+        shell: bash
+        run: |
+          for file in \
+            packages/risk-engine/src/services/Phase7BDualPatternTrendRiderService.ts \
+            scripts/run-phase7b-demo-controller.ts \
+            apps/api/src/routes/phase7b-demo.route.ts; do
+            grep -q 'Pattern Rule V2 priority: THREE -> TWO -> ENGULFING' "$file"
+            grep -q 'bcBodyTotal < anchorBody' "$file"
+            grep -q 'bcdBodyTotal > anchorBody' "$file"
+            grep -q 'bBody < anchorBody' "$file"
+            grep -q 'bcBodyTotal > anchorBody' "$file"
+          done
+          grep -q 'rejects three-candle when B+C already equals or exceeds A' packages/risk-engine/tests/Phase7BDualPatternTrendRiderService.test.ts
+
+      - name: Build risk-engine dependency graph
+        run: pnpm --filter @xauusd/risk-engine... build
+
+      - name: Typecheck and test risk engine
+        run: |
+          pnpm --filter @xauusd/risk-engine typecheck
+          pnpm --filter @xauusd/risk-engine test
+
+      - name: Build API
+        run: pnpm --filter @xauusd/api... build
+
+      - name: Validate demo controller TypeScript transform
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const ts = require("typescript");
+          const source = fs.readFileSync("scripts/run-phase7b-demo-controller.ts", "utf8");
+          const transformed = ts.transpileModule(source, {
+            fileName: "run-phase7b-demo-controller.ts",
+            reportDiagnostics: true,
+            compilerOptions: {
+              target: ts.ScriptTarget.ES2022,
+              module: ts.ModuleKind.ESNext,
+              moduleResolution: ts.ModuleResolutionKind.Bundler,
+              verbatimModuleSyntax: false,
+            },
+          });
+          const errors = (transformed.diagnostics || []).filter(
+            (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+          );
+          if (errors.length) {
+            for (const diagnostic of errors) console.error(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "));
+            process.exit(1);
+          }
+          fs.writeFileSync(".phase7b-pattern-v2-controller-ci.mjs", transformed.outputText, "utf8");
+          NODE
+          node --check .phase7b-pattern-v2-controller-ci.mjs
+          rm -f .phase7b-pattern-v2-controller-ci.mjs

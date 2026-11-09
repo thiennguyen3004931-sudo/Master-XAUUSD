@@ -1,0 +1,120 @@
+name: AUTO LIVE Operator Planned Offline Lease
+
+# Operator-initiated maintenance declaration ONLY. No scheduled / push run.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Enable an expiring planned-offline lease, or clear it'
+        required: true
+        type: choice
+        default: enable
+        options:
+          - enable
+          - clear
+      reason:
+        description: 'Why the bot is intentionally offline'
+        required: true
+        type: choice
+        default: PLANNED_SHUTDOWN
+        options:
+          - PLANNED_SHUTDOWN
+          - MAINTENANCE
+      duration_hours:
+        description: 'Maximum lifetime of the lease in hours (enable only)'
+        required: true
+        type: choice
+        default: '12'
+        options:
+          - '1'
+          - '4'
+          - '8'
+          - '12'
+          - '24'
+      operator_confirmed:
+        description: 'I confirm this operator-only maintenance action; no bot/MT5 trading change'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-live-operator-offline-maintenance
+  cancel-in-progress: false
+
+jobs:
+  operator-maintenance-lease:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.operator_confirmed == true }}
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout canonical main monitor helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Apply explicit bounded offline monitor declaration
+        shell: pwsh
+        env:
+          LEASE_ACTION: ${{ inputs.action }}
+          LEASE_REASON: ${{ inputs.reason }}
+          LEASE_HOURS: ${{ inputs.duration_hours }}
+          OPERATOR_CONFIRMED: ${{ inputs.operator_confirmed }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          if ($env:OPERATOR_CONFIRMED -ne 'true') { throw 'OPERATOR_CONFIRMATION_REQUIRED' }
+          $prod = 'F:\Project\XAUUSD_AI_MASTER\xauusd-ai-master'
+          if (-not (Test-Path -LiteralPath $prod -PathType Container)) { throw 'PRODUCTION_ROOT_NOT_FOUND' }
+          $origin = (& git -C $prod remote get-url origin).Trim()
+          if ($LASTEXITCODE -ne 0 -or $origin -notin @(
+              'https://github.com/thiennguyen3004931-sudo/xauusd-ai-master-core',
+              'https://github.com/thiennguyen3004931-sudo/xauusd-ai-master-core.git',
+              'git@github.com:thiennguyen3004931-sudo/xauusd-ai-master-core.git'
+            )) { throw 'PRODUCTION_REPOSITORY_IDENTITY_MISMATCH' }
+          if (-not (Test-Path -LiteralPath (Join-Path $prod '.runtime') -PathType Container)) {
+            throw 'PRODUCTION_RUNTIME_DIRECTORY_NOT_FOUND'
+          }
+
+          $helper = Join-Path $PWD 'scripts\ops\set-auto-live-monitor-offline-lease.ps1'
+          $classifier = Join-Path $PWD 'scripts\ops\auto-live-offline-lease.ps1'
+          if (-not (Test-Path -LiteralPath $helper -PathType Leaf) -or
+              -not (Test-Path -LiteralPath $classifier -PathType Leaf)) {
+            throw 'CANONICAL_MONITOR_HELPERS_MISSING'
+          }
+          if ($env:LEASE_ACTION -eq 'enable') {
+            if ($env:LEASE_REASON -notin @('PLANNED_SHUTDOWN', 'MAINTENANCE')) { throw 'INVALID_OFFLINE_REASON' }
+            $hours = 0
+            if (-not [int]::TryParse($env:LEASE_HOURS, [ref]$hours) -or $hours -notin @(1, 4, 8, 12, 24)) {
+              throw 'INVALID_LEASE_DURATION'
+            }
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper -ProductionRoot $prod -Enable -Reason $env:LEASE_REASON -DurationHours $hours -ConfirmPlannedDowntime
+            if ($LASTEXITCODE -ne 0) { throw 'LEASE_HELPER_ENABLE_FAILED' }
+            . $classifier
+            if ((Get-AutoLiveOfflineLeaseState -ProductionRoot $prod) -ne 'VALID') {
+              throw 'OFFLINE_LEASE_POSTCONDITION_FAILED'
+            }
+            Write-Host 'OPERATOR_OFFLINE_LEASE=VALID'
+          } elseif ($env:LEASE_ACTION -eq 'clear') {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper -ProductionRoot $prod -Clear
+            if ($LASTEXITCODE -ne 0) { throw 'LEASE_HELPER_CLEAR_FAILED' }
+            . $classifier
+            if ((Get-AutoLiveOfflineLeaseState -ProductionRoot $prod) -ne 'ABSENT') {
+              throw 'OFFLINE_LEASE_CLEAR_POSTCONDITION_FAILED'
+            }
+            Write-Host 'OPERATOR_OFFLINE_LEASE=CLEARED'
+          } else { throw 'UNSUPPORTED_OFFLINE_LEASE_ACTION' }
+
+          Write-Host 'PRODUCTION_SOURCE_MUTATION=NONE'
+          Write-Host 'BOT_MODE_MUTATION=NONE'
+          Write-Host 'ARM_MUTATION=NONE'
+          Write-Host 'MT5_BRIDGE_REQUESTS=NONE'
+          Write-Host 'LIVE_ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'
+          Write-Host 'MONITOR_RUNTIME_HEALTH=NOT_VERIFIED'
+          Write-Host 'AUTO_LIVE_OPERATOR_OFFLINE_MAINTENANCE=PASS'
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'Operator-only planned offline lease applied; production bot source/mode/ARM/positions/MT5 not accessed or mutated. Offline status never proves trading health.'

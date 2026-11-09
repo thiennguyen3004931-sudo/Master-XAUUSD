@@ -1,0 +1,41 @@
+name: Phase7C Decision Monitor Mode Cache CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-decision-monitor-mode-cache
+    paths:
+      - "apps/api/src/services/phase7c-decision-monitor.service.ts"
+      - "scripts/phase7c-decision-monitor-mode-cache.test.mjs"
+      - ".github/workflows/phase7c-decision-monitor-mode-cache-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/api/src/services/phase7c-decision-monitor.service.ts"
+      - "scripts/phase7c-decision-monitor-mode-cache.test.mjs"
+      - ".github/workflows/phase7c-decision-monitor-mode-cache-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase7c-decision-monitor-mode-cache-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mode-cache-contract:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        timeout-minutes: 3
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Decision monitor canonical mode cache contract
+        run: node scripts/phase7c-decision-monitor-mode-cache.test.mjs
+      - name: Diff hygiene
+        run: git diff --check

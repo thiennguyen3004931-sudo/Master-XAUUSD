@@ -1,0 +1,131 @@
+name: Phase7C Counterfactual Intelligence CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/api/src/contracts/phase7c-counterfactual-intelligence.schema.ts"
+      - "apps/api/src/services/phase7c-counterfactual-evaluator.service.ts"
+      - "apps/api/src/services/phase7c-counterfactual-intelligence.service.ts"
+      - "apps/api/src/services/phase7c-ordered-exit-side-evidence.service.ts"
+      - "apps/api/src/services/phase7c-fastmove-replay-evidence.service.ts"
+      - "packages/mt5-broker/bridge/mt5_bridge/historical_ticks.py"
+      - "packages/mt5-broker/bridge/mt5_bridge/broker_time.py"
+      - "packages/mt5-broker/bridge/mt5_bridge/app.py"
+      - "packages/mt5-broker/bridge/tests/test_historical_tick_time.py"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - "apps/api/src/routes/phase7c-counterfactual-intelligence.route.ts"
+      - "apps/api/src/app.ts"
+      - "apps/web/src/phase7c-counterfactual-intelligence-types.ts"
+      - "apps/web/src/phase7c-counterfactual-intelligence-api.ts"
+      - "apps/web/src/ui/Phase7CCounterfactualIntelligenceCard.tsx"
+      - "apps/web/src/pages/Phase7CControlCenterShellPage.tsx"
+      - "scripts/phase7c-counterfactual-evaluator.test.ts"
+      - "scripts/phase7c-counterfactual-intelligence.test.ts"
+      - "scripts/phase7c-ordered-exit-side-evidence.test.ts"
+      - "scripts/test-phase7c-ordered-exit-side-source.mjs"
+      - "scripts/phase7c-fastmove-replay-evidence.test.ts"
+      - "scripts/phase7c-fastmove-exact-path.test.ts"
+      - "scripts/phase7c-counterfactual-runtime-evidence.test.ts"
+      - "scripts/test-phase7c-p6c-runtime-evidence-wiring-source.mjs"
+      - "packages/mt5-broker/src/market/Mt5MarketDataClient.ts"
+      - "apps/api/src/services/mt5-market.service.ts"
+      - "apps/api/src/services/phase7c-recommendation-intelligence.service.ts"
+      - "scripts/test-phase7c-p6b-broker-tick-path-source.mjs"
+      - "scripts/test-phase7c-counterfactual-api-source.mjs"
+      - "scripts/test-phase7c-counterfactual-intelligence-source.mjs"
+      - "scripts/test-phase7c-p4-production-acceptance-source.ps1"
+      - "scripts/verify-phase7c-p4-production-acceptance-local.ps1"
+      - "docs/superpowers/specs/2026-09-05-p3-closure-p4-counterfactual-intelligence.md"
+      - "docs/superpowers/plans/2026-09-05-p3-closure-p4-counterfactual-intelligence.md"
+      - ".github/workflows/phase7c-counterfactual-intelligence-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Scope long-path support to CI git processes, including checkout cleanup.
+env:
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: core.longpaths
+  GIT_CONFIG_VALUE_0: "true"
+
+jobs:
+  contract-and-build:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 18
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline --network-concurrency=4 --fetch-retries=4 --fetch-retry-maxtimeout=30000
+
+      - name: P4 counterfactual evaluator contract
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-counterfactual-evaluator.test.ts
+
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+
+      - name: P4 counterfactual snapshot contract
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-counterfactual-intelligence.test.ts
+
+      - name: P6A ordered exit-side evidence RED/GREEN contract
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-ordered-exit-side-evidence.test.ts
+
+      - name: P6A canonical quote evidence source contract
+        run: node scripts/test-phase7c-ordered-exit-side-source.mjs
+
+      - name: P6B bridge historical tick time contract
+        run: python packages/mt5-broker/bridge/tests/test_historical_tick_time.py
+
+      - name: P6B exact-path evidence contract
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-fastmove-replay-evidence.test.ts
+
+      - name: P6B FastMove cycle-plus-tick replay contract
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-fastmove-exact-path.test.ts
+
+      - name: P6B GET-only broker tick path source contract
+        run: node scripts/test-phase7c-p6b-broker-tick-path-source.mjs
+
+      - name: P6C runtime evidence wiring contract
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-counterfactual-runtime-evidence.test.ts
+
+      - name: P6C runtime source wiring contract
+        run: node scripts/test-phase7c-p6c-runtime-evidence-wiring-source.mjs
+
+      - name: P4 GET-only API source contract
+        run: node scripts/test-phase7c-counterfactual-api-source.mjs
+
+      - name: P4 Control Center source contract
+        run: node scripts/test-phase7c-counterfactual-intelligence-source.mjs
+
+      - name: Build web dependency graph
+        run: pnpm --filter @xauusd/web... build
+
+  production-acceptance-source-contract:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: P4 production acceptance source contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-p4-production-acceptance-source.ps1 -ProjectRoot $PWD
+
+      - name: P4 production acceptance source contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-p4-production-acceptance-source.ps1 -ProjectRoot $PWD

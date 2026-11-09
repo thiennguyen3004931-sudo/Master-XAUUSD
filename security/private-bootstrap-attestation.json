@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "publicRepository": "thiennguyen3004931-sudo/xauusd-ai-master",
+  "publicCommit": "de777c713da0bf4dd6d1c562898846dad1b82f3b",
+  "publicTree": "2527080bafe962a7ad69bf27fcc5263f103971ab",
+  "privateRepository": "thiennguyen3004931-sudo/xauusd-ai-master-core",
+  "privateBootstrapCommit": "de777c713da0bf4dd6d1c562898846dad1b82f3b",
+  "privateBootstrapTree": "2527080bafe962a7ad69bf27fcc5263f103971ab",
+  "importMethod": "verified-identical-public-private-commit-tree",
+  "recordedAt": "2026-09-16T01:16:31Z",
+  "operator": "thiennguyen3004931-sudo"
+}

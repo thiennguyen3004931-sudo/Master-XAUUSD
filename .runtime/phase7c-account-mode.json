@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "accountMode": "LIVE",
+  "liveExecutionEnabled": true,
+  "valid": true,
+  "source": "WEB_ACCOUNT_CONNECTOR",
+  "updatedAt": 1794185720996,
+  "updatedBy": "web-operator"
+}

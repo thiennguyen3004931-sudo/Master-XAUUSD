@@ -1,0 +1,251 @@
+name: Private Master Core Self-Hosted CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: private-master-core-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Scope long-path support to CI git processes, including checkout cleanup.
+env:
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: core.longpaths
+  GIT_CONFIG_VALUE_0: "true"
+
+jobs:
+  private-master-core:
+    name: private-master-core-self-hosted
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Runner identity
+        shell: powershell
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          Write-Host "RUNNER_OS=$env:RUNNER_OS"
+          Write-Host "RUNNER_ARCH=$env:RUNNER_ARCH"
+          Write-Host "RUNNER_NAME=$env:RUNNER_NAME"
+          $actualHead = (git rev-parse HEAD).Trim()
+          Write-Host "CHECKED_OUT_HEAD=$actualHead"
+          Write-Host "EXPECTED_HEAD=$env:EXPECTED_HEAD"
+          if ($actualHead -ne $env:EXPECTED_HEAD) {
+            Write-Error "CHECKED_OUT_HEAD_MISMATCH"
+            exit 1
+          }
+
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "scripts/install-phase7c-new-machine-local.ps1").Path,
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if (@($errors).Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host "PHASE7C_NEW_MACHINE_BOOTSTRAP_POWERSHELL_SYNTAX=PASS"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline --network-concurrency=4 --fetch-retries=4 --fetch-retry-maxtimeout=30000
+
+      - name: M6 fetch pinned public contract
+        run: |
+          $lock = Get-Content "security/public-contract.lock.json" -Raw | ConvertFrom-Json
+          $publicCommit = [string]$lock.publicCommit
+          if ($publicCommit -notmatch '^[0-9a-f]{40}$') {
+            Write-Error "PUBLIC_CONTRACT_COMMIT_INVALID"
+            exit 1
+          }
+          git fetch --no-tags --depth=1 https://github.com/thiennguyen3004931-sudo/xauusd-ai-master.git $publicCommit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "M6_PUBLIC_FETCH_COMMIT=$publicCommit"
+
+      - name: Static private CI contract
+        run: node --test scripts/security/private-master-core-ci-contract.test.mjs
+
+      - name: Private repository topology contract
+        run: node --test scripts/security/private-repository-topology.test.mjs
+
+      - name: Tracked-secret boundary tests
+        run: node --test scripts/security/check-private-secrets.test.mjs
+
+      - name: Tracked-secret boundary
+        run: node scripts/security/check-private-secrets.mjs --tracked
+
+      - name: Customer release Ed25519 attestation tamper regression
+        run: node --test scripts/security/customer-release-attestation.test.mjs
+
+      - name: Windows CurrentUser DPAPI foundation regression (synthetic memory only)
+        run: node --test scripts/customer-windows-dpapi-foundation.test.mjs
+
+      - name: Synthetic legacy PEM migration preservation and DPAPI verification (Windows only)
+        run: node --test scripts/customer-legacy-pem-migration.test.mjs
+
+      - name: Offline customer installation readiness fail-closed regression
+        run: node --test scripts/customer-offline-installation-readiness.test.mjs
+
+      - name: Offline customer readiness Windows positive and broad ACL synthetic regression
+        run: node --test scripts/customer-offline-readiness-positive-windows.test.mjs
+
+      - name: Windows customer key NTFS ACL conservative policy (synthetic SIDs only)
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-customer-key-ntfs-acl.ps1
+
+      - name: Private bootstrap provenance tests
+        run: node --test scripts/security/verify-private-bootstrap.test.mjs
+
+      - name: M6 public contract lock tests
+        run: node --test scripts/security/verify-public-contract-lock.test.mjs
+
+      - name: M7 private acceptance tests
+        run: node --test scripts/security/accept-master-core-split.test.mjs
+
+      - name: M8 private cutover preflight contract
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/security/preflight-private-cutover.contract.test.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/security/private-m8-readonly-preflight-workflow.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: M6 public contract lock
+        id: m6_public_contract
+        run: node scripts/security/verify-public-contract-lock.mjs security/public-contract.lock.json
+
+      - name: M2 provenance status
+        id: m2_provenance
+        shell: powershell
+        run: |
+          if ((Test-Path "scripts/security/verify-private-bootstrap.mjs") -and
+              (Test-Path "security/private-bootstrap-attestation.json")) {
+            node scripts/security/verify-private-bootstrap.mjs security/private-bootstrap-attestation.json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            "state=PASS" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "M3_PROVENANCE=PASS"
+          } else {
+            "state=BLOCKED" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "M3_PROVENANCE=BLOCKED_M2_NOT_IMPLEMENTED"
+          }
+
+      - name: Build workspace
+        id: build_workspace
+        run: pnpm build
+
+      - name: Phase7C entry resolution contract
+        run: node --test scripts/test-phase7c-telegram-entry-resolution-lifecycle-contract.mjs
+
+      - name: Trend management path regression
+        run: node scripts/test-phase7c-trend-management-path-regression.mjs
+
+      - name: Windows-safe atomic state persistence regression
+        run: node --test scripts/phase7c-atomic-state-write.test.mjs
+
+      - name: Atomic state helper syntax
+        run: node --check scripts/phase7c-atomic-state-write.mjs
+
+      - name: REVERSAL CHOCH direction entry contract
+        run: node --test scripts/test-phase7c-reversal-entry-contract.mjs
+
+      - name: LIVE AUTO REVERSAL final-order hard lock regression
+        run: node --test scripts/phase7c-auto-live-reversal-lock.test.mjs
+
+      - name: REVERSAL H1 H4 read-only trend filter regression
+        run: pnpm --dir apps/api exec tsx ../../scripts/phase7c-reversal-trend-filter.test.mjs
+
+      - name: New-machine bootstrap safety contract
+        run: node --test scripts/test-phase7c-new-machine-installer-source.mjs
+
+      - name: Telegram lifecycle regression
+        run: >-
+          node --test
+          scripts/test-phase7c-telegram-lifecycle-observability-contract.mjs
+          scripts/phase7c-trade-notifier-synthetic.test.mjs
+          scripts/test-phase7c-hold-telegram-dedupe-contract.mjs
+          scripts/phase7c-system-alert-debounce.test.mjs
+
+      - name: Broader private regression evidence
+        id: broader_regression
+        continue-on-error: true
+        run: pnpm test --concurrency=2
+
+      - name: M7 source-complete acceptance
+        env:
+          M7_PRIVATE_BUILD_OUTCOME: ${{ steps.build_workspace.outcome }}
+          M7_MASTER_REGRESSION_OUTCOME: ${{ steps.broader_regression.outcome }}
+          M7_PUBLIC_CONTRACT_OUTCOME: ${{ steps.m6_public_contract.outcome }}
+          M7_PRODUCTION_CUTOVER: NOT_PERFORMED
+        run: node scripts/security/accept-master-core-split.mjs
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Tracked worktree cleanliness
+        shell: powershell
+        run: |
+          $status = git status --porcelain --untracked-files=no
+          if ($status) {
+            Write-Error "TRACKED_WORKTREE_DIRTY"
+            Write-Host $status
+            exit 1
+          }
+          Write-Host "TRACKED_WORKTREE_CLEAN=TRUE"
+
+      - name: Self-hosted CI infrastructure verdict
+        shell: powershell
+        run: Write-Host "SELF_HOSTED_CI_INFRA=PASS"
+
+      - name: Full M3 acceptance verdict
+        shell: powershell
+        run: |
+          $provenance = "${{ steps.m2_provenance.outputs.state }}"
+          $m6 = "${{ steps.m6_public_contract.outcome }}"
+          $broader = "${{ steps.broader_regression.outcome }}"
+          $broaderConclusion = "${{ steps.broader_regression.conclusion }}"
+          Write-Host "M6_PUBLIC_CONTRACT_OUTCOME=$m6"
+          Write-Host "BROAD_PRIVATE_REGRESSION_OUTCOME=$broader"
+          Write-Host "BROAD_PRIVATE_REGRESSION_CONCLUSION=$broaderConclusion"
+
+          if ($provenance -ne "PASS") {
+            Write-Host "M3_PRIVATE_CI=BLOCKED_M2_PROVENANCE"
+            exit 1
+          }
+
+          if ($m6 -ne "success") {
+            Write-Host "M3_PRIVATE_CI=BLOCKED_M6_PUBLIC_CONTRACT"
+            exit 1
+          }
+
+          if ($broader -ne "success") {
+            Write-Host "M3_PRIVATE_CI=BLOCKED_BROADER_REGRESSION"
+            exit 1
+          }
+
+          Write-Host "M3_PRIVATE_CI=GREEN"

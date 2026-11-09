@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "armed": true,
+  "accountMode": "LIVE",
+  "bridgeSessionId": "session-auto",
+  "accountLogin": 5201362,
+  "server": "DBG Market Limited",
+  "profileFingerprint": "d1ff307356239f80c56cfce4d94c067b64a153e9d5e1eb45e4070afe275f3c0a",
+  "armedAt": 1794185720998,
+  "expiresAt": 1796777720998
+}

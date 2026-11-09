@@ -1,0 +1,62 @@
+name: Phase7C Web LIVE Arm + DEMO Auto CI
+
+on:
+  push:
+    branches:
+      - feat/phase7c-web-live-arm-demo-auto
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: phase7c-web-live-arm-demo-auto-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Scope long-path support to CI git processes, including checkout cleanup.
+env:
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: core.longpaths
+  GIT_CONFIG_VALUE_0: "true"
+
+jobs:
+  source-safety-windows:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: source-safety
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source-safety
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: LIVE arm + DEMO auto source assertions - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-web-live-arm-demo-auto-source.ps1
+      - name: LIVE arm + DEMO auto source assertions - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-web-live-arm-demo-auto-source.ps1
+
+  api-web-build:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --prefer-offline --network-concurrency=4 --fetch-retries=4 --fetch-retry-maxtimeout=30000
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+      - name: Smoke production Node API runtime
+        run: node scripts/test-phase7b-api-node-production-runtime.mjs
+      - name: Build Web
+        run: pnpm --filter @xauusd/web build

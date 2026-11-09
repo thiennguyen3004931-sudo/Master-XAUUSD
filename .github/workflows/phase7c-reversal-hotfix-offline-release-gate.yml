@@ -1,0 +1,54 @@
+name: Phase7C REVERSAL Hotfix Offline Release Evidence
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/operations/reversal-hotfix-production-release-manifest-20261029.json'
+      - 'scripts/ops/verify-reversal-hotfix-release-evidence.mjs'
+      - '.github/workflows/phase7c-reversal-hotfix-offline-release-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reversal-hotfix-offline-release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-release-evidence:
+    name: source-release-evidence
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 18
+    steps:
+      - name: Checkout complete exact source ancestry
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Node 24 for read-only release checks
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify hard-lock policy and unchanged Trend gate behavior
+        run: node --test scripts/phase7c-auto-live-reversal-lock.test.mjs scripts/phase7c-trend-mode-gate.test.mjs
+
+      - name: Verify pinned release provenance (offline-only)
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP 'reversal-hotfix-release-evidence.json'
+          node scripts/ops/verify-reversal-hotfix-release-evidence.mjs | Tee-Object -FilePath $evidence
+          if ($LASTEXITCODE -ne 0) { throw 'OFFLINE_RELEASE_EVIDENCE_FAILED' }
+          if (-not (Test-Path -LiteralPath $evidence -PathType Leaf)) { throw 'EVIDENCE_FILE_MISSING' }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'REVERSAL hotfix: pinned source ancestry + exact blobs verified; LIVE preflight DEFERRED_OFFLINE_EXPECTED; no production or broker mutation.'
+
+      - name: Upload offline-only acceptance receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reversal-hotfix-offline-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/reversal-hotfix-release-evidence.json
+          if-no-files-found: warn
+          retention-days: 14

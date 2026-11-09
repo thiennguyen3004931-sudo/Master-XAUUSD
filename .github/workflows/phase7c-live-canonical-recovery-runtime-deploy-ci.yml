@@ -1,0 +1,57 @@
+name: Phase7C LIVE Canonical Recovery Runtime Deploy CI
+
+on:
+  pull_request:
+    paths:
+      - "scripts/deploy-phase7c-live-canonical-recovery-runtime-local.ps1"
+      - "scripts/test-phase7c-live-canonical-recovery-runtime-deploy-source.ps1"
+      - ".github/workflows/phase7c-live-canonical-recovery-runtime-deploy-ci.yml"
+  push:
+    branches:
+      - fix/phase7c-live-canonical-recovery-runtime-deploy
+    paths:
+      - "scripts/deploy-phase7c-live-canonical-recovery-runtime-local.ps1"
+      - "scripts/test-phase7c-live-canonical-recovery-runtime-deploy-source.ps1"
+      - ".github/workflows/phase7c-live-canonical-recovery-runtime-deploy-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Runtime deploy source contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-canonical-recovery-runtime-deploy-source.ps1
+      - name: Runtime deploy source contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-live-canonical-recovery-runtime-deploy-source.ps1
+
+  lifecycle-safety-regression:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Existing fail-closed recovery source contract
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-fail-closed-runtime-recovery-source.ps1
+      - name: Executor supervisor-first stop order contract
+        shell: pwsh
+        run: .\scripts\test-phase7c-executor-stop-order-source.ps1
+      - name: Lifecycle broker source contract
+        shell: pwsh
+        run: .\scripts\test-phase7c-system-lifecycle-broker-source.ps1
+      - name: Lifecycle broker protocol safety contract
+        shell: pwsh
+        run: .\scripts\test-phase7c-system-lifecycle-broker-contract.ps1
+      - name: LIVE ARM source safety contract
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-arm-source.ps1
+      - name: Canonical Daily Recovery executor contract
+        shell: pwsh
+        run: node .\scripts\test-phase7c-canonical-daily-recovery-executors-contract.mjs

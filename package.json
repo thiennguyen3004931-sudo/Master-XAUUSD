@@ -1,0 +1,33 @@
+{
+  "name": "xauusd-ai-master",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Trading Platform for XAUUSD",
+  "packageManager": "pnpm@10.18.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "build:offline": "node scripts/build-offline-monorepo.mjs",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "format": "prettier --write .",
+    "check:integration": "node scripts/validate-pack-12.mjs",
+    "dev:api": "turbo run dev --filter=@xauusd/api",
+    "dev:web": "turbo run dev --filter=@xauusd/web",
+    "start:all": "node scripts/xauusd-one-click-launcher.mjs start",
+    "start:web": "node scripts/xauusd-one-click-launcher.mjs web-only",
+    "stop:all": "node scripts/xauusd-one-click-launcher.mjs stop",
+    "status:all": "node scripts/xauusd-one-click-launcher.mjs status",
+    "init:env": "node scripts/xauusd-one-click-launcher.mjs init-env",
+    "git:sync": "node scripts/xauusd-one-click-launcher.mjs git-sync"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "turbo": "^2.5.6",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@xauusd/mt5-broker": "workspace:*",
+    "@xauusd/risk-engine": "workspace:*"
+  }
+}

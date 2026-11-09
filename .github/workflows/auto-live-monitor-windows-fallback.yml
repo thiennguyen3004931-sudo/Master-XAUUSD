@@ -1,0 +1,86 @@
+name: AUTO LIVE Windows 5m Fallback Clock
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/ops/trigger-auto-live-monitor-workflow.ps1'
+      - 'scripts/ops/install-auto-live-monitor-fallback-task.ps1'
+      - 'scripts/test-auto-live-monitor-fallback-task-source.ps1'
+      - '.github/workflows/auto-live-monitor-windows-fallback.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/ops/trigger-auto-live-monitor-workflow.ps1'
+      - 'scripts/ops/install-auto-live-monitor-fallback-task.ps1'
+      - 'scripts/test-auto-live-monitor-fallback-task-source.ps1'
+      - '.github/workflows/auto-live-monitor-windows-fallback.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-live-windows-fallback-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: auto-live-windows-fallback-validate
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Static fallback safety contract
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-auto-live-monitor-fallback-task-source.ps1
+
+      - name: Persistent GitHub CLI auth prerequisite
+        shell: powershell
+        run: >-
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File scripts/ops/install-auto-live-monitor-fallback-task.ps1
+          -CheckPrerequisitesOnly
+
+  install:
+    name: auto-live-windows-fallback-install
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: validate
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout exact merged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Install 5-minute fallback task and prime one monitor dispatch
+        shell: powershell
+        run: >-
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File scripts/ops/install-auto-live-monitor-fallback-task.ps1
+          -Prime
+
+      - name: Safety boundary
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host "WINDOWS_FALLBACK_PRODUCTION_ACCESS=NONE"
+          Write-Host "WINDOWS_FALLBACK_MONITOR_DISPATCH_ONLY=TRUE"
+          Write-Host "PRODUCTION_MUTATION=NONE"
+          Write-Host "TRADING_LOGIC_MUTATION=NONE"
+          Write-Host "MODE_MUTATION=NONE"
+          Write-Host "ARM_MUTATION=NONE"
+          Write-Host "ORDER_MUTATION=NONE"
+          Write-Host "POSITION_MUTATION=NONE"
+          Write-Host "LIVE_TEST_ORDER=NONE"

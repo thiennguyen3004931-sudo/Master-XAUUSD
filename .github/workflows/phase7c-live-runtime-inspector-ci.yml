@@ -1,0 +1,50 @@
+name: Phase7C LIVE Runtime Inspector CI
+
+on:
+  push:
+    branches:
+      - feat/phase7c-live-runtime-inspector
+    paths:
+      - "scripts/inspect-phase7c-live-runtime-local.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-source.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-synthetic.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-mock.py"
+      - ".github/workflows/phase7c-live-runtime-inspector-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/inspect-phase7c-live-runtime-local.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-source.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-synthetic.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-mock.py"
+      - ".github/workflows/phase7c-live-runtime-inspector-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  observation-only-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Source contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-runtime-inspector-source.ps1
+
+      - name: Source contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-live-runtime-inspector-source.ps1
+
+      - name: Synthetic observation-only runtime test
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-runtime-inspector-synthetic.ps1
+
+      - name: Diff whitespace check
+        shell: bash
+        run: git diff --check HEAD^

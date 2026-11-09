@@ -1,0 +1,59 @@
+name: Phase7C LIVE Switch Recovery CI
+
+on:
+  pull_request:
+    paths:
+      - "scripts/preflight-phase7c-live-switch-local.ps1"
+      - "scripts/recover-phase7c-demo-after-failed-switch-local.ps1"
+      - "scripts/switch-phase7c-live-guarded-local.ps1"
+      - "scripts/stop-phase7c-executors-local.ps1"
+      - "scripts/test-phase7c-live-switch-recovery-source.ps1"
+      - ".github/workflows/phase7c-live-switch-recovery-ci.yml"
+      - "PHASE7C-LIVE-SWITCH-RECOVERY.md"
+  workflow_dispatch:
+
+jobs:
+  live-switch-recovery-source:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Safety assertions with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-switch-recovery-source.ps1
+
+      - name: Safety assertions with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-live-switch-recovery-source.ps1
+
+      - name: Parse LIVE switch preflight with PowerShell 7
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\preflight-phase7c-live-switch-local.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { throw ($errors -join '; ') }
+
+      - name: Parse DEMO recovery with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\recover-phase7c-demo-after-failed-switch-local.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { throw ($errors -join '; ') }
+
+      - name: Parse executor stopper with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\stop-phase7c-executors-local.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { throw ($errors -join '; ') }
+
+      - name: Parse guarded LIVE switch with PowerShell 7
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\switch-phase7c-live-guarded-local.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { throw ($errors -join '; ') }

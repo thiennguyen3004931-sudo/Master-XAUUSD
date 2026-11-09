@@ -1,0 +1,79 @@
+name: Phase7C Web Source Attestation CI
+
+on:
+  push:
+    branches:
+      - feat/phase7c-web-source-attestation
+    paths:
+      - "scripts/lib/phase7b-web-source-attestation.ps1"
+      - "scripts/run-phase7b-web-autostart.ps1"
+      - "apps/api/src/services/phase7c-runtime-source-attestation.service.ts"
+      - "apps/api/src/services/phase7c-runtime-source-attestation.service.test.ts"
+      - "apps/api/src/services/phase7c-web-runtime-source-attestation.service.test.ts"
+      - "scripts/phase7c-web-source-attestation.contract.test.mjs"
+      - ".github/workflows/phase7c-web-source-attestation-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/lib/phase7b-web-source-attestation.ps1"
+      - "scripts/run-phase7b-web-autostart.ps1"
+      - "apps/api/src/services/phase7c-runtime-source-attestation.service.ts"
+      - "apps/api/src/services/phase7c-runtime-source-attestation.service.test.ts"
+      - "apps/api/src/services/phase7c-web-runtime-source-attestation.service.test.ts"
+      - "scripts/phase7c-web-source-attestation.contract.test.mjs"
+      - ".github/workflows/phase7c-web-source-attestation-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  web-source-attestation:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+      - name: Web source attestation static contract
+        shell: pwsh
+        run: node scripts/phase7c-web-source-attestation.contract.test.mjs
+      - name: Web runtime source attestation API tests
+        shell: pwsh
+        run: pnpm --filter @xauusd/api exec tsx --test src/services/phase7c-web-runtime-source-attestation.service.test.ts src/services/phase7c-runtime-source-attestation.service.test.ts
+      - name: API build with workspace dependencies
+        shell: pwsh
+        run: pnpm exec turbo run build --filter=@xauusd/api
+      - name: PowerShell 7 parse gate
+        shell: pwsh
+        run: |
+          foreach ($file in @(
+            'scripts/lib/phase7b-web-source-attestation.ps1',
+            'scripts/run-phase7b-web-autostart.ps1'
+          )) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error; exit 1 }
+          }
+      - name: Windows PowerShell 5.1 parse gate
+        shell: powershell
+        run: |
+          foreach ($file in @(
+            'scripts/lib/phase7b-web-source-attestation.ps1',
+            'scripts/run-phase7b-web-autostart.ps1'
+          )) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error; exit 1 }
+          }

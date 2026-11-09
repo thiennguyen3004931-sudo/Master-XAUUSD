@@ -1,0 +1,194 @@
+name: Phase7C Runtime Ready Stable Recovery Deploy CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/recover-phase7c-runtime-ready-stable-deploy-local.ps1"
+      - "scripts/recover-phase7c-runtime-ready-stable-deploy-guarded-local.ps1"
+      - "scripts/reconcile-phase7c-stopped-lifecycle-broker-provenance-local.ps1"
+      - "scripts/test-phase7c-stopped-lifecycle-broker-provenance-reconciliation-source.ps1"
+      - "scripts/test-phase7c-stopped-midpoint-runner-sha-normalization-source.ps1"
+      - "scripts/test-phase7c-runtime-ready-stable-recovery-deploy-source.ps1"
+      - "scripts/test-phase7c-recovery-migration-verifier-window-source.ps1"
+      - "scripts/test-phase7c-stale-broker-owned-repair-migration-source.ps1"
+      - "scripts/test-phase7c-lifecycle-broker-battery-task-source.ps1"
+      - "scripts/test-phase7c-battery-settings-recovery-migration-source.ps1"
+      - "scripts/test-phase7c-battery-stopped-lifecycle-preweb-repair-source.ps1"
+      - "scripts/test-phase7c-stopped-lifecycle-preweb-generation-source.ps1"
+      - "scripts/test-phase7c-running-held-lock-preweb-generation-source.ps1"
+      - "scripts/register-phase7c-executor-task-local.ps1"
+      - "scripts/deploy-phase7c-web-ui-local.ps1"
+      - "scripts/deploy-phase7c-mt5-dashboard-local.ps1"
+      - "scripts/verify-phase7c-account-runtime-local.ps1"
+      - "scripts/lib/phase7c-runtime-ownership-probe.ps1"
+      - "scripts/lib/phase7c-scheduled-task-ownership.ps1"
+      - "scripts/lib/phase7c-runtime-source-attestation.ps1"
+      - "scripts/run-phase7b-api-runtime-local.ps1"
+      - "scripts/run-phase7c-executor-task-runner-local.ps1"
+      - "scripts/run-phase7c-executors-local.ps1"
+      - "scripts/test-phase7c-runtime-source-attestation-source.ps1"
+      - "scripts/test-phase7c-runtime-source-attestation-api-source.ps1"
+      - "scripts/test-phase7c-runtime-source-attestation-web-source.ps1"
+      - "apps/api/src/index.ts"
+      - "apps/api/src/app.ts"
+      - "apps/api/src/routes/phase7c-runtime-source-attestation.route.ts"
+      - "apps/api/src/services/phase7c-runtime-source-attestation.service.ts"
+      - "apps/api/src/services/phase7c-runtime-source-attestation.service.test.ts"
+      - "apps/web/src/pages/Phase7CControlCenterShellPage.tsx"
+      - "apps/web/src/phase7c-runtime-source-attestation-api.ts"
+      - "apps/web/src/phase7c-runtime-source-attestation-types.ts"
+      - "apps/web/src/ui/Phase7CRuntimeSourceAttestationCard.tsx"
+      - ".github/workflows/phase7c-runtime-ready-stable-recovery-deploy-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/recover-phase7c-runtime-ready-stable-deploy-local.ps1"
+      - "scripts/recover-phase7c-runtime-ready-stable-deploy-guarded-local.ps1"
+      - "scripts/reconcile-phase7c-stopped-lifecycle-broker-provenance-local.ps1"
+      - "scripts/test-phase7c-stopped-lifecycle-broker-provenance-reconciliation-source.ps1"
+      - "scripts/test-phase7c-stopped-midpoint-runner-sha-normalization-source.ps1"
+      - "scripts/test-phase7c-runtime-ready-stable-recovery-deploy-source.ps1"
+      - "scripts/test-phase7c-recovery-migration-verifier-window-source.ps1"
+      - "scripts/test-phase7c-stale-broker-owned-repair-migration-source.ps1"
+      - "scripts/test-phase7c-lifecycle-broker-battery-task-source.ps1"
+      - "scripts/test-phase7c-battery-settings-recovery-migration-source.ps1"
+      - "scripts/test-phase7c-battery-stopped-lifecycle-preweb-repair-source.ps1"
+      - "scripts/test-phase7c-stopped-lifecycle-preweb-generation-source.ps1"
+      - "scripts/test-phase7c-running-held-lock-preweb-generation-source.ps1"
+      - "scripts/register-phase7c-executor-task-local.ps1"
+      - "scripts/deploy-phase7c-web-ui-local.ps1"
+      - "scripts/deploy-phase7c-mt5-dashboard-local.ps1"
+      - "scripts/verify-phase7c-account-runtime-local.ps1"
+      - "scripts/lib/phase7c-runtime-ownership-probe.ps1"
+      - "scripts/lib/phase7c-scheduled-task-ownership.ps1"
+      - "scripts/lib/phase7c-runtime-source-attestation.ps1"
+      - "scripts/run-phase7b-api-runtime-local.ps1"
+      - "scripts/run-phase7c-executor-task-runner-local.ps1"
+      - "scripts/run-phase7c-executors-local.ps1"
+      - "scripts/test-phase7c-runtime-source-attestation-source.ps1"
+      - "scripts/test-phase7c-runtime-source-attestation-api-source.ps1"
+      - "scripts/test-phase7c-runtime-source-attestation-web-source.ps1"
+      - "apps/api/src/index.ts"
+      - "apps/api/src/app.ts"
+      - "apps/api/src/routes/phase7c-runtime-source-attestation.route.ts"
+      - "apps/api/src/services/phase7c-runtime-source-attestation.service.ts"
+      - "apps/api/src/services/phase7c-runtime-source-attestation.service.test.ts"
+      - "apps/web/src/pages/Phase7CControlCenterShellPage.tsx"
+      - "apps/web/src/phase7c-runtime-source-attestation-api.ts"
+      - "apps/web/src/phase7c-runtime-source-attestation-types.ts"
+      - "apps/web/src/ui/Phase7CRuntimeSourceAttestationCard.tsx"
+      - ".github/workflows/phase7c-runtime-ready-stable-recovery-deploy-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Runtime source attestation contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-runtime-source-attestation-source.ps1
+      - name: Runtime source attestation contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-runtime-source-attestation-source.ps1
+      - name: Runtime source attestation API contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-runtime-source-attestation-api-source.ps1
+      - name: Runtime source attestation API contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-runtime-source-attestation-api-source.ps1
+      - name: Runtime source attestation Web contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-runtime-source-attestation-web-source.ps1
+      - name: Runtime source attestation Web contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-runtime-source-attestation-web-source.ps1
+      - name: Stable-ready recovery deploy contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-runtime-ready-stable-recovery-deploy-source.ps1
+      - name: Stable-ready recovery deploy contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-runtime-ready-stable-recovery-deploy-source.ps1
+      - name: Recovery migration verifier window contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-recovery-migration-verifier-window-source.ps1
+      - name: Recovery migration verifier window contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-recovery-migration-verifier-window-source.ps1
+      - name: Stale broker owned-repair migration contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-stale-broker-owned-repair-migration-source.ps1
+      - name: Stale broker owned-repair migration contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-stale-broker-owned-repair-migration-source.ps1
+      - name: Lifecycle broker battery task contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-lifecycle-broker-battery-task-source.ps1
+      - name: Lifecycle broker battery task contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-lifecycle-broker-battery-task-source.ps1
+      - name: Battery settings recovery migration contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-battery-settings-recovery-migration-source.ps1
+      - name: Battery settings recovery migration contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-battery-settings-recovery-migration-source.ps1
+      - name: Battery stopped-lifecycle pre-Web repair contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-battery-stopped-lifecycle-preweb-repair-source.ps1
+      - name: Battery stopped-lifecycle pre-Web repair contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-battery-stopped-lifecycle-preweb-repair-source.ps1
+      - name: Stopped lifecycle pre-Web generation contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-stopped-lifecycle-preweb-generation-source.ps1
+      - name: Stopped lifecycle pre-Web generation contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-stopped-lifecycle-preweb-generation-source.ps1
+      - name: Running held-lock pre-Web generation contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-running-held-lock-preweb-generation-source.ps1
+      - name: Running held-lock pre-Web generation contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-running-held-lock-preweb-generation-source.ps1
+      - name: Stopped lifecycle broker provenance reconciliation contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-stopped-lifecycle-broker-provenance-reconciliation-source.ps1
+      - name: Stopped lifecycle broker provenance reconciliation contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-stopped-lifecycle-broker-provenance-reconciliation-source.ps1
+      - name: Stopped midpoint runner SHA normalization contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-stopped-midpoint-runner-sha-normalization-source.ps1
+      - name: Stopped midpoint runner SHA normalization contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-stopped-midpoint-runner-sha-normalization-source.ps1
+
+  safety-regression:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Canonical Web/API safe deploy contract
+        shell: pwsh
+        run: .\scripts\test-phase7c-web-ui-safe-deploy-source.ps1
+      - name: Lifecycle broker source contract
+        shell: pwsh
+        run: .\scripts\test-phase7c-system-lifecycle-broker-source.ps1
+      - name: Lifecycle broker protocol safety contract
+        shell: pwsh
+        run: .\scripts\test-phase7c-system-lifecycle-broker-contract.ps1
+      - name: LIVE ARM source safety contract
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-arm-source.ps1
+      - name: Existing fail-closed runtime recovery contract
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-fail-closed-runtime-recovery-source.ps1
