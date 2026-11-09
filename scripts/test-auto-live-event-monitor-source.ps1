@@ -38,20 +38,21 @@ function Assert-NotMatch {
   }
 }
 
-Assert-Literal $Workflow "name: AUTO LIVE Read-Only Event Monitor" 'workflow identity'
-Assert-Literal $Workflow "cron: '2-52/10 * * * *'" 'staggered schedule A'
-Assert-Literal $Workflow "cron: '7-57/10 * * * *'" 'staggered schedule B'
+Assert-Literal $Workflow 'name: Legacy AUTO LIVE Monitor (private-core manual only)' 'legacy workflow identity'
+Assert-Match $Workflow '(?m)^on:\r?\n  workflow_dispatch:' 'explicit manual trigger only'
+Assert-NotMatch $Workflow '(?m)^\s{2}(?:schedule|push|pull_request):' 'no production scheduling or PR code execution in independent V6'
+Assert-Literal $Workflow "if: github.repository == 'thiennguyen3004931-sudo/xauusd-ai-master-core'" 'legacy private-core repository scope only'
 Assert-Literal $Workflow 'issues: write' 'issue-only persistence permission'
 Assert-Literal $Workflow 'contents: read' 'read-only repository content permission'
 Assert-Literal $Workflow 'runs-on: [self-hosted, Windows, X64, xauusd-core-ci]' 'canonical self-hosted runner labels'
 Assert-Literal $Workflow 'scripts/test-auto-live-event-monitor-source.ps1' 'static safety contract executes before monitor'
 Assert-Literal $Workflow "if: github.event_name != 'pull_request'" 'do not probe production from unmerged pull request code'
 Assert-Literal $Workflow '$notify = $false' 'validation defaults to no persistence'
-Assert-Literal $Workflow "github.event_name }}' -eq 'schedule'" 'schedule event detection'
-Assert-Literal $Workflow '$notify = $true' 'scheduled persistence enabled'
+Assert-NotMatch $Workflow "github.event_name }}' -eq 'schedule'" 'no scheduled production issue persistence on V6'
+Assert-Literal $Workflow '$notify = $true' 'explicit manual persistence only'
 Assert-Literal $Workflow "inputs.notify }}' -eq 'true'" 'manual notify opt-in'
 Assert-NotMatch $Workflow 'EXPECTED_SOURCE_COMMIT:' 'workflow must not hard-code production source SHA'
-Assert-Literal $Workflow "MONITOR_ISSUE_NUMBER: '28'" 'canonical event ledger issue'
+Assert-Literal $Workflow "MONITOR_ISSUE_NUMBER: '28'" 'legacy issue number (guarded out on public V6)'
 Assert-Literal $Workflow 'MONITOR_PRODUCTION_READ_ONLY=TRUE' 'read-only safety summary'
 Assert-Literal $Workflow 'cancel-in-progress: true' 'latest-wins concurrency'
 if ($Workflow.Contains('feat/auto-live-event-monitor-77f13bbd')) { throw 'Stale AUTO LIVE monitor branch trigger must be removed.' }
