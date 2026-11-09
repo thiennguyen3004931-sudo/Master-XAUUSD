@@ -414,49 +414,83 @@ def find_m5_structural_trail_sl(candles_m5, side, current_price, open_price):
     return None
 
 def partial_close_position(mt5, pos, close_ratio=0.5, comment_tag="PARTIAL_TP_H1_SR"):
-    sym = str(pos.symbol)
-    sym_info = mt5.symbol_info(sym)
-    tick = mt5.symbol_info_tick(sym)
-    if not sym_info or not tick:
-        return {"ok": False, "message": "Không đọc được thông tin mã khi chốt một phần."}
-    vol_min = float(getattr(sym_info, "volume_min", 0.01) or 0.01)
-    vol_step = float(getattr(sym_info, "volume_step", 0.01) or 0.01)
-    cur_vol = float(pos.volume)
-    if cur_vol < vol_min * 2:
-        return {"ok": False, "message": f"Khối lượng lệnh #{pos.ticket} ({cur_vol} lot) đã ở mức tối thiểu, giữ nguyên để gồng theo SL M5."}
-    close_vol = max(vol_min, round(round((cur_vol * close_ratio) / vol_step) * vol_step, 2))
-    if cur_vol - close_vol < vol_min:
-        close_vol = round(cur_vol - vol_min, 2)
-    if close_vol < vol_min:
-        return {"ok": False, "message": "Khối lượng chốt từng phần nhỏ hơn mức tối thiểu của sàn."}
+    """Close no more than the requested broker-step volume; verify the actual remaining position."""
+    try:
+        ratio = float(close_ratio)
+        ticket = int(pos.ticket)
+        symbol = str(pos.symbol)
+    except (TypeError, ValueError, AttributeError):
+        return {"ok": False, "message": "Invalid partial-close request"}
+    if not isfinite(ratio) or not 0.0 < ratio < 1.0:
+        return {"ok": False, "message": "Partial-close ratio must be strictly between 0 and 1"}
+    fresh = _read_position_by_ticket(mt5, ticket)
+    if fresh is None or str(getattr(fresh, "symbol", "")) != symbol or int(getattr(fresh, "type", -1)) != int(pos.type):
+        return {"ok": False, "message": f"Cannot verify current broker position #{ticket}"}
+    info = mt5.symbol_info(symbol)
+    tick = mt5.symbol_info_tick(symbol)
+    if info is None or tick is None:
+        return {"ok": False, "message": "Cannot read broker symbol or quote for partial close"}
+    min_vol = float(getattr(info, "volume_min", 0) or 0)
+    step = float(getattr(info, "volume_step", 0) or 0)
+    current_vol = float(getattr(fresh, "volume", 0) or 0)
+    if (not all(isfinite(v) and v > 0 for v in (min_vol, step, current_vol))
+            or abs(current_vol / step - round(current_vol / step)) > 1e-6):
+        return {"ok": False, "message": "Invalid or non-step broker position volume"}
+    # Always round DOWN, never increase requested risk or close more than intended.
+    close_units = min(
+        floor((current_vol * ratio + 1e-9) / step),
+        floor((current_vol - min_vol + 1e-9) / step),
+    )
+    close_vol = round(close_units * step, 8)
+    remaining_plan = round(current_vol - close_vol, 8)
+    if close_vol < min_vol - 1e-9 or remaining_plan < min_vol - 1e-9:
+        return {"ok": False, "message": "Broker minimum/step prevents safe partial close"}
 
-    is_buy_pos = int(pos.type) == 0
-    close_type = int(getattr(mt5, "ORDER_TYPE_SELL", 1) if is_buy_pos else getattr(mt5, "ORDER_TYPE_BUY", 0))
-    close_price = float(tick.bid if is_buy_pos else tick.ask)
-    req = {
+    is_buy = int(fresh.type) == 0
+    price = float(tick.bid if is_buy else tick.ask)
+    if not isfinite(price) or price <= 0:
+        return {"ok": False, "message": "Invalid broker quote for partial close"}
+    request = {
         "action": int(getattr(mt5, "TRADE_ACTION_DEAL", 1)),
-        "symbol": sym,
-        "position": int(pos.ticket),
+        "symbol": symbol,
+        "position": ticket,
         "volume": close_vol,
-        "type": close_type,
-        "price": close_price,
+        "type": int(getattr(mt5, "ORDER_TYPE_SELL", 1) if is_buy else getattr(mt5, "ORDER_TYPE_BUY", 0)),
+        "price": price,
         "deviation": 50,
-        "magic": int(getattr(pos, "magic", 270715) or 270715),
+        "magic": int(getattr(fresh, "magic", 270715) or 270715),
         "comment": comment_tag[:31],
         "type_time": int(getattr(mt5, "ORDER_TIME_GTC", 0)),
-        "type_filling": resolve_filling_mode(mt5, sym_info),
+        "type_filling": resolve_filling_mode(mt5, info),
     }
-    res = mt5.order_send(req)
-    if res and int(getattr(res, "retcode", -1)) in (10009, 10010):
-        return {
-            "ok": True,
-            "ticket": int(pos.ticket),
-            "closedVolume": close_vol,
-            "remainingVolume": round(cur_vol - close_vol, 2),
-            "price": close_price,
-            "message": f"Đã chốt một phần ({close_vol} lot) lệnh #{pos.ticket} tại vùng cản khung lớn ({close_price}), giữ {round(cur_vol - close_vol, 2)} lot gồng tới vùng cản tiếp theo!"
-        }
-    return {"ok": False, "message": f"Chưa thể chốt 1 phần lệnh #{pos.ticket}."}
+    result = mt5.order_send(request)
+    if result is None or int(getattr(result, "retcode", -1)) not in (10009, 10010):
+        return {"ok": False, "message": f"Broker rejected partial close #{ticket}"}
+
+    after = _read_position_by_ticket(mt5, ticket)
+    if after is None:
+        # A vanished ticket could mean full close, netting, or delayed state; never claim a half-close.
+        return {"ok": False, "submitted": True, "uncertain": True,
+                "message": f"Broker partial close #{ticket} acknowledged but remaining position unconfirmed"}
+    after_vol = float(getattr(after, "volume", 0) or 0)
+    actual_closed = round(current_vol - after_vol, 8)
+    if (not isfinite(after_vol) or after_vol < min_vol - 1e-9
+            or actual_closed < step / 2
+            or actual_closed > close_vol + step / 2):
+        return {"ok": False, "submitted": True, "uncertain": True,
+                "message": f"Broker partial close #{ticket} acknowledged but volume readback inconsistent"}
+    partial_fill = actual_closed < close_vol - step / 2
+    return {
+        "ok": True, "changed": True, "ticket": ticket,
+        "closedVolume": actual_closed,
+        "requestedCloseVolume": close_vol,
+        "remainingVolume": round(after_vol, 8),
+        "partialFill": partial_fill,
+        "quotePrice": price,
+        "message": f"Broker confirmed partial close #{ticket}: {actual_closed} lot closed; {round(after_vol, 8)} lot remaining" +
+                   (" (partial broker fill)" if partial_fill else ""),
+    }
+
 
 def _read_position_by_ticket(mt5, ticket_id):
     try:
@@ -469,14 +503,19 @@ def _read_position_by_ticket(mt5, ticket_id):
 def modify_position_sl_tp(mt5, pos, new_sl, new_tp, reason_label=""):
     """Never loosen a stop and never report broker confirmation without a readback."""
     sym = str(pos.symbol)
+    # The caller's position may be stale after another EA, terminal, or previous V6 action
+    # tightened SL. Read the broker's newest SL/TP BEFORE evaluating monotonic protection.
+    current = _read_position_by_ticket(mt5, pos.ticket)
+    if current is None or str(getattr(current, "symbol", "")) != sym or int(current.type) != int(pos.type):
+        return {"ok": False, "changed": False, "message": "Cannot verify current broker ticket before SLTP"}
     sym_info = mt5.symbol_info(sym)
     tick = mt5.symbol_info_tick(sym)
     if sym_info is None or tick is None:
         return {"ok": False, "changed": False, "message": "Cannot verify broker symbol/quote"}
     digits = int(getattr(sym_info, "digits", 2))
     point = float(getattr(sym_info, "point", 0.01) or 0.01)
-    cur_sl = round(float(getattr(pos, "sl", 0.0) or 0.0), digits)
-    cur_tp = round(float(getattr(pos, "tp", 0.0) or 0.0), digits)
+    cur_sl = round(float(getattr(current, "sl", 0.0) or 0.0), digits)
+    cur_tp = round(float(getattr(current, "tp", 0.0) or 0.0), digits)
     sl_val = round(float(new_sl), digits) if new_sl is not None else cur_sl
     tp_val = round(float(new_tp), digits) if new_tp is not None else cur_tp
     buy = int(pos.type) == 0
@@ -619,7 +658,7 @@ def manage_trend_and_manual_positions(mt5, active_symbol, pos_list, candles_m5, 
         at_be = (sl >= entry if buy else sl <= entry) if sl > 0 else False
         if initial_r > 0 and not at_be and favorable >= initial_r:
             be = round(entry + (0.25 if buy else -0.25), 2)
-            mod = modify_position_sl_tp(mt5, p, be, tp, "Reached initial 1R; move to BE")
+            mod = modify_position_sl_tp(mt5, p, be, None, "Reached initial 1R; move to BE")
             if mod.get("changed"):
                 actions.append(mod["message"])
                 sl, at_be = be, True
@@ -638,7 +677,7 @@ def manage_trend_and_manual_positions(mt5, active_symbol, pos_list, candles_m5, 
                     candidates.append((candidate, "Lifetime ticket peak profit lock"))
             if candidates:
                 best_sl, reason = (max(candidates, key=lambda c: c[0]) if buy else min(candidates, key=lambda c: c[0]))
-                mod = modify_position_sl_tp(mt5, p, best_sl, tp, reason)
+                mod = modify_position_sl_tp(mt5, p, best_sl, None, reason)
                 if mod.get("changed"):
                     actions.append(mod["message"])
                     sl = best_sl
@@ -1072,7 +1111,7 @@ def move_sl_to_breakeven(mt5, ticket_id):
         if old_sl > 0 and ((buy and old_sl >= be_price) or (not buy and old_sl <= be_price)):
             success += 1
             continue
-        result = modify_position_sl_tp(mt5, pos, be_price, float(getattr(pos, "tp", 0) or 0),
+        result = modify_position_sl_tp(mt5, pos, be_price, None,
                                        "Operator BE (never loosen)")
         if result.get("ok"):
             success += 1

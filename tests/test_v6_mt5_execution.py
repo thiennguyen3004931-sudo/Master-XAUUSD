@@ -64,6 +64,11 @@ class MockBroker:
                     p.sl = request["sl"]
                     p.tp = request["tp"]
             return SimpleNamespace(retcode=10009, order=123)
+        if request["action"] == self.TRADE_ACTION_DEAL and "position" in request:
+            for p in self.positions:
+                if p.ticket == request["position"]:
+                    p.volume = round(p.volume - request["volume"], 8)
+            return SimpleNamespace(retcode=10009, order=123, price=request["price"])
         return SimpleNamespace(retcode=10009, order=123, price=request["price"])
 
 
@@ -163,6 +168,90 @@ class ExecutionRiskTest(unittest.TestCase):
         result = engine.modify_position_sl_tp(mt5, p, 3990.25, 4020, "Unconfirmed BE")
         self.assertFalse(result["ok"])
         self.assertFalse(result["changed"])
+
+    def test_stale_position_snapshot_must_not_widen_newer_broker_sl(self):
+        mt5 = MockBroker()
+        current = SimpleNamespace(symbol="XAUUSD.G", ticket=309, type=0, price_open=3990,
+                                  price_current=3997, sl=3995, tp=4030, magic=270715)
+        stale = SimpleNamespace(symbol="XAUUSD.G", ticket=309, type=0, price_open=3990,
+                                price_current=3997, sl=3983, tp=4020, magic=270715)
+        mt5.positions = [current]
+        denied = engine.modify_position_sl_tp(mt5, stale, 3990.25, None, "Stale BE")
+        self.assertFalse(denied["ok"])
+        self.assertEqual(mt5.sent, [])
+        self.assertEqual(current.sl, 3995)
+        self.assertEqual(current.tp, 4030)
+
+    def test_sl_only_preserves_broker_tp_when_caller_snapshot_stale(self):
+        mt5 = MockBroker()
+        current = SimpleNamespace(symbol="XAUUSD.G", ticket=310, type=0, price_open=3990,
+                                  price_current=3997, sl=3983, tp=4030, magic=270715)
+        stale = SimpleNamespace(symbol="XAUUSD.G", ticket=310, type=0, price_open=3990,
+                                price_current=3997, sl=3983, tp=4010, magic=270715)
+        mt5.positions = [current]
+        result = engine.modify_position_sl_tp(mt5, stale, 3990.25, None, "Fresh broker TP")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(current.tp, 4030)
+        self.assertEqual(mt5.sent[0]["tp"], 4030)
+
+    def test_partial_close_uses_exact_broker_lot_step_and_readback(self):
+        class MillilotBroker(MockBroker):
+            def symbol_info(self, symbol):
+                info = super().symbol_info(symbol)
+                info.volume_min = 0.001
+                info.volume_step = 0.001
+                return info
+        mt5 = MillilotBroker()
+        p = SimpleNamespace(symbol="XAUUSD.G", ticket=320, type=0,
+                            volume=0.011, magic=270715)
+        mt5.positions = [p]
+        result = engine.partial_close_position(mt5, p, close_ratio=0.5)
+        self.assertTrue(result["ok"], result)
+        self.assertAlmostEqual(mt5.sent[0]["volume"], 0.005)
+        self.assertAlmostEqual(result["closedVolume"], 0.005)
+        self.assertAlmostEqual(result["remainingVolume"], 0.006)
+
+    def test_partial_close_ack_without_position_volume_reduction_is_unconfirmed(self):
+        class AcknowledgementOnlyBroker(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                return SimpleNamespace(retcode=10009, price=request["price"])
+        mt5 = AcknowledgementOnlyBroker()
+        p = SimpleNamespace(symbol="XAUUSD.G", ticket=321, type=0,
+                            volume=0.06, magic=270715)
+        mt5.positions = [p]
+        result = engine.partial_close_position(mt5, p, close_ratio=0.5)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["uncertain"])
+        self.assertEqual(len(mt5.sent), 1)
+
+    def test_partial_fill_reports_actual_closed_not_requested_volume(self):
+        class PartiallyFilledBroker(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                for p in self.positions:
+                    if p.ticket == request["position"]:
+                        p.volume = round(p.volume - 0.01, 8)
+                return SimpleNamespace(retcode=10010, price=request["price"])
+        mt5 = PartiallyFilledBroker()
+        p = SimpleNamespace(symbol="XAUUSD.G", ticket=322, type=0,
+                            volume=0.06, magic=270715)
+        mt5.positions = [p]
+        result = engine.partial_close_position(mt5, p, close_ratio=0.5)
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["partialFill"])
+        self.assertAlmostEqual(result["requestedCloseVolume"], 0.03)
+        self.assertAlmostEqual(result["closedVolume"], 0.01)
+        self.assertAlmostEqual(result["remainingVolume"], 0.05)
+
+    def test_partial_close_does_not_force_broker_minimum_above_requested_ratio(self):
+        mt5 = MockBroker()
+        p = SimpleNamespace(symbol="XAUUSD.G", ticket=323, type=0,
+                            volume=0.02, magic=270715)
+        mt5.positions = [p]
+        result = engine.partial_close_position(mt5, p, close_ratio=0.1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(mt5.sent, [])
 
     def test_operator_be_never_loosens_profitable_sl(self):
         mt5 = MockBroker()
