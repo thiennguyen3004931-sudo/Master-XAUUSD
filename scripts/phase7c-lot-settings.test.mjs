@@ -16,7 +16,14 @@ const projectRoot = path.resolve(scriptsDir, "..");
 
 test("lot settings default safely and require an armed matching executor", () => {
   const root = mkdtempSync(path.join(tmpdir(), "phase7c-lot-settings-"));
+  const previousRuntimeRoot = process.env.PHASE7C_RUNTIME_ROOT;
+  process.env.PHASE7C_RUNTIME_ROOT = root;
   try {
+    // Never let the repository's tracked LIVE/DEMO runtime state change an isolated test.
+    writeFileSync(path.join(root, "phase7c-account-mode.json"), JSON.stringify({
+      version: 1, accountMode: "DEMO", liveExecutionEnabled: false,
+      envFile: null, updatedBy: "isolated-test"
+    }), "utf8");
     const settingsPath = path.join(root, "settings.json");
     const activePath = path.join(root, "active.json");
     const supervisorPidPath = path.join(root, "supervisor.pid");
@@ -70,13 +77,21 @@ test("lot settings default safely and require an armed matching executor", () =>
     assert.equal(active.safety.existingPositionMutation, false);
     assert.equal(active.safety.recoveryLotEscalation, false);
   } finally {
+    if (previousRuntimeRoot === undefined) delete process.env.PHASE7C_RUNTIME_ROOT;
+    else process.env.PHASE7C_RUNTIME_ROOT = previousRuntimeRoot;
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("stale active lot record cannot claim alive without canonical supervisor ownership", () => {
   const root = mkdtempSync(path.join(tmpdir(), "phase7c-active-supervisor-identity-"));
+  const previousRuntimeRoot = process.env.PHASE7C_RUNTIME_ROOT;
+  process.env.PHASE7C_RUNTIME_ROOT = root;
   try {
+    writeFileSync(path.join(root, "phase7c-account-mode.json"), JSON.stringify({
+      version: 1, accountMode: "DEMO", liveExecutionEnabled: false,
+      envFile: null, updatedBy: "isolated-test"
+    }), "utf8");
     const settingsPath = path.join(root, "settings.json");
     const activePath = path.join(root, "active.json");
     const supervisorPidPath = path.join(root, "supervisor.pid");
@@ -118,7 +133,17 @@ test("stale active lot record cannot claim alive without canonical supervisor ow
     const owned = service.get();
     assert.equal(owned.activeAlive, true);
     assert.equal(owned.restartRequired, false);
+    // A changed broker account context must require re-arming, even with the same PID.
+    writeFileSync(path.join(root, "phase7c-account-mode.json"), JSON.stringify({
+      version: 1, accountMode: "LIVE", liveExecutionEnabled: true,
+      envFile: null, updatedBy: "isolated-negative-test"
+    }), "utf8");
+    const switched = service.get();
+    assert.equal(switched.restartRequired, true);
+    assert.equal(switched.safety.demoOnly, false);
   } finally {
+    if (previousRuntimeRoot === undefined) delete process.env.PHASE7C_RUNTIME_ROOT;
+    else process.env.PHASE7C_RUNTIME_ROOT = previousRuntimeRoot;
     rmSync(root, { recursive: true, force: true });
   }
 });
