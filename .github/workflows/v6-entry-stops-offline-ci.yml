@@ -6,6 +6,7 @@ on:
       - scripts/mt5-direct-probe.py
       - scripts/xauusd-standalone-server.mjs
       - tests/test_v6_trade_rules.py
+      - tests/test_v6_mt5_execution.py
       - .github/workflows/v6-entry-stops-offline-ci.yml
   workflow_dispatch:
 jobs:
@@ -20,8 +21,8 @@ jobs:
         with:
           node-version: '24'
       - name: Compile direct-MT5 module and pure rules (no terminal connection)
-        run: python -m py_compile scripts/xauusd_v6_trade_rules.py scripts/mt5-direct-probe.py tests/test_v6_trade_rules.py
+        run: python -m py_compile scripts/xauusd_v6_trade_rules.py scripts/mt5-direct-probe.py tests/test_v6_trade_rules.py tests/test_v6_mt5_execution.py
       - name: Run offline strategy/SL/trailing tests
-        run: python -m unittest discover -s tests -p 'test_v6_trade_rules.py' -v
+        run: python -m unittest discover -s tests -p 'test_v6_*.py' -v
       - name: Check V6 standalone Node server syntax
         run: node --check scripts/xauusd-standalone-server.mjs
