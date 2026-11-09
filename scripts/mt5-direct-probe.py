@@ -14,7 +14,7 @@ import json
 import time
 import subprocess
 from pathlib import Path
-from math import isfinite
+from math import isfinite, floor
 from xauusd_v6_trade_rules import evaluate_entry, structural_stop, trail_stop, peak_profit_stop, closed
 
 def ensure_mt5_installed():
@@ -664,7 +664,12 @@ def manage_trend_and_manual_positions(mt5, active_symbol, pos_list, candles_m5, 
 
 def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V6"):
     side = str(order_cfg.get("side") or "BUY").upper()
-    volume = round(float(order_cfg.get("volume") or 0.01), 2)
+    try:
+        volume = float(order_cfg.get("volume") or 0.01)
+    except (TypeError, ValueError):
+        return {"ok": False, "message": "Invalid requested volume"}
+    if not isfinite(volume) or volume <= 0:
+        return {"ok": False, "message": "Nonpositive or non-finite requested volume"}
     sl_points_price = float(order_cfg.get("slDistance") or 5.0)
     tp_points_price = float(order_cfg.get("tpDistance") or 12.0)
 
@@ -770,8 +775,12 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
     done_codes = {
         int(getattr(mt5, "TRADE_RETCODE_DONE", 10009)),
         int(getattr(mt5, "TRADE_RETCODE_DONE_PARTIAL", 10010)),
-        int(getattr(mt5, "TRADE_RETCODE_PLACED", 10008)),
     }
+    if retcode == int(getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
+        return {
+            "ok": False, "pending": True, "retcode": retcode,
+            "message": "Broker accepted the request but market fill was not confirmed; do not treat as opened"
+        }
     if retcode in done_codes:
         actual_fill = float(getattr(res, "price", price) or price)
         sl_dist_actual = round(abs(actual_fill - sl), 2) if sl > 0 else 0.0
@@ -950,9 +959,17 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
     base_vol = float(getattr(base_pos, "volume", 0.02))
     mult = float(dca_cfg.get("lotMultiplier") or 0.5)
     next_layer_num = current_dca_layers + 1
-    dca_vol = round(base_vol * (mult ** next_layer_num), 2)
-    if dca_vol <= 0:
-        return {"eligible": False, "executed": False, "reason": "Next DCA volume below tradable step; skip layer"}
+    broker_info = mt5.symbol_info(active_symbol)
+    if broker_info is None:
+        return {"eligible": False, "executed": False, "reason": "Broker symbol specs unavailable for DCA"}
+    step = float(getattr(broker_info, "volume_step", 0.01) or 0.01)
+    min_vol = float(getattr(broker_info, "volume_min", 0.01) or 0.01)
+    desired_dca_vol = base_vol * (mult ** next_layer_num)
+    # Round DOWN to broker volume step; never increase risk to force a small layer through.
+    dca_vol = round(floor((desired_dca_vol + 1e-9) / step) * step, 8)
+    if dca_vol < min_vol or dca_vol <= 0:
+        return {"eligible": False, "executed": False, "reason": "Next DCA volume below broker minimum; skip layer"}
+
 
     # Use the freshly confirmed entry-plan stop; never replace structure with a fixed 6-8 guess.
     dca_sl = float(live_analysis.get("sl") or 0)
