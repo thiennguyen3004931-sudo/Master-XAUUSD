@@ -31,18 +31,9 @@ const DIRECT_PROBE_SCRIPT = path.join(ROOT_DIR, "scripts", "mt5-direct-probe.py"
 
 fs.mkdirSync(RUNTIME_DIR, { recursive: true });
 
-function freeStalePortsOnWindows() {
-  if (process.platform !== "win32") return;
-  const myPid = process.pid;
-  try {
-    const cmd = `powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort ${WEB_PORT},${API_PORT} -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -ne ${myPid} } | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }"`;
-    execSync(cmd, { stdio: "ignore", timeout: 5000 });
-  } catch {
-    // ignore
-  }
-}
-
-freeStalePortsOnWindows();
+// Do not kill unrelated Windows processes to reclaim ports. In particular, a
+// self-hosted CI runner and MT5 must never be disrupted by starting this server.
+// A port conflict is a fatal startup error, not permission to Stop-Process.
 
 // Saved account profiles never automatically re-arm LIVE after a process restart.
 let currentAccountConfig = { ...loadSavedAccountConfig(), liveArmed: false };
@@ -1472,13 +1463,19 @@ const webServer = http.createServer((req, res) => {
   res.end(html);
 });
 
-apiServer.on("error", (err) => {
-  if (err.code !== "EADDRINUSE") console.error("[API Error]", err.message);
-});
+function failOnListenError(label, port, err) {
+  const code = err && typeof err.code === "string" ? err.code : "UNKNOWN";
+  console.error(`[V6_${label}_LISTEN_FAILED] port=${port} code=${code}: ${err?.message || "unknown listen error"}`);
+  if (code === "EADDRINUSE") {
+    console.error("Port already in use: stop the conflicting service manually after verifying its identity. No automatic process termination.");
+  }
+  // Fail closed instead of silently serving only one of the two API/Web ports.
+  // This exits the current V6 process only; it does not terminate other apps.
+  process.exit(1);
+}
 
-webServer.on("error", (err) => {
-  if (err.code !== "EADDRINUSE") console.error("[WEB Error]", err.message);
-});
+apiServer.on("error", (err) => failOnListenError("API", API_PORT, err));
+webServer.on("error", (err) => failOnListenError("WEB", WEB_PORT, err));
 
 apiServer.listen(API_PORT, "0.0.0.0", () => {
   console.log(`XAUUSD_STANDALONE_API=ONLINE|PORT=${API_PORT}`);

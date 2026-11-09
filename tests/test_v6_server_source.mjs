@@ -56,3 +56,11 @@ test("trading switches only accept actual booleans", () => {
     assert.throws(() => parseOptionalBoolean(input, "enabled"), /BOOLEAN_REQUIRED/);
   }
 });
+
+test("server never force-kills other Windows processes to reclaim its ports", () => {
+  assert.doesNotMatch(server, /Stop-Process\s+-Id/);
+  assert.doesNotMatch(server, /freeStalePortsOnWindows\s*\(/);
+  assert.match(server, /V6_\$\{label\}_LISTEN_FAILED/);
+  assert.match(server, /code === "EADDRINUSE"/);
+  assert.match(server, /process\.exit\(1\)/);
+});
