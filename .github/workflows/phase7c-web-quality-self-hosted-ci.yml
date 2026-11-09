@@ -31,7 +31,8 @@ concurrency:
 jobs:
   web-quality:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    # Source/UI checks must not execute PR code on the private MT5 Windows machine.
+    runs-on: windows-latest
     timeout-minutes: 35
     defaults:
       run:

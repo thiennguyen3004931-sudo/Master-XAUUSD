@@ -62,7 +62,8 @@ concurrency:
 
 jobs:
   reversal-entry-gate:
-    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    # Offline reversal contracts are platform-independent; use hosted Linux to avoid Windows path-limit issues.
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
