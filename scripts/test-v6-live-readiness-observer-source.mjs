@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 const workflow = fs.readFileSync('.github/workflows/v6-live-readiness-readonly.yml', 'utf8');
 const broker = fs.readFileSync('scripts/mt5-direct-probe.py', 'utf8');
-const host = workflow.split('  windows-host-observation:\n')[1];
+const host = workflow.split('  windows-host-observation:')[1];
 assert.ok(host, 'host diagnostic job must exist');
 assert.match(workflow, /name: V6 LIVE Readiness Evidence \(read-only; NOT authorization\)/);
 assert.match(workflow, /pull_request:\s*\n\s*branches: \[main\]/);
