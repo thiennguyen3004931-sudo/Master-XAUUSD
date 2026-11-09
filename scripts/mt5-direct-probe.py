@@ -1049,13 +1049,16 @@ def Boolean(val):
     return bool(val)
 
 def close_position_by_ticket(mt5, ticket_id):
-    """Explicit-ticket DEMO close: never claim completion until broker readback is flat."""
-    try:
-        ticket = int(ticket_id)
-        if ticket <= 0:
-            raise ValueError("invalid ticket")
-    except (TypeError, ValueError, OverflowError):
-        return {"ok": False, "closedCount": 0, "message": "Phải chọn chính xác ticket để đóng; không cho phép đóng toàn tài khoản."}
+    """Explicit-ticket gold close only; fail closed on ambiguous tickets and readback."""
+    if (isinstance(ticket_id, bool) or
+            not isinstance(ticket_id, (int, str)) or
+            not str(ticket_id).isascii() or
+            not str(ticket_id).isdecimal() or
+            str(ticket_id).startswith("0")):
+        return {"ok": False, "closedCount": 0, "message": "Phải chọn chính xác ticket nguyên dương để đóng."}
+    ticket = int(ticket_id)
+    if ticket <= 0:
+        return {"ok": False, "closedCount": 0, "message": "Ticket không hợp lệ."}
     try:
         matches = mt5.positions_get(ticket=ticket)
     except Exception:
@@ -1067,6 +1070,8 @@ def close_position_by_ticket(mt5, ticket_id):
         return {"ok": False, "closedCount": 0, "message": f"Vị thế #{ticket} không còn mở."}
 
     symbol = str(pos.symbol)
+    if not symbol.upper().startswith(("XAUUSD", "GOLD")):
+        return {"ok": False, "closedCount": 0, "message": f"Ticket #{ticket} không thuộc mã vàng XAUUSD/GOLD."}
     volume = float(getattr(pos, "volume", 0) or 0)
     info = mt5.symbol_info(symbol)
     tick = mt5.symbol_info_tick(symbol)
@@ -1128,6 +1133,9 @@ def move_sl_to_breakeven(mt5, ticket_id):
     success = 0
     failures = []
     for pos in positions:
+        if not str(getattr(pos, "symbol", "")).upper().startswith(("XAUUSD", "GOLD")):
+            failures.append(f"#{pos.ticket}: non-gold position rejected")
+            continue
         digits = int(getattr(mt5.symbol_info(str(pos.symbol)), "digits", 2))
         buy = int(pos.type) == 0
         entry = float(pos.price_open)

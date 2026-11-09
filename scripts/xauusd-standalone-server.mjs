@@ -1292,12 +1292,19 @@ async function handleApiRequest(req, res) {
 
   if (pathname === "/api/v1/mt5/order" && req.method === "POST") {
     const body = await readJsonBody(req);
+    const requestedSide = typeof body.side === "string" ? body.side.trim().toUpperCase() : "";
+    if (requestedSide !== "BUY" && requestedSide !== "SELL") {
+      sendJson(res, 400, {
+        orderResult: { ok: false, message: "Phải chọn rõ BUY hoặc SELL; không tự đặt lệnh BUY mặc định." },
+      });
+      return;
+    }
     const effectiveSlMode = String(body.slMode || trendManagementConfig.slMode || "STRUCTURAL_6_8");
     const probe = await invokeMt5PythonEngine(
       {
         action: "order",
         manualOrder: true,
-        side: body.side || "BUY",
+        side: requestedSide,
         volume: Number(body.volume || autoBotState.volume || 0.05),
         slDistance: Number(body.slDistance ?? autoBotState.slDistance ?? 6.8),
         tpDistance: Number(body.tpDistance ?? autoBotState.tpDistance ?? 16.0),

@@ -30,6 +30,8 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_v6_*.py' -v
       - name: Check V6 standalone Node server syntax
         run: node --check scripts/xauusd-standalone-server.mjs
+      - name: Check source-only Web trade mutation guards
+        run: node --test tests/test_v6_server_source.mjs
 
   v6-windows-hosted:
     name: V6 Windows no-terminal safety
@@ -52,6 +54,9 @@ jobs:
       - name: Verify standalone server syntax
         shell: pwsh
         run: node --check scripts/xauusd-standalone-server.mjs
+      - name: Verify Web mutation guards without a broker
+        shell: pwsh
+        run: node --test tests/test_v6_server_source.mjs
       - name: Validate read-only Windows self-hosted runner diagnostic script
         shell: pwsh
         run: pwsh -NoProfile -File .\scripts\ops\check-v6-actions-runner-readonly.ps1

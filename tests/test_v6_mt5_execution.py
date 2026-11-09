@@ -286,11 +286,31 @@ class ExecutionRiskTest(unittest.TestCase):
         mt5.positions = [SimpleNamespace(
             symbol="EURUSD", ticket=400, type=0, volume=0.03, magic=111
         )]
-        for ticket in (None, 0, "", "invalid"):
+        for ticket in (None, 0, "", "invalid", True, False, 1.7, "1.7", "01"):
             result = engine.close_position_by_ticket(mt5, ticket)
             self.assertFalse(result["ok"])
         self.assertEqual(mt5.sent, [])
         self.assertEqual(len(mt5.positions), 1)
+
+    def test_close_rejects_non_gold_ticket_even_when_explicit(self):
+        mt5 = MockBroker()
+        mt5.positions = [SimpleNamespace(
+            symbol="EURUSD", ticket=410, type=0, volume=0.03, magic=270715
+        )]
+        result = engine.close_position_by_ticket(mt5, 410)
+        self.assertFalse(result["ok"])
+        self.assertEqual(mt5.sent, [])
+        self.assertEqual(len(mt5.positions), 1)
+
+    def test_operator_breakeven_rejects_explicit_non_gold_ticket(self):
+        mt5 = MockBroker()
+        mt5.positions = [SimpleNamespace(
+            symbol="EURUSD", ticket=411, type=0, price_open=1.1,
+            price_current=1.2, sl=1.0, tp=1.4, volume=0.01, magic=270715
+        )]
+        result = engine.move_sl_to_breakeven(mt5, 411)
+        self.assertFalse(result["ok"])
+        self.assertEqual(mt5.sent, [])
 
     def test_close_explicit_ticket_requires_broker_flat_readback(self):
         mt5 = MockBroker()
