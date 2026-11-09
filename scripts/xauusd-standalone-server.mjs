@@ -271,6 +271,8 @@ const BOT_MODE_NAMES = {
   SEMI_AUTO_TREND: "2. Bán Tự Động (Bạn vào lệnh tay — Bot tự nuôi Trend V6.3)",
   BOT_1_TREND: "3. Chỉ đánh Sóng Trend & Quét Thanh Khoản (Gồng cản H1/H4)",
   BOT_2_SIDEWAY: "4. Chỉ đánh Sideway Biên Cung/Cầu (Khóa DCA Dương)",
+  BOT_3_SWEEP: "5. Liquidity Sweep + M5 confirmation (single entry)",
+  BOT_4_SWEEP_DCA_PLUS: "6. Liquidity Sweep + optional positive DCA",
 };
 
 function getActiveBotDisplayName() {
@@ -1006,7 +1008,7 @@ function buildStatusPayload(probe) {
     health: {
       status: isConnected ? "ok" : "waiting_mt5",
       connected: isConnected,
-      tradingEnabled: true,
+      tradingEnabled: isConnected && probe?.accountMode === "DEMO",
       terminalTradeAllowed: probe?.terminalTradeAllowed ?? false,
       expertTradeAllowed: probe?.expertTradeAllowed ?? false,
       accountLogin: isConnected ? probe.accountLogin : Number(currentAccountConfig.login || 5201362),
@@ -1036,6 +1038,7 @@ function buildStatusPayload(probe) {
           }
         : null,
     liveAnalysis: probe?.liveAnalysis || null,
+    entrySignal: probe?.entrySignal || { allowed: false, side: "WAIT", reason: "MT5 not connected" },
     candles: isConnected && Array.isArray(probe.candles) ? probe.candles : [],
     positions: isConnected && Array.isArray(probe.openPositions) ? probe.openPositions : [],
     recentTrades: isConnected && Array.isArray(probe.recentTrades) ? probe.recentTrades : [],
@@ -1055,7 +1058,7 @@ async function handleApiRequest(req, res) {
 
   const parsedUrl = new URL(req.url || "/", `http://127.0.0.1:${API_PORT}`);
   const pathname = parsedUrl.pathname;
-  if (pathname.startsWith("/api/v1/mt5/") && !controlAuthorized(req)) {
+  if ((pathname.startsWith("/api/v1/") || pathname === "/health") && !controlAuthorized(req)) {
     sendJson(res, CONTROL_TOKEN ? 401 : 503, {
       error: CONTROL_TOKEN ? "V6_CONTROL_TOKEN_INVALID" : "V6_CONTROL_TOKEN_NOT_CONFIGURED",
       message: "ZIQ_V6_CONTROL_TOKEN and x-v6-control-token are required for all MT5 API access"
