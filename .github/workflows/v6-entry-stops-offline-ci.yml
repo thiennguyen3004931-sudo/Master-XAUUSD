@@ -7,8 +7,12 @@ on:
       - scripts/xauusd-standalone-server.mjs
       - tests/test_v6_trade_rules.py
       - tests/test_v6_mt5_execution.py
+      - scripts/ops/check-v6-actions-runner-readonly.ps1
+      - docs/V6-GITHUB-ACTIONS-RUNNER-RECOVERY.md
       - .github/workflows/v6-entry-stops-offline-ci.yml
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   v6-offline:
     runs-on: ubuntu-latest
@@ -48,3 +52,6 @@ jobs:
       - name: Verify standalone server syntax
         shell: pwsh
         run: node --check scripts/xauusd-standalone-server.mjs
+      - name: Validate read-only Windows self-hosted runner diagnostic script
+        shell: pwsh
+        run: pwsh -NoProfile -File .\scripts\ops\check-v6-actions-runner-readonly.ps1
