@@ -132,6 +132,37 @@ class ExecutionRiskTest(unittest.TestCase):
         })
         self.assertFalse(result["ok"])
         self.assertTrue(result.get("pending"))
+        self.assertTrue(result.get("submitted"))
+        self.assertTrue(result.get("uncertain"))
+        self.assertEqual(len(mt5.sent), 1)
+
+    def test_partial_entry_fill_must_not_claim_full_lot_or_success(self):
+        class PartialEntryBroker(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                return SimpleNamespace(retcode=10010, volume=0.01, price=request["price"], order=123)
+        mt5 = PartialEntryBroker()
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "BUY", "volume": 0.02,
+            "slDistance": 6.8, "tpDistance": 16,
+        })
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["partialFill"])
+        self.assertTrue(result["submitted"])
+        self.assertTrue(result["uncertain"])
+        self.assertEqual(result["requestedVolume"], 0.02)
+        self.assertNotIn("volume", result)
+        self.assertEqual(len(mt5.sent), 1)
+
+    def test_full_entry_fill_can_succeed_without_partial_warning(self):
+        mt5 = MockBroker()
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "SELL", "volume": 0.02,
+            "slDistance": 6.8, "tpDistance": 16,
+        })
+        self.assertTrue(result["ok"])
+        self.assertFalse(result.get("uncertain", False))
+        self.assertEqual(len(mt5.sent), 1)
 
     def test_order_without_explicit_side_must_not_default_to_buy(self):
         mt5 = MockBroker()

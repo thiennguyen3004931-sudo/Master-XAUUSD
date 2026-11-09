@@ -720,6 +720,16 @@ setInterval(async () => {
           },
           true
         );
+        if (dcaSnap?.actionResult?.submitted && !dcaSnap?.actionResult?.ok) {
+          // A pending or partially filled DCA may already exist at MT5.
+          // Disable automatic retries until an operator reconciles the broker.
+          positiveDcaConfig.enabled = false;
+          positiveDcaConfig.lastDcaTime = Date.now();
+          positiveDcaConfig.lastStatusText = "DCA TẠM KHÓA: broker đã nhận lệnh nhưng khớp chưa xác minh. Kiểm tra MT5 trước khi bật lại.";
+          autoBotState.lastLog = positiveDcaConfig.lastStatusText;
+          recordSyncAction("AUTO_BOT", positiveDcaConfig.lastStatusText);
+          return;
+        }
         if (dcaSnap?.actionResult?.ok) {
           positiveDcaConfig.lastDcaTime = Date.now();
           positiveDcaConfig.lastStatusText = `[DCA DƯƠNG ĐÃ NHỒI LỆNH] ${dcaSnap.actionResult.message}`;
@@ -774,6 +784,12 @@ setInterval(async () => {
         },
         true
       );
+      if (orderSnap?.actionResult?.submitted && !orderSnap?.actionResult?.ok) {
+        autoBotState.enabled = false;
+        autoBotState.lastLog = "AUTO BOT TẠM KHÓA: broker đã nhận lệnh nhưng chưa xác minh khớp đầy đủ. Kiểm tra MT5 trước khi bật lại.";
+        recordSyncAction("AUTO_BOT", autoBotState.lastLog);
+        return;
+      }
       if (orderSnap?.actionResult?.ok) {
         autoBotState.lastLog = `[AUTO BOT KHỚP LỆNH GỐC] ${orderSnap.actionResult.message}`;
         recordSyncAction("AUTO_BOT", autoBotState.lastLog);
@@ -1159,6 +1175,14 @@ async function handleApiRequest(req, res) {
       },
       true
     );
+    if (executeNow === true && probe?.actionResult?.submitted && !probe?.actionResult?.ok) {
+      // Manual DCA may have entered a pending/partial state. Never leave
+      // automatic DCA enabled when its broker exposure is uncertain.
+      positiveDcaConfig.enabled = false;
+      positiveDcaConfig.lastDcaTime = Date.now();
+      positiveDcaConfig.lastStatusText = "DCA TẠM KHÓA: cần đối soát vị thế MT5 trước khi bật lại.";
+      recordSyncAction("WEB", positiveDcaConfig.lastStatusText);
+    }
     const payload = buildStatusPayload(probe);
     sendJson(res, 200, {
       ...payload,

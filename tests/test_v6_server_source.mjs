@@ -64,3 +64,21 @@ test("server never force-kills other Windows processes to reclaim its ports", ()
   assert.match(server, /code === "EADDRINUSE"/);
   assert.match(server, /process\.exit\(1\)/);
 });
+
+test("pending or partially filled V6 entries disable automatic re-submission", () => {
+  const loop = server.slice(
+    server.indexOf('if (openPos.length > 0 && positiveDcaConfig.enabled)'),
+    server.indexOf('// Đã tắt tự động gửi kịch bản 15 phút'),
+  );
+  assert.ok(loop.length > 0);
+  assert.match(loop, /dcaSnap\?\.actionResult\?\.submitted/);
+  assert.match(loop, /positiveDcaConfig\.enabled = false/);
+  assert.match(loop, /orderSnap\?\.actionResult\?\.submitted/);
+  assert.match(loop, /autoBotState\.enabled = false/);
+  const manualDca = server.slice(
+    server.indexOf('if (pathname === "/api/v1/mt5/positive-dca"'),
+    server.indexOf('if (pathname === "/api/v1/mt5/approve-proposal"'),
+  );
+  assert.match(manualDca, /executeNow === true && probe\?\.actionResult\?\.submitted/);
+  assert.match(manualDca, /positiveDcaConfig\.enabled = false/);
+});

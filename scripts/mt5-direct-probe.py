@@ -821,16 +821,24 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
         return {"ok": False, "message": f"order_send trả về None: {mt5.last_error()}"}
 
     retcode = int(getattr(res, "retcode", -1))
-    done_codes = {
-        int(getattr(mt5, "TRADE_RETCODE_DONE", 10009)),
-        int(getattr(mt5, "TRADE_RETCODE_DONE_PARTIAL", 10010)),
-    }
+    done_code = int(getattr(mt5, "TRADE_RETCODE_DONE", 10009))
+    partial_code = int(getattr(mt5, "TRADE_RETCODE_DONE_PARTIAL", 10010))
     if retcode == int(getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):
         return {
-            "ok": False, "pending": True, "retcode": retcode,
-            "message": "Broker accepted the request but market fill was not confirmed; do not treat as opened"
+            "ok": False, "submitted": True, "pending": True,
+            "uncertain": True, "retcode": retcode,
+            "message": "Broker placed request but fill is unconfirmed; stop automatic retries and reconcile broker orders"
         }
-    if retcode in done_codes:
+    if retcode == partial_code:
+        # An order that filled only part of the requested lot must NEVER be
+        # reported as if the whole volume was opened. Do not auto-resubmit.
+        return {
+            "ok": False, "submitted": True, "partialFill": True,
+            "uncertain": True, "retcode": retcode,
+            "requestedVolume": volume,
+            "message": "Broker reported a partial entry fill; halt automatic retries and verify actual lot/SL/TP"
+        }
+    if retcode == done_code:
         actual_fill = float(getattr(res, "price", price) or price)
         sl_dist_actual = round(abs(actual_fill - sl), 2) if sl > 0 else 0.0
         tp_dist_actual = round(abs(tp - actual_fill), 2) if tp > 0 else 0.0
@@ -1050,6 +1058,8 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
     return {
         "eligible": True,
         "executed": Boolean(order_res.get("ok")),
+        "submitted": Boolean(order_res.get("submitted")),
+        "uncertain": Boolean(order_res.get("uncertain")),
         "currentLayers": next_layer_num if order_res.get("ok") else current_dca_layers,
         "orderResult": order_res,
         "reason": f"[{bot_reason}] " + order_res.get("message", "Đã thực thi DCA Dương.")
@@ -1316,6 +1326,8 @@ def main():
         )
         action_result = {
             "ok": bool(dca_res.get("executed")),
+            "submitted": bool(dca_res.get("submitted")),
+            "uncertain": bool(dca_res.get("uncertain")),
             "message": dca_res.get("reason", ""),
             "dcaStatus": dca_res,
         }
