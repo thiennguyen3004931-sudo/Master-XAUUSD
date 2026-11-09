@@ -1,9 +1,9 @@
-name: Private Master Core Self-Hosted CI
+name: Legacy Private Master Core CI (manual only)
 
+# The public Master-XAUUSD V6 repository is independent of the private-core M2 bootstrap.
+# Do not run the legacy private provenance check automatically on public V6 PR code.
+# Manual invocations still run the original fail-closed M2/M3 verifier and report its real result.
 on:
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 concurrency:
