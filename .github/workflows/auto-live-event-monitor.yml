@@ -1,26 +1,9 @@
-name: AUTO LIVE Read-Only Event Monitor
+name: Legacy AUTO LIVE Monitor (private-core manual only)
 
+# Legacy monitor targets a separate private-core repository and Issue #28 there.
+# On independent public Master-XAUUSD V6, do not schedule production observations
+# or use the local Windows trading-machine runner for this legacy workflow.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'scripts/ops/auto-live-event-monitor.ps1'
-      - 'scripts/ops/auto-live-offline-lease.ps1'
-      - 'scripts/ops/set-auto-live-monitor-offline-lease.ps1'
-      - 'scripts/test-auto-live-offline-lease.ps1'
-      - 'scripts/test-auto-live-event-monitor-source.ps1'
-      - '.github/workflows/auto-live-event-monitor.yml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'scripts/ops/auto-live-event-monitor.ps1'
-      - 'scripts/ops/auto-live-offline-lease.ps1'
-      - 'scripts/ops/set-auto-live-monitor-offline-lease.ps1'
-      - 'scripts/test-auto-live-offline-lease.ps1'
-      - 'scripts/test-auto-live-event-monitor-source.ps1'
-      - '.github/workflows/auto-live-event-monitor.yml'
   workflow_dispatch:
     inputs:
       notify:
@@ -28,9 +11,6 @@ on:
         required: true
         default: false
         type: boolean
-  schedule:
-    - cron: '2-52/10 * * * *'
-    - cron: '7-57/10 * * * *'
 
 permissions:
   contents: read
@@ -43,6 +23,7 @@ concurrency:
 jobs:
   monitor:
     name: auto-live-readonly-monitor
+    if: github.repository == 'thiennguyen3004931-sudo/xauusd-ai-master-core'
     runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
     timeout-minutes: 10
 
@@ -70,9 +51,7 @@ jobs:
           MONITOR_ISSUE_NUMBER: '28'
         run: |
           $notify = $false
-          if ('${{ github.event_name }}' -eq 'schedule') {
-            $notify = $true
-          } elseif ('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.notify }}' -eq 'true') {
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.notify }}' -eq 'true') {
             $notify = $true
           }
 
