@@ -458,17 +458,45 @@ def partial_close_position(mt5, pos, close_ratio=0.5, comment_tag="PARTIAL_TP_H1
         }
     return {"ok": False, "message": f"Chưa thể chốt 1 phần lệnh #{pos.ticket}."}
 
+def _read_position_by_ticket(mt5, ticket_id):
+    try:
+        positions = mt5.positions_get(ticket=int(ticket_id)) or []
+        return next((p for p in positions if int(getattr(p, "ticket", 0)) == int(ticket_id)), None)
+    except Exception:
+        return None
+
+
 def modify_position_sl_tp(mt5, pos, new_sl, new_tp, reason_label=""):
+    """Never loosen a stop and never report broker confirmation without a readback."""
     sym = str(pos.symbol)
     sym_info = mt5.symbol_info(sym)
-    digits = int(getattr(sym_info, "digits", 2)) if sym_info else 2
-    sl_val = round(float(new_sl), digits) if new_sl and new_sl > 0 else float(getattr(pos, "sl", 0.0) or 0.0)
-    tp_val = round(float(new_tp), digits) if new_tp is not None else float(getattr(pos, "tp", 0.0) or 0.0)
+    tick = mt5.symbol_info_tick(sym)
+    if sym_info is None or tick is None:
+        return {"ok": False, "changed": False, "message": "Cannot verify broker symbol/quote"}
+    digits = int(getattr(sym_info, "digits", 2))
+    point = float(getattr(sym_info, "point", 0.01) or 0.01)
     cur_sl = round(float(getattr(pos, "sl", 0.0) or 0.0), digits)
     cur_tp = round(float(getattr(pos, "tp", 0.0) or 0.0), digits)
-    if abs(sl_val - cur_sl) < 0.02 and abs(tp_val - cur_tp) < 0.02:
-        return {"ok": False, "changed": False, "message": "SL/TP không thay đổi."}
+    sl_val = round(float(new_sl), digits) if new_sl is not None else cur_sl
+    tp_val = round(float(new_tp), digits) if new_tp is not None else cur_tp
+    buy = int(pos.type) == 0
 
+    if sl_val <= 0:
+        return {"ok": False, "changed": False, "message": "SL protection required"}
+    if cur_sl > 0 and ((buy and sl_val < cur_sl - point / 2) or
+                       (not buy and sl_val > cur_sl + point / 2)):
+        return {"ok": False, "changed": False, "message": "Rejected: monotonic SL must not worsen risk"}
+    if abs(sl_val - cur_sl) < point / 2 and abs(tp_val - cur_tp) < point / 2:
+        return {"ok": True, "changed": False, "message": "SL/TP already at requested price"}
+
+    freeze = float(getattr(sym_info, "trade_freeze_level", 0) or 0) * point
+    stops = float(getattr(sym_info, "trade_stops_level", 0) or 0) * point
+    min_gap = max(point, freeze, stops)
+    executable_price = float(tick.bid if buy else tick.ask)
+    if (buy and sl_val >= executable_price - min_gap) or (
+        not buy and sl_val <= executable_price + min_gap
+    ):
+        return {"ok": False, "changed": False, "message": "Broker freeze/stops gap prevents protective SL move"}
     req = {
         "action": int(getattr(mt5, "TRADE_ACTION_SLTP", 6)),
         "symbol": sym,
@@ -476,17 +504,21 @@ def modify_position_sl_tp(mt5, pos, new_sl, new_tp, reason_label=""):
         "sl": sl_val,
         "tp": tp_val,
     }
-    res = mt5.order_send(req)
-    if res and int(getattr(res, "retcode", -1)) in (10009, 10025):
-        return {
-            "ok": True,
-            "changed": True,
-            "ticket": int(pos.ticket),
-            "sl": sl_val,
-            "tp": tp_val,
-            "message": f"Lệnh #{pos.ticket}: {reason_label} (SL -> {sl_val}, TP -> {tp_val})"
-        }
-    return {"ok": False, "changed": False, "message": f"Chưa thể cập nhật SL/TP lệnh #{pos.ticket}."}
+    result = mt5.order_send(req)
+    if result is None or int(getattr(result, "retcode", -1)) not in (10009, 10025):
+        return {"ok": False, "changed": False, "message": f"Broker rejected SLTP for #{pos.ticket}"}
+    latest = _read_position_by_ticket(mt5, pos.ticket)
+    if latest is None or abs(float(getattr(latest, "sl", 0.0) or 0.0) - sl_val) > point:
+        return {"ok": False, "changed": False, "message": f"SLTP unconfirmed on ticket #{pos.ticket}"}
+    # Broker may modify TP asynchronously; require positive acknowledgment if TP changes.
+    if abs(tp_val - cur_tp) > point and abs(float(getattr(latest, "tp", 0.0) or 0.0) - tp_val) > point:
+        return {"ok": False, "changed": False, "message": f"TP update unconfirmed on ticket #{pos.ticket}"}
+    return {
+        "ok": True, "changed": True, "ticket": int(pos.ticket),
+        "sl": sl_val, "tp": tp_val,
+        "message": f"Broker confirmed #{pos.ticket}: {reason_label} (SL {sl_val}, TP {tp_val})"
+    }
+
 
 MANAGER_STATE_FILE = Path(__file__).resolve().parent.parent / ".runtime" / "v6-position-manager-state.json"
 
@@ -765,7 +797,7 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
 def check_bot_signal_for_mode(signal, strategy_mode, required_side, min_conf=80):
     """DCA MUST use the same live closed-bar strategy gate as an original order."""
     mode = str(strategy_mode or "AUTO_REGIME").upper()
-    if mode == "BOT_2_SIDEWAY":
+    if mode == "BOT_2_SIDEWAY" or str((signal or {}).get("strategyMode") or "").upper() == "BOT_2_SIDEWAY":
         return False, "No positive DCA in sideway mode"
     if not signal or not signal.get("allowed"):
         return False, "No eligible completed-bar setup for DCA"
@@ -1092,13 +1124,17 @@ def main():
     dca_settings["minConfidence"] = cfg.get("minConfidence", 85)
 
     action_result = None
-    real_account = int(getattr(account, "trade_mode", -1)) == int(getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2))
+    trade_mode = int(getattr(account, "trade_mode", -1))
+    is_demo_account = trade_mode == int(getattr(mt5, "ACCOUNT_TRADE_MODE_DEMO", 0))
+    real_account = trade_mode == int(getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2))
     live_permission = (
         cfg.get("liveAuthorized") is True
         and os.environ.get("XAUUSD_V6_BROKER_LIVE_ATTESTED") == "I_ACKNOWLEDGE_RISK"
     )
-    if action in ("order", "dca_plus", "manage_positions") and real_account and not live_permission:
-        action_result = {"ok": False, "message": "LIVE order rejected: V6 strategy requires explicit broker acceptance and authorization"}
+    if action in ("order", "dca_plus", "manage_positions") and not (
+        is_demo_account or (real_account and live_permission)
+    ):
+        action_result = {"ok": False, "message": "Broker mutation blocked: verified DEMO account required; REAL authorization not granted"}
     elif action == "order":
         manual = cfg.get("manualOrder") is True
         request_side = str(cfg.get("side", "WAIT")).upper()
@@ -1168,7 +1204,7 @@ def main():
 
     # Tự động quản lý lệnh theo cơ chế Bot Trend (SL 6-8 giá -> Đạt 1R kéo BE -> Trailing M5 -> Khóa đỉnh M15 cách 10 giá -> Chốt 1 phần tại cản H1/H4) cho cả lệnh Bot và lệnh vào tay (Bán tự động)
     trend_management_status = None
-    if action == "manage_positions" and not (real_account and not live_permission):
+    if action == "manage_positions" and (is_demo_account or (real_account and live_permission)):
         trend_management_status = manage_trend_and_manual_positions(
             mt5,
             active_symbol,
