@@ -24,7 +24,7 @@ concurrency:
 jobs:
   canonical-linux:
     name: canonical-pr-linux
-    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -128,7 +128,7 @@ jobs:
 
   canonical-windows:
     name: canonical-pr-windows
-    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - name: Checkout

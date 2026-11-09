@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Alert,
   Box,
@@ -15,7 +15,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableContainer,
   TableHead,
   TableRow,
   Tabs,
@@ -178,7 +177,7 @@ export function Phase7CBacktestEvaluatorPage() {
   const [data, setData] = useState<EvaluatorResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function runEvaluator() {
+  const runEvaluator = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch("/api/v1/phase7c/backtest-evaluator", {
@@ -200,11 +199,14 @@ export function Phase7CBacktestEvaluatorPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [days, strategyMode, sizingMode, startingBalance, upgrades]);
 
   useEffect(() => {
-    void runEvaluator();
-  }, [days, strategyMode, sizingMode]);
+    // Defer state updates out of the effect body. The button may still run an
+    // immediate evaluation; changing any input refreshes the read-only preview.
+    const timer = window.setTimeout(() => { void runEvaluator(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [runEvaluator]);
 
   function toggleUpgrade(key: UpgradeKey) {
     setUpgrades((prev) => {
