@@ -97,6 +97,35 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(len(mt5.sent), 0)
 
+    def test_lot_not_rounded_up_to_broker_step(self):
+        mt5 = MockBroker()
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "BUY", "volume": 0.025, "slDistance": 6.8, "tpDistance": 16
+        })
+        self.assertFalse(result["ok"])
+        self.assertEqual(mt5.sent, [])
+
+    def test_unfavorable_reward_risk_rejected_at_actual_quote(self):
+        mt5 = MockBroker()
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "BUY", "volume": 0.01, "slDistance": 6.8, "tpDistance": 5,
+            "minRewardRisk": 1.6
+        })
+        self.assertFalse(result["ok"])
+        self.assertEqual(mt5.sent, [])
+
+    def test_broker_pending_order_not_claimed_as_fill(self):
+        class PendingBroker(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                return SimpleNamespace(retcode=10008)
+        mt5 = PendingBroker()
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "BUY", "volume": 0.01, "slDistance": 6.8, "tpDistance": 16
+        })
+        self.assertFalse(result["ok"])
+        self.assertTrue(result.get("pending"))
+
     def test_unprotected_existing_position_blocks_new_risk(self):
         mt5 = MockBroker()
         mt5.positions = [SimpleNamespace(sl=0, type=0, symbol="XAUUSD.G", volume=0.01, price_open=4000)]
