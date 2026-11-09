@@ -927,7 +927,7 @@ function sendJson(res, status, payload) {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key",
+    "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token",
     "cache-control": "no-store",
   });
   res.end(body);
@@ -1047,7 +1047,7 @@ async function handleApiRequest(req, res) {
     res.writeHead(204, {
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "GET, POST, OPTIONS",
-      "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key",
+      "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token",
     });
     res.end();
     return;
@@ -1055,6 +1055,13 @@ async function handleApiRequest(req, res) {
 
   const parsedUrl = new URL(req.url || "/", `http://127.0.0.1:${API_PORT}`);
   const pathname = parsedUrl.pathname;
+  if (pathname.startsWith("/api/v1/mt5/") && !controlAuthorized(req)) {
+    sendJson(res, CONTROL_TOKEN ? 401 : 503, {
+      error: CONTROL_TOKEN ? "V6_CONTROL_TOKEN_INVALID" : "V6_CONTROL_TOKEN_NOT_CONFIGURED",
+      message: "ZIQ_V6_CONTROL_TOKEN and x-v6-control-token are required for all MT5 API access"
+    });
+    return;
+  }
 
   if (pathname === "/api/v1/mt5/connect-account" && req.method === "POST") {
     const body = await readJsonBody(req);
@@ -1064,7 +1071,8 @@ async function handleApiRequest(req, res) {
     const server = String(body.server || currentAccountConfig.server || "DBG Market Limited").trim();
     const brokerSymbol = String(body.brokerSymbol || currentAccountConfig.brokerSymbol || "XAUUSD.G").trim();
     const terminalPath = String(body.terminalPath ?? "").trim();
-    const liveArmed = body.liveArmed !== undefined ? Boolean(body.liveArmed) : true;
+    // Switching accounts never arms LIVE; only an independent verified action may.
+    const liveArmed = false;
 
     currentAccountConfig = {
       ...currentAccountConfig,
@@ -1250,6 +1258,7 @@ async function handleApiRequest(req, res) {
     const probe = await invokeMt5PythonEngine(
       {
         action: "order",
+        manualOrder: true,
         side: body.side || "BUY",
         volume: Number(body.volume || autoBotState.volume || 0.05),
         slDistance: Number(body.slDistance ?? autoBotState.slDistance ?? 6.8),
@@ -1257,6 +1266,8 @@ async function handleApiRequest(req, res) {
         slMode: effectiveSlMode,
         useStructuralSl68: effectiveSlMode === "STRUCTURAL_6_8",
         botName: `${getActiveBotDisplayName()} (Kích hoạt từ ${body.sourceDevice || "Web"})`,
+        maxRiskPercent: 1.0,
+        maxPortfolioRiskPercent: 1.5,
         entryReason: body.entryReason || `Lệnh ${body.side} theo cấu trúc ${effectiveSlMode === "STRUCTURAL_6_8" ? "SL 6–8 giá & TP tại vùng cản H1/H4" : "SL/TP tùy chọn"}`,
       },
       true
