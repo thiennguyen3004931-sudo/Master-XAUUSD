@@ -43,7 +43,22 @@ function freeStalePortsOnWindows() {
 
 freeStalePortsOnWindows();
 
-let currentAccountConfig = loadSavedAccountConfig();
+// Saved account profiles never automatically re-arm LIVE after a process restart.
+let currentAccountConfig = { ...loadSavedAccountConfig(), liveArmed: false };
+const CONTROL_TOKEN = String(process.env.ZIQ_V6_CONTROL_TOKEN || "").trim();
+const ENTRY_DEDUPE_FILE = path.join(RUNTIME_DIR, "v6-entry-dedupe.json");
+let previousEntryKey = "";
+try { previousEntryKey = JSON.parse(fs.readFileSync(ENTRY_DEDUPE_FILE, "utf8")).key || ""; } catch {}
+function persistEntryKey(key) {
+  previousEntryKey = key;
+  fs.writeFileSync(ENTRY_DEDUPE_FILE, JSON.stringify({ key, timestamp: Date.now() }), "utf8");
+}
+function controlAuthorized(req) {
+  if (!CONTROL_TOKEN) return false;
+  const supplied = Buffer.from(String(req.headers["x-v6-control-token"] || ""), "utf8");
+  const expected = Buffer.from(CONTROL_TOKEN, "utf8");
+  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+}
 
 let positiveDcaConfig = {
   enabled: false,
@@ -436,12 +451,12 @@ function loadSavedAccountConfig() {
     // ignore
   }
   return {
-    accountMode: "LIVE",
+    accountMode: "DEMO",
     login: "5201362",
     server: "DBG Market Limited",
     brokerSymbol: "XAUUSD.G",
     terminalPath: "",
-    liveArmed: true,
+    liveArmed: false,
     riskPercent: 0.8,
     fixedLot: 0.12,
     connectedAt: Date.now(),
@@ -510,7 +525,7 @@ function resolveRealPythonOnWindows() {
   return cachedPythonCmd;
 }
 
-function invokeMt5PythonEngine(extraPayload = {}, force = false) {
+function invokeMt5PythonEngineDirect(extraPayload = {}, force = false) {
   const isProbeOnly = !extraPayload.action || extraPayload.action === "probe";
   const now = Date.now();
   if (isProbeOnly && !force && lastDirectProbeSnapshot && now - lastDirectProbeTime < 2200) {
@@ -524,9 +539,14 @@ function invokeMt5PythonEngine(extraPayload = {}, force = false) {
     server: currentAccountConfig.server,
     brokerSymbol: currentAccountConfig.brokerSymbol || "XAUUSD.G",
     terminalPath: currentAccountConfig.terminalPath || "",
-    autoManageBe: true,
+    autoManageBe: false,
     trendManagementConfig: { ...trendManagementConfig, useStructuralSl68: trendManagementConfig.slMode === 'STRUCTURAL_6_8' },
-    positiveDcaConfig: { ...positiveDcaConfig, useStructuralSl68: trendManagementConfig.slMode === 'STRUCTURAL_6_8', slDistance: autoBotState.slDistance, tpDistance: autoBotState.tpDistance },
+    positiveDcaConfig: { ...positiveDcaConfig, useStructuralSl68: trendManagementConfig.slMode === "STRUCTURAL_6_8", slDistance: autoBotState.slDistance, tpDistance: autoBotState.tpDistance },
+    strategyMode: autoBotState.strategyMode,
+    minConfidence: autoBotState.minConfidence,
+    maxRiskPercent: 1.0,
+    maxPortfolioRiskPercent: 1.5,
+    liveAuthorized: false, // Fail closed: LIVE orders need a separate verified activation implementation.
     ...extraPayload,
   });
 
@@ -576,6 +596,17 @@ function invokeMt5PythonEngine(extraPayload = {}, force = false) {
 
   if (isProbeOnly) probeInFlight = promise;
   return promise;
+}
+// All broker-mutating actions are serialized across Web requests and monitor ticks.
+let brokerMutationTail = Promise.resolve();
+function invokeMt5PythonEngine(extraPayload = {}, force = false) {
+  const action = extraPayload.action || "probe";
+  if (!["order", "dca_plus", "manage_positions", "close", "breakeven"].includes(action)) {
+    return invokeMt5PythonEngineDirect(extraPayload, force);
+  }
+  const pending = brokerMutationTail.then(() => invokeMt5PythonEngineDirect(extraPayload, force));
+  brokerMutationTail = pending.catch(() => null);
+  return pending;
 }
 
 // Vòng lặp Giám Sát Lệnh, Nuôi Lệnh Cấu Trúc M5, Phát Hiện Lệnh Đóng & Chạy Bot Tự Động mỗi 6 giây
