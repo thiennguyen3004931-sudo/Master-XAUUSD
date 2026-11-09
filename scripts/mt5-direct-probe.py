@@ -818,9 +818,24 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
 
     res = mt5.order_send(req)
     if res is None:
-        return {"ok": False, "message": f"order_send trả về None: {mt5.last_error()}"}
+        # A missing response does not prove the broker rejected the request.
+        # The caller must stop automatic retries and reconcile actual exposure.
+        return {
+            "ok": False, "submitted": True, "uncertain": True,
+            "message": "Broker order_send returned no response; stop automatic retries and reconcile MT5 positions/orders",
+        }
 
     retcode = int(getattr(res, "retcode", -1))
+    uncertain_transport_codes = {
+        int(getattr(mt5, "TRADE_RETCODE_TIMEOUT", 10012)),
+        int(getattr(mt5, "TRADE_RETCODE_CONNECTION", 10031)),
+    }
+    if retcode in uncertain_transport_codes:
+        return {
+            "ok": False, "submitted": True, "uncertain": True,
+            "retcode": retcode,
+            "message": "Broker order transport timed out/disconnected; do not automatically retry until reconciled",
+        }
     done_code = int(getattr(mt5, "TRADE_RETCODE_DONE", 10009))
     partial_code = int(getattr(mt5, "TRADE_RETCODE_DONE_PARTIAL", 10010))
     if retcode == int(getattr(mt5, "TRADE_RETCODE_PLACED", 10008)):

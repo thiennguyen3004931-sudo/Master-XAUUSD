@@ -154,6 +154,41 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertNotIn("volume", result)
         self.assertEqual(len(mt5.sent), 1)
 
+    def test_order_without_broker_response_is_uncertain_not_safe_to_retry(self):
+        class NoResponseBroker(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                return None
+        mt5 = NoResponseBroker()
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "BUY", "volume": 0.02,
+            "slDistance": 6.8, "tpDistance": 16,
+        })
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["submitted"])
+        self.assertTrue(result["uncertain"])
+        self.assertEqual(len(mt5.sent), 1)
+
+    def test_broker_timeout_and_connection_loss_are_not_confirmed_rejections(self):
+        class TransportIssueBroker(MockBroker):
+            def __init__(self, code):
+                super().__init__()
+                self.code = code
+            def order_send(self, request):
+                self.sent.append(request)
+                return SimpleNamespace(retcode=self.code)
+        for code in (10012, 10031):
+            with self.subTest(code=code):
+                mt5 = TransportIssueBroker(code)
+                result = engine.execute_order(mt5, "XAUUSD.G", {
+                    "side": "SELL", "volume": 0.02,
+                    "slDistance": 6.8, "tpDistance": 16,
+                })
+                self.assertFalse(result["ok"])
+                self.assertTrue(result["submitted"])
+                self.assertTrue(result["uncertain"])
+                self.assertEqual(len(mt5.sent), 1)
+
     def test_full_entry_fill_can_succeed_without_partial_warning(self):
         mt5 = MockBroker()
         result = engine.execute_order(mt5, "XAUUSD.G", {
