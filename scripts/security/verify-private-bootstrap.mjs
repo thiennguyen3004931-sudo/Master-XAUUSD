@@ -72,8 +72,20 @@ export function verifyBootstrap(attestation) {
   return true;
 }
 
-export function verifyBootstrapAgainstRepository(attestation, cwd = repoRoot) {
+export function verifyBootstrapAgainstRepository(
+  attestation,
+  cwd = repoRoot,
+  { targetRepository = process.env.GITHUB_REPOSITORY } = {},
+) {
   verifyBootstrap(attestation);
+
+  // A valid legacy attestation must not be re-used to approve a different
+  // GitHub repository. This is a fail-closed check, not a migration mechanism.
+  if (targetRepository !== undefined &&
+      (typeof targetRepository !== "string" ||
+       attestation.privateRepository.toLowerCase() !== targetRepository.toLowerCase())) {
+    throw new Error("PRIVATE_BOOTSTRAP_TARGET_REPOSITORY_MISMATCH");
+  }
 
   const actualTree = execFileSync(
     "git",
