@@ -154,6 +154,39 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertNotIn("volume", result)
         self.assertEqual(len(mt5.sent), 1)
 
+    def test_order_send_exception_after_dispatch_is_uncertain_and_not_retried(self):
+        class ExceptionAfterSubmitBroker(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                raise TimeoutError("broker transport exception")
+        mt5 = ExceptionAfterSubmitBroker()
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "BUY", "volume": 0.02,
+            "slDistance": 6.8, "tpDistance": 16,
+        })
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["submitted"])
+        self.assertTrue(result["uncertain"])
+        self.assertEqual(len(mt5.sent), 1)
+
+    def test_done_retcode_mismatched_volume_is_not_full_fill(self):
+        class MismatchedVolumeBroker(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                return SimpleNamespace(retcode=10009, order=123, price=request["price"],
+                                       volume=request["volume"] / 2)
+        mt5 = MismatchedVolumeBroker()
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "SELL", "volume": 0.02,
+            "slDistance": 6.8, "tpDistance": 16,
+        })
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["submitted"])
+        self.assertTrue(result["uncertain"])
+        self.assertTrue(result["partialFill"])
+        self.assertEqual(result["requestedVolume"], 0.02)
+        self.assertEqual(len(mt5.sent), 1)
+
     def test_order_without_broker_response_is_uncertain_not_safe_to_retry(self):
         class NoResponseBroker(MockBroker):
             def order_send(self, request):

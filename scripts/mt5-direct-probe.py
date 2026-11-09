@@ -816,7 +816,15 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
         "type_filling": resolve_filling_mode(mt5, sym_info),
     }
 
-    res = mt5.order_send(req)
+    try:
+        res = mt5.order_send(req)
+    except Exception:
+        # A transport exception can happen AFTER a broker accepted the request.
+        # Never interpret the lack of a response as a safe automatic retry.
+        return {
+            "ok": False, "submitted": True, "uncertain": True,
+            "message": "Broker order_send raised after submission attempt; reconcile broker positions/orders before retrying",
+        }
     if res is None:
         # A missing response does not prove the broker rejected the request.
         # The caller must stop automatic retries and reconcile actual exposure.
@@ -854,6 +862,22 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
             "message": "Broker reported a partial entry fill; halt automatic retries and verify actual lot/SL/TP"
         }
     if retcode == done_code:
+        # MT5 may report the actual filled lot. When provided, validate it
+        # rather than assuming a DONE retcode always means requested volume.
+        reported_volume = getattr(res, "volume", None)
+        if reported_volume is not None:
+            try:
+                filled_lot = float(reported_volume)
+            except (TypeError, ValueError, OverflowError):
+                filled_lot = float("nan")
+            if not isfinite(filled_lot) or abs(filled_lot - volume) > max(1e-7, volume_step * 0.01):
+                return {
+                    "ok": False, "submitted": True, "uncertain": True,
+                    "partialFill": bool(isfinite(filled_lot) and 0 < filled_lot < volume),
+                    "requestedVolume": volume,
+                    "retcode": retcode,
+                    "message": "Broker DONE response has inconsistent executed volume; reconcile exposure before retrying",
+                }
         actual_fill = float(getattr(res, "price", price) or price)
         sl_dist_actual = round(abs(actual_fill - sl), 2) if sl > 0 else 0.0
         tp_dist_actual = round(abs(tp - actual_fill), 2) if tp > 0 else 0.0
