@@ -65,9 +65,11 @@ class MockBroker:
                     p.tp = request["tp"]
             return SimpleNamespace(retcode=10009, order=123)
         if request["action"] == self.TRADE_ACTION_DEAL and "position" in request:
-            for p in self.positions:
+            for p in list(self.positions):
                 if p.ticket == request["position"]:
                     p.volume = round(p.volume - request["volume"], 8)
+                    if p.volume <= 1e-8:
+                        self.positions.remove(p)
             return SimpleNamespace(retcode=10009, order=123, price=request["price"])
         return SimpleNamespace(retcode=10009, order=123, price=request["price"])
 
@@ -278,6 +280,83 @@ class ExecutionRiskTest(unittest.TestCase):
         ok, reason = engine.check_bot_signal_for_mode(signal, "BOT_2_SIDEWAY", "BUY", 85)
         self.assertFalse(ok)
         self.assertIn("sideway", reason.lower())
+
+    def test_close_requires_explicit_ticket_and_never_sends_account_wide_order(self):
+        mt5 = MockBroker()
+        mt5.positions = [SimpleNamespace(
+            symbol="EURUSD", ticket=400, type=0, volume=0.03, magic=111
+        )]
+        for ticket in (None, 0, "", "invalid"):
+            result = engine.close_position_by_ticket(mt5, ticket)
+            self.assertFalse(result["ok"])
+        self.assertEqual(mt5.sent, [])
+        self.assertEqual(len(mt5.positions), 1)
+
+    def test_close_explicit_ticket_requires_broker_flat_readback(self):
+        mt5 = MockBroker()
+        mt5.positions = [SimpleNamespace(
+            symbol="XAUUSD.G", ticket=401, type=0, volume=0.03, magic=270715
+        )]
+        result = engine.close_position_by_ticket(mt5, 401)
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["verifiedClosed"])
+        self.assertEqual(result["closedCount"], 1)
+        self.assertEqual(mt5.positions, [])
+
+    def test_close_partial_broker_fill_must_not_claim_full_close(self):
+        class PartialBroker(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                for p in self.positions:
+                    if p.ticket == request["position"]:
+                        p.volume = round(p.volume - 0.01, 8)
+                return SimpleNamespace(retcode=10010)
+        mt5 = PartialBroker()
+        mt5.positions = [SimpleNamespace(
+            symbol="XAUUSD.G", ticket=402, type=0, volume=0.03, magic=270715
+        )]
+        result = engine.close_position_by_ticket(mt5, 402)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["submitted"])
+        self.assertTrue(result["partialFill"])
+        self.assertAlmostEqual(result["remainingVolume"], 0.02)
+
+    def test_close_order_ack_but_broker_readback_unavailable_is_uncertain(self):
+        class ReadbackMissingBroker(MockBroker):
+            def __init__(self):
+                super().__init__()
+                self.after_order = False
+            def order_send(self, request):
+                self.sent.append(request)
+                self.after_order = True
+                return SimpleNamespace(retcode=10009)
+            def positions_get(self, *args, **kwargs):
+                if self.after_order:
+                    return None
+                return super().positions_get(*args, **kwargs)
+        mt5 = ReadbackMissingBroker()
+        mt5.positions = [SimpleNamespace(
+            symbol="XAUUSD.G", ticket=403, type=0, volume=0.03, magic=270715
+        )]
+        result = engine.close_position_by_ticket(mt5, 403)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["uncertain"])
+        self.assertEqual(result["closedCount"], 0)
+        self.assertEqual(len(mt5.sent), 1)
+
+    def test_close_pending_order_retcode_is_not_fill_confirmation(self):
+        class PendingBroker(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                return SimpleNamespace(retcode=10008)
+        mt5 = PendingBroker()
+        mt5.positions = [SimpleNamespace(
+            symbol="XAUUSD.G", ticket=404, type=0, volume=0.03, magic=270715
+        )]
+        result = engine.close_position_by_ticket(mt5, 404)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["closedCount"], 0)
+        self.assertEqual(len(mt5.positions), 1)
 
     def test_dca_read_only_preview_does_not_send(self):
         mt5 = MockBroker()

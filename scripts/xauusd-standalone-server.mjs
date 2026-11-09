@@ -1327,7 +1327,14 @@ async function handleApiRequest(req, res) {
 
   if (pathname === "/api/v1/mt5/close" && req.method === "POST") {
     const body = await readJsonBody(req);
-    const probe = await invokeMt5PythonEngine({ action: "close", ticket: body.ticket || null }, true);
+    const ticket = Number(body.ticket);
+    if (!Number.isSafeInteger(ticket) || ticket <= 0 || body.ticket === null || body.ticket === undefined) {
+      sendJson(res, 400, {
+        closeResult: { ok: false, message: "Phải chọn ticket hợp lệ để đóng một vị thế; không cho phép đóng hàng loạt ngầm định." },
+      });
+      return;
+    }
+    const probe = await invokeMt5PythonEngine({ action: "close", ticket }, true);
     const payload = buildStatusPayload(probe);
     sendJson(res, 200, {
       ...payload,

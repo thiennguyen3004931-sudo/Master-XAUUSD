@@ -1049,42 +1049,67 @@ def Boolean(val):
     return bool(val)
 
 def close_position_by_ticket(mt5, ticket_id):
-    positions = mt5.positions_get(ticket=int(ticket_id)) if ticket_id else mt5.positions_get()
-    if not positions:
-        return {"ok": False, "message": "Không tìm thấy vị thế đang mở để đóng."}
+    """Explicit-ticket DEMO close: never claim completion until broker readback is flat."""
+    try:
+        ticket = int(ticket_id)
+        if ticket <= 0:
+            raise ValueError("invalid ticket")
+    except (TypeError, ValueError, OverflowError):
+        return {"ok": False, "closedCount": 0, "message": "Phải chọn chính xác ticket để đóng; không cho phép đóng toàn tài khoản."}
+    try:
+        matches = mt5.positions_get(ticket=ticket)
+    except Exception:
+        matches = None
+    if matches is None:
+        return {"ok": False, "closedCount": 0, "message": f"Không xác minh được broker ticket #{ticket}."}
+    pos = next((p for p in matches if int(getattr(p, "ticket", 0)) == ticket), None)
+    if pos is None:
+        return {"ok": False, "closedCount": 0, "message": f"Vị thế #{ticket} không còn mở."}
 
-    closed_count = 0
-    last_msg = ""
-    for pos in positions:
-        sym = str(pos.symbol)
-        sym_info = mt5.symbol_info(sym)
-        tick = mt5.symbol_info_tick(sym)
-        if not tick or not sym_info:
-            continue
-        is_buy_pos = int(pos.type) == 0
-        close_type = int(getattr(mt5, "ORDER_TYPE_SELL", 1) if is_buy_pos else getattr(mt5, "ORDER_TYPE_BUY", 0))
-        close_price = float(tick.bid if is_buy_pos else tick.ask)
-        req = {
-            "action": int(getattr(mt5, "TRADE_ACTION_DEAL", 1)),
-            "symbol": sym,
-            "position": int(pos.ticket),
-            "volume": float(pos.volume),
-            "type": close_type,
-            "price": close_price,
-            "deviation": 50,
-            "magic": int(getattr(pos, "magic", 270715) or 270715),
-            "comment": "CLOSE_WEB_V6",
-            "type_time": int(getattr(mt5, "ORDER_TIME_GTC", 0)),
-            "type_filling": resolve_filling_mode(mt5, sym_info),
-        }
-        res = mt5.order_send(req)
-        if res and int(getattr(res, "retcode", -1)) in (10009, 10010):
-            closed_count += 1
-            last_msg = f"Đã đóng lệnh #{pos.ticket} ({sym}) tại {close_price}."
-        else:
-            last_msg = f"Lỗi đóng lệnh #{pos.ticket}: {getattr(res, 'comment', mt5.last_error())}"
+    symbol = str(pos.symbol)
+    volume = float(getattr(pos, "volume", 0) or 0)
+    info = mt5.symbol_info(symbol)
+    tick = mt5.symbol_info_tick(symbol)
+    if not isfinite(volume) or volume <= 0 or info is None or tick is None:
+        return {"ok": False, "closedCount": 0, "message": f"Thiếu khối lượng/symbol/quote hợp lệ cho #{ticket}."}
+    buy = int(pos.type) == 0
+    price = float(tick.bid if buy else tick.ask)
+    if not isfinite(price) or price <= 0:
+        return {"ok": False, "closedCount": 0, "message": f"Broker quote không hợp lệ cho #{ticket}."}
+    request = {
+        "action": int(getattr(mt5, "TRADE_ACTION_DEAL", 1)),
+        "symbol": symbol,
+        "position": ticket,
+        "volume": volume,
+        "type": int(getattr(mt5, "ORDER_TYPE_SELL", 1) if buy else getattr(mt5, "ORDER_TYPE_BUY", 0)),
+        "price": price,
+        "deviation": 50,
+        "magic": int(getattr(pos, "magic", 270715) or 270715),
+        "comment": "CLOSE_WEB_V6",
+        "type_time": int(getattr(mt5, "ORDER_TIME_GTC", 0)),
+        "type_filling": resolve_filling_mode(mt5, info),
+    }
+    result = mt5.order_send(request)
+    if result is None or int(getattr(result, "retcode", -1)) not in (10009, 10010):
+        return {"ok": False, "closedCount": 0, "message": f"Broker chưa xác nhận lệnh đóng #{ticket}."}
 
-    return {"ok": closed_count > 0, "closedCount": closed_count, "message": last_msg}
+    try:
+        after_positions = mt5.positions_get(ticket=ticket)
+    except Exception:
+        after_positions = None
+    if after_positions is None:
+        return {"ok": False, "closedCount": 0, "submitted": True, "uncertain": True,
+                "message": f"Đã gửi lệnh đóng #{ticket} nhưng broker readback thất bại; không được gửi lặp tự động."}
+    remaining_pos = next((p for p in after_positions if int(getattr(p, "ticket", 0)) == ticket), None)
+    if remaining_pos is not None:
+        remaining = float(getattr(remaining_pos, "volume", 0) or 0)
+        return {"ok": False, "closedCount": 0, "submitted": True,
+                "partialFill": isfinite(remaining) and 0 <= remaining < volume,
+                "remainingVolume": remaining,
+                "message": f"Broker vẫn còn vị thế #{ticket} ({remaining} lot); không xác nhận đóng toàn bộ."}
+    return {"ok": True, "closedCount": 1, "ticket": ticket, "verifiedClosed": True,
+            "message": f"Broker xác minh ticket #{ticket} ({symbol}) đã đóng hoàn toàn."}
+
 
 def move_sl_to_breakeven(mt5, ticket_id):
     """Only tighten stops; operator-wide BE may touch V6-owned gold positions only."""
