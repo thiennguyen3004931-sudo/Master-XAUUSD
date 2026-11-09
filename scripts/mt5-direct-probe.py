@@ -873,6 +873,9 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
     strategy_mode = str(dca_cfg.get("strategyMode") or "AUTO_REGIME")
     min_conf = float(dca_cfg.get("minConfidence") or 82)
     bot_ok, bot_reason = check_bot_signal_for_mode(live_analysis, strategy_mode, side, min_conf)
+    latest_entry_time_ms = int(getattr(latest_pos, "time", 0) or 0) * 1000
+    if bot_ok and int(live_analysis.get("closedM15Time", 0)) <= latest_entry_time_ms:
+        bot_ok, bot_reason = False, "DCA requires a NEW fully closed M15 signal after the last entry"
 
     if not bot_ok:
         return {
@@ -913,32 +916,32 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
     if dca_vol <= 0:
         return {"eligible": False, "executed": False, "reason": "Next DCA volume below tradable step; skip layer"}
 
-    # Đặt SL và TP của lệnh DCA Dương theo đúng quy tắc lệnh đầu của Bot (SL cấu trúc 6–8 giá hoặc theo lệnh đầu)
-    base_open = float(getattr(base_pos, "price_open", cur_price))
+    # Use the freshly confirmed entry-plan stop; never replace structure with a fixed 6-8 guess.
+    dca_sl = float(live_analysis.get("sl") or 0)
+    dca_tp = float(live_analysis.get("tp") or 0)
+    if dca_sl <= 0 or dca_tp <= 0:
+        return {"eligible": False, "executed": False, "reason": "Missing valid DCA structural stop/target"}
+    current_risk = abs(cur_price - dca_sl)
     base_tp = float(getattr(base_pos, "tp", 0.0) or 0.0)
-    dca_sl_dist = float(dca_cfg.get("slDistance") or 6.8)
-    if dca_cfg.get("useStructuralSl68", True):
-        dca_sl_dist = max(6.0, min(8.0, dca_sl_dist))
-    dca_tp_dist = float(dca_cfg.get("tpDistance") or 14.0)
     if base_tp > 0:
-        rem_tp_dist = (base_tp - cur_price) if side == "BUY" else (cur_price - base_tp)
-        if rem_tp_dist >= 4.0:
-            dca_tp_dist = round(rem_tp_dist, 2)
-
+        remaining_reward = (base_tp - cur_price) if side == "BUY" else (cur_price - base_tp)
+        if remaining_reward >= max(4.0, current_risk * 1.6):
+            dca_tp = base_tp
+    actual_reward = (dca_tp - cur_price) if side == "BUY" else (cur_price - dca_tp)
+    if current_risk <= 0 or actual_reward < 1.6 * current_risk:
+        return {"eligible": False, "executed": False, "reason": "DCA RR below 1.6 after current quote"}
     order_res = execute_order(
-        mt5,
-        active_symbol,
+        mt5, active_symbol,
         {
             "side": side,
             "volume": dca_vol,
-            "slDistance": dca_sl_dist,
-            "tpDistance": dca_tp_dist,
+            "explicitSlPrice": dca_sl,
+            "explicitTpPrice": dca_tp,
             "maxRiskPercent": 0.5,
             "maxPortfolioRiskPercent": 1.5,
         },
         comment_tag=f"DCA_PLUS_L{next_layer_num}_{side}"
     )
-
     return {
         "eligible": True,
         "executed": Boolean(order_res.get("ok")),
