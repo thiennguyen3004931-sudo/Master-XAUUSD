@@ -1166,11 +1166,8 @@ def main():
     trade_mode = int(getattr(account, "trade_mode", -1))
     is_demo_account = trade_mode == int(getattr(mt5, "ACCOUNT_TRADE_MODE_DEMO", 0))
     real_account = trade_mode == int(getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2))
-    live_permission = (
-        cfg.get("liveAuthorized") is True
-        and os.environ.get("XAUUSD_V6_BROKER_LIVE_ATTESTED") == "I_ACKNOWLEDGE_RISK"
-    )
-    if action in ("order", "dca_plus", "manage_positions") and not (
+    live_permission = False  # DRAFT V6 has no verified REAL order/close/SLTP authorization.
+    if action in ("order", "dca_plus", "manage_positions", "breakeven", "close") and not (
         is_demo_account or (real_account and live_permission)
     ):
         action_result = {"ok": False, "message": "Broker mutation blocked: verified DEMO account required; REAL authorization not granted"}
