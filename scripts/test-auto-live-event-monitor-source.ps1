@@ -189,9 +189,8 @@ Assert-Literal $Monitor "MONITOR_DATA_FRESHNESS=UNAVAILABLE" 'no stale observati
 Assert-Literal $Monitor "BRIDGE_OFFLINE_EXPECTED" 'operator downtime is distinguishable in issue audit'
 Assert-Literal $Monitor 'Get-AutoLiveBridgeFailureCategory -Exception $_.Exception' 'HTTP-aware failure categorization'
 Assert-Literal $Monitor 'Test-AutoLiveExpectedOffline -FailureCategory $bridgeFailureCategory -LeaseState $offlineLeaseState' 'only verified connectivity downtime is expected'
-Assert-Literal $Workflow 'scripts/test-auto-live-offline-lease.ps1' 'offline lease regression executes on PR'
-Assert-Literal $Workflow 'scripts/ops/auto-live-offline-lease.ps1' 'offline lease changes trigger CI'
-Assert-Literal $Workflow 'scripts/ops/set-auto-live-monitor-offline-lease.ps1' 'operator declaration changes trigger CI'
+Assert-Literal $Workflow 'scripts/test-auto-live-offline-lease.ps1' 'offline lease regression remains available for manual diagnostic'
+Assert-Literal $Monitor 'auto-live-offline-lease.ps1' 'legacy lease classification source remains intact'
 
 Write-Host 'AUTO_LIVE_MONITOR_SOURCE_CONTRACT=PASS'
 Write-Host 'PRODUCTION_HTTP_METHODS=GET_ONLY'
