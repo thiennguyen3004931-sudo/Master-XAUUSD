@@ -82,3 +82,17 @@ test("pending or partially filled V6 entries disable automatic re-submission", (
   assert.match(manualDca, /executeNow === true && probe\?\.actionResult\?\.submitted/);
   assert.match(manualDca, /positiveDcaConfig\.enabled = false/);
 });
+
+test("DEMO bridge has no shared static API key and defaults to trading disabled", () => {
+  const profile = server.slice(
+    server.indexOf("function writeBridgeEnvAndArmFiles(cfg)"),
+    server.indexOf("function getLanIps()"),
+  );
+  assert.ok(profile.length > 0);
+  assert.doesNotMatch(profile, /xauusd_live_bridge_secret_2026_key/);
+  assert.match(profile, /const bridgeApiReady = apiKey\.length >= 32/);
+  assert.match(profile, /MT5_API_KEY=\$\{bridgeApiReady \? apiKey : ""\}/);
+  assert.match(profile, /MT5_TRADING_ENABLED=\$\{bridgeApiReady \? "true" : "false"\}/);
+  assert.match(profile, /if \(isLive\) \{/);
+  assert.match(profile, /return;/);
+});
