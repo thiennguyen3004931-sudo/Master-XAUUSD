@@ -1101,7 +1101,14 @@ def main():
     raw_positions = mt5.positions_get() or []
 
     action_result = None
-    if action == "order":
+    real_account = int(getattr(account, "trade_mode", -1)) == int(getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2))
+    live_permission = (
+        cfg.get("liveAuthorized") is True
+        and os.environ.get("XAUUSD_V6_BROKER_LIVE_ATTESTED") == "I_ACKNOWLEDGE_RISK"
+    )
+    if action in ("order", "dca_plus") and real_account and not live_permission:
+        action_result = {"ok": False, "message": "LIVE order rejected: V6 strategy requires explicit broker acceptance and authorization"}
+    elif action == "order":
         manual = cfg.get("manualOrder") is True
         request_side = str(cfg.get("side", "WAIT")).upper()
         if request_side not in ("BUY", "SELL"):
