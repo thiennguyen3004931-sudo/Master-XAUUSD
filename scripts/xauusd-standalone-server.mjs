@@ -1171,11 +1171,12 @@ async function handleApiRequest(req, res) {
           trendManagementConfig.m15SpikeTrailDist = 10.0;
           trendManagementConfig.enablePartialCloseAtSr = true;
           trendManagementConfig.semiAutoAdoptManual = true;
-          positiveDcaConfig.enabled = true;
+          // Approval of stop-management improvements never silently enables risk-increasing DCA.
           autoBotState.slDistance = 6.8;
           autoBotState.lastLog = "Đã áp dụng Đề xuất #4: SL Cấu trúc 6–8 giá + Đạt 1R kéo BE + Trailing M5 + Khóa đỉnh M15 cách 10 giá + Chốt từng phần cản H1/H4 + Bán tự động nuôi lệnh tay!";
         } else if (propId === "PROP-03") {
-          autoBotState.lastLog = "Đã bật phân luồng Sideway Corridor cho Phiên Á theo phê duyệt Đề xuất #3.";
+          autoBotState.lastLog = "Đã ghi nhận đề xuất Sideway phiên Á. Phải chọn chế độ SIDEWAY riêng; chưa có lịch tự chuyển bot.";
+          positiveDcaConfig.enabled = false;
         }
       }
     }
