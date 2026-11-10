@@ -25,6 +25,16 @@ GitHub's `V6 Isolated Source Package (NO DEPLOY)` workflow runs on **GitHub-host
 
 ## Check a separate Windows stage — no MT5 access
 
+The `V6 Windows isolated source staging (NO START)` workflow can prepare this
+source-only copy on the registered Windows runner. Only trusted `main` can run
+the host job; pull requests exercise the disposable hosted build only. It uses
+a fresh, non-overwritten directory under `RUNNER_TEMP`, verifies the manifest
+against the exact workflow commit and runs the source checker. It never checks
+out or cleans the operating repository, starts V6/MT5, installs dependencies,
+reads credentials, switches accounts or enables REAL permission. A successful
+run proves staged source only; temporary storage may later be cleaned by the
+runner and is not the final production installation.
+
 On the intended machine, choose a **new, empty, independent directory** whose path is not inside the existing Phase7C/production directory. Back up any existing local `.runtime` separately before altering an installed checkout. Extract the ZIP *only* into that new directory; do **not** extract over the operating Phase7C tree or over any account configuration.
 
 Run from the extracted root in PowerShell:

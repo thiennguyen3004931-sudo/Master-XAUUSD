@@ -803,6 +803,18 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
         existing_positions = None
     if existing_positions is None:
         return {"ok": False, "message": "Cannot verify broker portfolio positions; new order blocked"}
+    existing_positions = tuple(existing_positions)
+    # Pending exposure is account-wide, including manual/foreign symbols and
+    # PLACED requests whose fill has not yet reached positions_get(). Never
+    # interpret a failed inventory as an empty book or cancel orders here.
+    try:
+        pending_orders = mt5.orders_get()
+    except Exception:
+        pending_orders = None
+    if not isinstance(pending_orders, (tuple, list)):
+        return {"ok": False, "message": "Cannot verify broker pending orders; new order blocked"}
+    if pending_orders:
+        return {"ok": False, "message": "Unreconciled broker pending orders exist; new order blocked"}
     open_risk = 0.0
     for existing in existing_positions:
         old_sl = float(getattr(existing, "sl", 0) or 0)
@@ -898,12 +910,46 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
                     "retcode": retcode,
                     "message": "Broker DONE response has inconsistent executed volume; reconcile exposure before retrying",
                 }
-        actual_fill = float(getattr(res, "price", price) or price)
+        # DONE is an acknowledgement, not proof that broker-side protection
+        # exists. Only accept a newly created, uniquely identified position.
+        # Aggregated/netting or already-closed fills require reconciliation;
+        # never guess a position from the symbol or retry the entry here.
+        try:
+            position_ticket = int(getattr(res, "order", 0) or 0)
+            previous_tickets = {int(getattr(p, "ticket", 0)) for p in existing_positions}
+            readback = mt5.positions_get(ticket=position_ticket) if position_ticket > 0 else None
+            if (not isinstance(readback, (tuple, list)) or len(readback) != 1
+                    or position_ticket in previous_tickets):
+                raise ValueError("ambiguous position")
+            filled = readback[0]
+            actual_fill = float(filled.price_open)
+            broker_sl, broker_tp = float(filled.sl), float(filled.tp)
+            if (int(filled.ticket) != position_ticket or str(filled.symbol) != active_symbol
+                    or int(filled.type) != order_type or int(filled.magic) != req["magic"]
+                    or not isfinite(float(filled.volume))
+                    or abs(float(filled.volume) - volume) > max(1e-7, volume_step * 0.01)
+                    or not all(isfinite(v) and v > 0 for v in (actual_fill, broker_sl, broker_tp))
+                    or abs(broker_sl - sl) > point * 0.1
+                    or abs(broker_tp - tp) > point * 0.1):
+                raise ValueError("position protection mismatch")
+            actual_risk = calc(order_type, active_symbol, volume, actual_fill, broker_sl)
+            actual_reward = (broker_tp - actual_fill) if is_buy else (actual_fill - broker_tp)
+            actual_distance = (actual_fill - broker_sl) if is_buy else (broker_sl - actual_fill)
+            if (actual_risk is None or not isfinite(float(actual_risk))
+                    or actual_distance <= 0 or actual_reward / actual_distance < min_rr
+                    or max(0.0, -float(actual_risk)) * 1.05 > equity * per_trade_pct / 100
+                    or open_risk + max(0.0, -float(actual_risk)) * 1.05 > equity * max_total_pct / 100):
+                raise ValueError("fill outside verified risk budget")
+        except Exception:
+            return {"ok": False, "submitted": True, "uncertain": True,
+                    "retcode": retcode,
+                    "message": "Broker DONE but position lot/SL/TP/fill risk not verified; reconcile MT5 before retrying"}
         sl_dist_actual = round(abs(actual_fill - sl), 2) if sl > 0 else 0.0
         tp_dist_actual = round(abs(tp - actual_fill), 2) if tp > 0 else 0.0
         return {
             "ok": True,
-            "ticket": int(getattr(res, "order", 0) or getattr(res, "deal", 0)),
+            "verifiedPosition": True,
+            "ticket": position_ticket,
             "symbol": active_symbol,
             "side": side,
             "volume": volume,
