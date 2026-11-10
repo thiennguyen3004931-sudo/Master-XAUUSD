@@ -137,7 +137,7 @@ class DailyLossVetoTest(unittest.TestCase):
         self.assertEqual(broker.reads, 0)
 
     def test_missing_portfolio_readback_blocks(self):
-        self.assertFalse(self.assess(positions=[])["allowed"] is False)
+        self.assertTrue(self.assess(positions=[])["allowed"])
         decision = verify_daily_new_order_budget(
             FakeMT5History(), SimpleNamespace(equity=1000), None, 2,
             now_utc_seconds=self.NOW, emergency_halt_path=self.halt_file
