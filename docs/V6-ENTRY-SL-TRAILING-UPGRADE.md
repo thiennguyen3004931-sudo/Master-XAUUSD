@@ -75,6 +75,16 @@ For broker-execution acceptance (not required for the owner-authorized source-on
 
 Only after DEMO and independent replay with costs, return/win/loss by session and market regime, drawdown and out-of-sample walk-forward should the strategy be considered for LIVE authorization in a **separate reviewed change**.
 
+## Source-only daily loss and emergency new-order veto (new; not LIVE sign-off)
+
+The direct V6 broker entry function now requires `scripts/v6_daily_loss_guard.py` to authorize **every new order, including manual entry and DCA**; the browser cannot override it. The cap is a fixed **2% of conservatively reconstructed UTC-day-start account equity** and includes realized trading profit/loss, commissions, fees and swaps, plus floating profit/loss on open positions. The projected broker-calculated SL risk of the prospective order is also counted *before* any broker `order_send`.
+
+The guard **fails closed** for missing broker history, unknown ledger items/deposits/withdrawals, non-finite PnL, unknown or overnight positions, overnight closes without a matching same-day opening deal, and any inconsistent timeline. This intentionally means new entries can be blocked until the operator obtains verified midnight-equity / cashflow evidence. It is not proof of full historical reconciliation or of a tested broker execution path.
+
+An operator can halt **new entries only** on a running V6 process by creating the ignored local file `.runtime/v6-halt-new-orders.flag` under the V6 installation root. With no terminal action required, the marker is checked on every attempted new broker entry. The `V6_HALT_NEW_ORDERS=1` environment flag also forces the new-entry veto (changes to process environment may require a restart). **Do not delete the halt marker just to silence a release check.** Existing-position protection, closing and SL management remain on their separate guarded paths and are not disabled by this new-entry veto. This halt marker is **not** an independently verified total emergency stop, nor does it cancel broker-side pending orders or flatten positions.
+
+All related tests use mock MT5 objects and do not log in or place orders. No REAL execution permission is enabled: `live_permission = False` remains. An operating Windows install, broker history readback, quote/position lifecycle, full restart reconciliation, token rotation and production stop controls still need independent checks.
+
 ## Out-of-scope / still pending
 
-A global daily-loss kill switch, full reconciliation of broker execution history vs local partial-close state after process crashes, verified NEWS calendar guard, robust spread/slippage/commission modeling, calibrated signal confidence and dynamic ATR regime tuning all require further work and acceptance.
+A **fully reconciled production daily-loss kill switch** (especially overnight positions and broker day-boundary equity), full reconciliation of broker execution history vs local partial-close state after process crashes, a production-verified emergency stop, verified NEWS calendar guard, robust spread/slippage/commission modeling, calibrated signal confidence and dynamic ATR regime tuning all require further work and acceptance. The new source-only 2% UTC-day veto intentionally blocks entries when the baseline is not provable.
