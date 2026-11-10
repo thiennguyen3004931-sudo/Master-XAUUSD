@@ -23,19 +23,35 @@ jobs:
     name: v6-readiness-source-contract
     runs-on: windows-latest
     timeout-minutes: 8
+    outputs:
+      expected_server_sha256: ${{ steps.source_hashes.outputs.server_sha256 }}
+      expected_broker_sha256: ${{ steps.source_hashes.outputs.broker_sha256 }}
     steps:
       - name: Checkout source on disposable hosted runner
         uses: actions/checkout@v4
       - name: Verify read-only observer and real-account fail-closed boundary
         shell: pwsh
         run: node scripts/test-v6-live-readiness-observer-source.mjs
+      - name: Hash canonical V6 source files on GitHub-hosted runner
+        id: source_hashes
+        shell: pwsh
+        run: |
+          $serverSha = (Get-FileHash -Algorithm SHA256 -LiteralPath 'scripts/xauusd-standalone-server.mjs').Hash
+          $brokerSha = (Get-FileHash -Algorithm SHA256 -LiteralPath 'scripts/mt5-direct-probe.py').Hash
+          "server_sha256=$serverSha" >> $env:GITHUB_OUTPUT
+          "broker_sha256=$brokerSha" >> $env:GITHUB_OUTPUT
+
 
   windows-host-observation:
     name: v6-local-host-readonly-observation-NOT-LIVE-APPROVAL
     # Never run PR-supplied code or inspect a real account on an untrusted branch.
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'thiennguyen3004931-sudo/Master-XAUUSD'
+    needs: source-safety
     runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
     timeout-minutes: 6
+    env:
+      EXPECTED_V6_SERVER_SHA256: ${{ needs.source-safety.outputs.expected_server_sha256 }}
+      EXPECTED_V6_BROKER_SHA256: ${{ needs.source-safety.outputs.expected_broker_sha256 }}
     permissions:
       contents: read
     concurrency:
@@ -203,6 +219,31 @@ jobs:
           $legacyPath = 'F:\Project\XAUUSD_AI_MASTER\xauusd-ai-master'
           $legacyExists = Test-Path -LiteralPath $legacyPath -PathType Container
           Write-Host "V6_OBSERVED_LEGACY_PRODUCTION_PATH_EXISTS=$legacyExists"
+
+          # The path above is explicitly the *old* Phase7C installation, not
+          # proof that independent V6 is deployed or running. Compare source
+          # files only; never execute them or read any .env/.runtime file.
+          function Get-ReadonlySourceHashState {
+            param([string]$SafeSourcePath, [string]$ExpectedHash)
+            if (-not (Test-Path -LiteralPath $SafeSourcePath -PathType Leaf)) { return 'ABSENT' }
+            if ([string]::IsNullOrWhiteSpace($ExpectedHash)) { return 'UNVERIFIED' }
+            try {
+              $actual = (Get-FileHash -LiteralPath $SafeSourcePath -Algorithm SHA256 -ErrorAction Stop).Hash
+              if ($actual -ieq $ExpectedHash) { return 'MATCH' }
+              return 'DIFFERENT'
+            } catch {
+              return 'UNAVAILABLE'
+            }
+          }
+
+          $legacyServerSource = Join-Path $legacyPath 'scripts\xauusd-standalone-server.mjs'
+          $legacyBrokerSource = Join-Path $legacyPath 'scripts\mt5-direct-probe.py'
+          $legacyServerMatch = Get-ReadonlySourceHashState -SafeSourcePath $legacyServerSource -ExpectedHash $env:EXPECTED_V6_SERVER_SHA256
+          $legacyBrokerMatch = Get-ReadonlySourceHashState -SafeSourcePath $legacyBrokerSource -ExpectedHash $env:EXPECTED_V6_BROKER_SHA256
+          Write-Host "V6_OBSERVED_LEGACY_ROOT_SERVER_SOURCE=$legacyServerMatch"
+          Write-Host "V6_OBSERVED_LEGACY_ROOT_BROKER_SOURCE=$legacyBrokerMatch"
+          Write-Host 'V6_OBSERVED_SOURCE_ROOT_IS_OPERATING_V6=NOT_VERIFIED'
+
 
           Write-Host 'V6_VERIFIED_MT5_ACCOUNT_TYPE=NO'
           Write-Host 'V6_VERIFIED_BROKER_ORDER_LIFECYCLE=NO'
