@@ -72,6 +72,19 @@ class IsolatedV6SourceReleaseTest(unittest.TestCase):
         release.build(self.root, second)
         self.assertEqual(self.out.read_bytes(), second.read_bytes())
 
+    def test_windows_crlf_checkout_uses_exact_git_blob_bytes(self):
+        git(self.root, "config", "core.autocrlf", "true")
+        file = self.root / "docs" / "V6-ISOLATED-SOURCE-RELEASE.md"
+        data = file.read_bytes()
+        self.assertIn(b"\n", data)
+        file.write_bytes(data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        expected = subprocess.check_output(
+            ["git", "-C", str(self.root), "show", "HEAD:docs/V6-ISOLATED-SOURCE-RELEASE.md"]
+        )
+        release.build(self.root, self.out)
+        with ZipFile(self.out, "r") as archive:
+            self.assertEqual(archive.read("docs/V6-ISOLATED-SOURCE-RELEASE.md"), expected)
+
     def test_dirty_source_is_rejected(self):
         file = self.root / "scripts" / "mt5-direct-probe.py"
         file.write_bytes(file.read_bytes() + b"\n# not committed\n")
