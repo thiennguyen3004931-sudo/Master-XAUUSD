@@ -19,6 +19,11 @@ spec.loader.exec_module(engine)
 class MockBroker:
     ORDER_TYPE_BUY = 0
     ORDER_TYPE_SELL = 1
+    DEAL_TYPE_BUY = 0
+    DEAL_TYPE_SELL = 1
+    DEAL_ENTRY_IN = 0
+    DEAL_ENTRY_OUT = 1
+    DEAL_ENTRY_OUT_BY = 3
     ORDER_FILLING_FOK = 0
     ORDER_TIME_GTC = 0
     TRADE_ACTION_DEAL = 1
@@ -27,6 +32,7 @@ class MockBroker:
 
     def __init__(self):
         self.positions = []
+        self.deals = []
         self.asks = 4000.20
         self.bids = 4000.00
         self.sent = []
@@ -57,6 +63,9 @@ class MockBroker:
         if symbol is not None:
             return [p for p in self.positions if str(p.symbol) == str(symbol)]
         return self.positions
+
+    def history_deals_get(self, start, end):
+        return self.deals
 
     def order_send(self, request):
         self.sent.append(request)
