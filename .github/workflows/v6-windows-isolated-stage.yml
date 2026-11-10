@@ -93,3 +93,43 @@ jobs:
           Write-Host 'V6_STAGE_SERVER_STARTED=NO'
           Write-Host 'V6_STAGE_MT5_SESSION=NOT_CHECKED'
           Write-Host 'V6_LIVE_APPROVAL=NO'
+
+      - name: Inspect Python runtime metadata without importing MT5
+        shell: powershell
+        env:
+          PYLAUNCHER_ALLOW_INSTALL: ''
+          PYTHON_MANAGER_AUTOMATIC_INSTALL: 'false'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $code = @'
+          import sys, struct, sysconfig, importlib.metadata
+          roots = set(sysconfig.get_paths()[key] for key in ('purelib', 'platlib'))
+          found = any((dist.metadata.get('Name') or '').lower() == 'metatrader5' for dist in importlib.metadata.distributions(path=roots))
+          print('V6_PYTHON_VERSION=' + '.'.join(map(str, sys.version_info[:3])))
+          print('V6_PYTHON_BITS=' + str(struct.calcsize('P') * 8))
+          print('V6_MT5_PACKAGE_METADATA_PRESENT=' + str(found))
+          print('V6_MT5_IMPORT=NOT_PERFORMED')
+          print('V6_MT5_SESSION=NOT_CHECKED')
+          '@
+          $command = Get-Command py.exe -ErrorAction SilentlyContinue
+          if ($null -ne $command) {
+            $result = @(& $command.Source -3 -I -S -c $code 2>$null)
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0) {
+              $result | Where-Object { $_ -match '^V6_(PYTHON_VERSION=\d+\.\d+\.\d+|PYTHON_BITS=(32|64)|MT5_PACKAGE_METADATA_PRESENT=(True|False)|MT5_IMPORT=NOT_PERFORMED|MT5_SESSION=NOT_CHECKED)$' } | Write-Host
+            } else {
+              Write-Host 'V6_PYTHON_METADATA_PROBE=UNAVAILABLE'
+            }
+          } else {
+            Write-Host 'V6_PYTHON_METADATA_PROBE=LAUNCHER_UNAVAILABLE'
+          }
+          try {
+            $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop)
+            foreach ($port in @(3712, 5718)) {
+              $busy = @($listeners | Where-Object { $_.LocalPort -eq $port }).Count -gt 0
+              Write-Host ('V6_CANDIDATE_PORT_' + $port + '_AVAILABLE=' + (-not $busy))
+            }
+          } catch {
+            Write-Host 'V6_CANDIDATE_PORTS=UNVERIFIED'
+          }
+          Write-Host 'V6_LIVE_APPROVAL=NO'
