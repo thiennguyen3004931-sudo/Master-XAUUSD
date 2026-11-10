@@ -16,6 +16,16 @@ engine = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(engine)
 
 
+class MissingPackageSafetyTest(unittest.TestCase):
+    def test_probe_never_installs_mt5_package_implicitly(self):
+        with mock.patch.dict(sys.modules, {"MetaTrader5": None}):
+            with mock.patch.object(engine.subprocess, "check_call", side_effect=AssertionError("installer must not run")) as install:
+                package, error = engine.ensure_mt5_installed()
+        self.assertIsNone(package)
+        self.assertIn("not installed", error)
+        install.assert_not_called()
+
+
 class ExistingTerminalAccount:
     """Mock terminal identity fixture: never establishes a real connection."""
 
