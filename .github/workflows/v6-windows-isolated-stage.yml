@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/v6-windows-isolated-stage.yml'
+      - 'scripts/ops/check-v6-isolated-stage-readonly.ps1'
   push:
     branches: [main]
     paths:
       - '.github/workflows/v6-windows-isolated-stage.yml'
+      - 'scripts/ops/check-v6-isolated-stage-readonly.ps1'
   workflow_dispatch:
 
 permissions:
@@ -35,6 +37,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'V6_NODE_TESTS_FAILED' }
           python scripts/ops/build-v6-isolated-source-release.py
           if ($LASTEXITCODE -ne 0) { throw 'V6_SOURCE_BUILD_FAILED' }
+      - name: Validate source checker on disposable Windows
+        shell: pwsh
+        run: |
+          Expand-Archive -LiteralPath artifacts/v6-isolated-source-only.zip -DestinationPath artifacts/checker-test
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File artifacts/checker-test/scripts/ops/check-v6-isolated-stage-readonly.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'STAGE_CHECKER_FAILED' }
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'thiennguyen3004931-sudo/Master-XAUUSD'
         with:
