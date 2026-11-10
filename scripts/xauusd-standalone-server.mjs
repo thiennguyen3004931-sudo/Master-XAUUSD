@@ -574,10 +574,11 @@ function invokeMt5PythonEngineDirect(extraPayload = {}, force = false) {
   });
 
   const py = resolveRealPythonOnWindows();
-  const args = [...py.prefixArgs, DIRECT_PROBE_SCRIPT, payloadStr];
+  // Never expose MT5 account credentials in process arguments (Windows WMI/process listings).
+  const args = [...py.prefixArgs, DIRECT_PROBE_SCRIPT];
 
   const promise = new Promise((resolve) => {
-    execFile(py.bin, args, { timeout: 15000, windowsHide: true }, (err, stdout, stderr) => {
+    const child = execFile(py.bin, args, { timeout: 15000, windowsHide: true }, (err, stdout, stderr) => {
       if (isProbeOnly) probeInFlight = null;
       if (stdout && stdout.trim()) {
         try {
@@ -615,6 +616,10 @@ function invokeMt5PythonEngineDirect(extraPayload = {}, force = false) {
       }
       resolve(fallback);
     });
+    // JSON is delivered over the child's private stdin pipe; never argv or logs.
+    // An early Python exit may close stdin; execFile's callback still reports failure.
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(payloadStr + "\n");
   });
 
   if (isProbeOnly) probeInFlight = promise;
