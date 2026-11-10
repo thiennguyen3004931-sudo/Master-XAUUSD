@@ -1217,12 +1217,36 @@ def move_sl_to_breakeven(mt5, ticket_id):
     }
 
 
-def main():
-    raw_cfg = sys.argv[1] if len(sys.argv) > 1 else "{}"
+def _read_stdin_payload():
+    """Accept bounded JSON over stdin only. Never put MT5 credentials into argv."""
+    if len(sys.argv) != 1:
+        return None, "CLI_PAYLOAD_FORBIDDEN"
+    try:
+        raw_cfg = sys.stdin.readline(1_048_577)
+    except (OSError, UnicodeError):
+        return None, "STDIN_READ_FAILED"
+    if not raw_cfg:
+        return None, "STDIN_CONFIG_REQUIRED"
+    if len(raw_cfg) > 1_048_576:
+        return None, "STDIN_CONFIG_TOO_LARGE"
     try:
         cfg = json.loads(raw_cfg)
-    except Exception:
-        cfg = {}
+    except (ValueError, TypeError):
+        return None, "STDIN_INVALID_JSON"
+    if not isinstance(cfg, dict):
+        return None, "STDIN_OBJECT_REQUIRED"
+    return cfg, None
+
+
+def main():
+    cfg, input_error = _read_stdin_payload()
+    if input_error:
+        sys.stdout.write(json.dumps({
+            "connected": False,
+            "errorCode": input_error,
+            "errorMessage": "MT5 V6 accepts a bounded JSON object over stdin only",
+        }, ensure_ascii=False) + "\n")
+        return
 
     action = str(cfg.get("action") or "probe").lower()
     mt5, pkg_err = ensure_mt5_installed()

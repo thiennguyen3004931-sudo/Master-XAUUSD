@@ -109,3 +109,19 @@ test("runtime account and credential files must never be tracked in Git", () => 
 function requireGuardedGit() {
   return { execFileSync: gitExecFileSync };
 }
+
+test("V6 broker credentials are sent over stdin, never via Windows process arguments", () => {
+  const engine = server.slice(
+    server.indexOf("function invokeMt5PythonEngineDirect("),
+    server.indexOf("// All broker-mutating actions are serialized"),
+  );
+  assert.ok(engine.length > 0);
+  assert.match(engine, /const args = \[\.\.\.py\.prefixArgs, DIRECT_PROBE_SCRIPT\];/);
+  assert.match(engine, /child\.stdin\?\.end\(payloadStr/);
+  assert.doesNotMatch(engine, /DIRECT_PROBE_SCRIPT\s*,\s*payloadStr/);
+  assert.match(engine, /child\.stdin\?\.on\("error"/);
+  const probe = readFileSync(resolve(root, "scripts/mt5-direct-probe.py"), "utf8");
+  assert.match(probe, /def _read_stdin_payload\(\):/);
+  assert.match(probe, /if len\(sys\.argv\) != 1:/);
+  assert.doesNotMatch(probe, /sys\.argv\[1\]/);
+});

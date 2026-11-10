@@ -1,6 +1,8 @@
 """Mock-broker tests: these never connect to or place an actual MT5 order."""
 import importlib.util
 import sys
+import io
+from unittest import mock
 import time
 import unittest
 import tempfile
@@ -531,6 +533,40 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertTrue(result["eligible"])
         self.assertFalse(result["executed"])
         self.assertEqual(len(mt5.sent), 0)
+
+
+class SecureStdinTransportTest(unittest.TestCase):
+    def test_valid_stdin_json_object(self):
+        with mock.patch.object(sys, "argv", ["mt5-direct-probe.py"]):
+            with mock.patch.object(sys, "stdin", io.StringIO('{"action":"probe","brokerSymbol":"XAUUSD.G"}\n')):
+                cfg, error = engine._read_stdin_payload()
+        self.assertIsNone(error)
+        self.assertEqual(cfg["action"], "probe")
+        self.assertEqual(cfg["brokerSymbol"], "XAUUSD.G")
+
+    def test_command_line_payload_is_rejected_without_reading_stdin(self):
+        fake_stdin = io.StringIO('{"action":"order"}\n')
+        with mock.patch.object(sys, "argv", ["mt5-direct-probe.py", '{"password":"sensitive"}']):
+            with mock.patch.object(sys, "stdin", fake_stdin):
+                cfg, error = engine._read_stdin_payload()
+        self.assertIsNone(cfg)
+        self.assertEqual(error, "CLI_PAYLOAD_FORBIDDEN")
+        self.assertEqual(fake_stdin.tell(), 0)
+
+    def test_invalid_and_oversized_stdin_fail_closed(self):
+        invalid_cases = [
+            ("", "STDIN_CONFIG_REQUIRED"),
+            ("not-json\n", "STDIN_INVALID_JSON"),
+            ("[]\n", "STDIN_OBJECT_REQUIRED"),
+            ('{"value":"' + "a" * 1_048_577 + '"}', "STDIN_CONFIG_TOO_LARGE"),
+        ]
+        for payload, expected in invalid_cases:
+            with self.subTest(expected=expected):
+                with mock.patch.object(sys, "argv", ["mt5-direct-probe.py"]):
+                    with mock.patch.object(sys, "stdin", io.StringIO(payload)):
+                        cfg, error = engine._read_stdin_payload()
+                self.assertIsNone(cfg)
+                self.assertEqual(error, expected)
 
 
 if __name__ == "__main__":
