@@ -19,19 +19,12 @@ from xauusd_v6_trade_rules import evaluate_entry, structural_stop, trail_stop, p
 from v6_daily_loss_guard import verify_daily_new_order_budget
 
 def ensure_mt5_installed():
+    """Never modify the Windows runtime or install packages during MT5 probes."""
     try:
         import MetaTrader5 as mt5
         return mt5, None
     except ImportError:
-        try:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "--quiet", "MetaTrader5"],
-                timeout=45
-            )
-            import MetaTrader5 as mt5
-            return mt5, None
-        except Exception as e:
-            return None, f"Chưa cài gói Python MetaTrader5 ({e}). Hãy mở CMD chạy: pip install MetaTrader5"
+        return None, "MT5 Python package is not installed; an operator must install an approved version offline"
 
 def detect_running_terminal_path():
     if os.name != "nt":
@@ -58,11 +51,28 @@ def detect_running_terminal_path():
             return p
     return None
 
-def connect_mt5(mt5, config):
+def connect_mt5(mt5, config, *, require_account_binding=False):
+    """Attach to an existing terminal; NEVER switch broker accounts.
+
+    Even a status probe is not allowed to call mt5.login(). When a specific
+    broker identity is configured, reject mismatches without leaking IDs.
+    Mutations require an explicit login and server to avoid trading on an
+    unrelated terminal accidentally selected by MT5's default initializer.
+    """
     user_path = str(config.get("terminalPath") or "").strip()
-    login_raw = str(config.get("login") or "").strip()
-    password = str(config.get("password") or "").strip()
+    login_value = config.get("login")
+    login_raw = "" if login_value is None else str(login_value).strip()
     server = str(config.get("server") or "").strip()
+
+    # Verify the entire expected identity before MT5 initialize. Never use
+    # password fields to perform a login or implicit account switch.
+    has_identity = bool(login_raw or server)
+    if require_account_binding and not (login_raw and server):
+        return False, "MT5_ACCOUNT_BINDING_REQUIRED"
+    if has_identity and not (login_raw and server):
+        return False, "MT5_ACCOUNT_BINDING_INCOMPLETE"
+    if login_raw and (len(login_raw) > 18 or not login_raw.isascii() or not login_raw.isdecimal() or int(login_raw) <= 0):
+        return False, "MT5_ACCOUNT_BINDING_INVALID"
 
     initialized = False
     try:
@@ -79,16 +89,19 @@ def connect_mt5(mt5, config):
                 initialized = False
 
     if not initialized:
-        last_err = mt5.last_error()
-        return False, f"Không kết nối được cửa sổ MT5 ({last_err}). Hãy mở phần mềm MetaTrader 5 trên máy tính!"
+        return False, "MT5_TERMINAL_INITIALIZE_FAILED"
 
-    account = mt5.account_info()
-    if password and login_raw.isdigit() and server:
-        if account is None or int(account.login) != int(login_raw):
-            ok_login = mt5.login(login=int(login_raw), password=password, server=server)
-            if not ok_login:
-                last_err = mt5.last_error()
-                return False, f"Đăng nhập TK #{login_raw} tại '{server}' thất bại ({last_err}). Hãy đăng nhập trực tiếp trên phần mềm MT5 rồi để trống ô mật khẩu!"
+    try:
+        account = mt5.account_info()
+        if account is None:
+            return False, "MT5_ACCOUNT_SESSION_UNAVAILABLE"
+        if has_identity:
+            current_login = int(getattr(account, "login", 0) or 0)
+            current_server = str(getattr(account, "server", "") or "").strip()
+            if current_login != int(login_raw) or current_server.casefold() != server.casefold():
+                return False, "MT5_ACCOUNT_BINDING_MISMATCH"
+    except (AttributeError, ValueError, TypeError, OverflowError):
+        return False, "MT5_ACCOUNT_SESSION_UNVERIFIABLE"
 
     return True, None
 
@@ -1273,7 +1286,10 @@ def main():
         }, ensure_ascii=False) + "\n")
         return
 
-    ok_conn, conn_err = connect_mt5(mt5, cfg)
+    mutation_actions = ("order", "dca_plus", "manage_positions", "breakeven", "close")
+    ok_conn, conn_err = connect_mt5(
+        mt5, cfg, require_account_binding=(action in mutation_actions)
+    )
     if not ok_conn:
         sys.stdout.write(json.dumps({
             "connected": False,

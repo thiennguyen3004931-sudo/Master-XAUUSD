@@ -4,6 +4,14 @@ This document covers **scripts/xauusd-standalone-server.mjs** and **scripts/mt5-
 
 **Source-only merge decision (2026-11-09):** The repository owner explicitly waived MT5 DEMO as a **pre-merge condition for integrating the trading mechanism into `main`**. This waiver does not supply missing DEMO / broker evidence, authorize REAL orders, or warrant profitability. Existing fail-closed REAL trade restrictions remain active. Production rollout and real-account acceptance are separate decisions.
 
+## MT5 existing-session binding (source-only hardening)
+
+V6 direct MT5 uses the **already signed-in MT5 terminal session**. Even a status `probe` must never call `mt5.login()` or silently switch the brokerage account. When `login` and `server` are configured, Python compares both with the existing broker session and fails closed on mismatch, unknown session, invalid account ID or incomplete expected identity; no account ID/password is printed in the rejection. Every broker-mutating action, including existing-position management, now requires **both** an explicit login and server before connection. A read-only probe without an expected identity may inspect the terminal but cannot thereby authorize trading.
+
+The Python process also does **not** run `pip install` on demand. If the approved MetaTrader5 package is missing, the operator must provision it separately on the intended machine; a routine probe must never install or update software in the operating environment.
+
+This is not a proof that `mt5.initialize()` is free of all terminal startup side effects, or that manual account changes cannot race an already-connected process. Acceptance still requires independent Windows runtime and broker evidence. `live_permission = False` remains in force.
+
 ## Hard release gates
 
 - **Do not deploy this code on a LIVE account.** Source-only merging may proceed at the owner's instruction without MT5 DEMO E2E, but Windows broker execution / lifecycle and independent acceptance remain **unverified**. V6 direct broker actions reject REAL account entry, DCA, close, BE and SL/TP management. The standalone Web account switch does not arm LIVE.
