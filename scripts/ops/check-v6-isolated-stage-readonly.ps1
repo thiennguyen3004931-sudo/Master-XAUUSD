@@ -80,9 +80,21 @@ $nodePresent = $null -ne (Get-Command node.exe -ErrorAction SilentlyContinue)
 $pythonPresent = $null -ne (Get-Command python.exe -ErrorAction SilentlyContinue)
 Write-Host ('V6_STAGE_NODE_COMMAND_PRESENT=' + $nodePresent)
 Write-Host ('V6_STAGE_PYTHON_COMMAND_PRESENT=' + $pythonPresent)
+$launcherPresent = $null -ne (Get-Command py.exe -ErrorAction SilentlyContinue)
+Write-Host ('V6_STAGE_PY_LAUNCHER_PRESENT=' + $launcherPresent)
+Write-Host 'V6_STAGE_PYTHON_EXECUTION=NOT_CHECKED'
+Write-Host 'V6_STAGE_MT5_PACKAGE=NOT_CHECKED'
+# Query all listeners first: no match for one port is not a cmdlet failure.
+$listenerInventory = $null
+try {
+    $listenerInventory = @(Get-NetTCPConnection -State Listen -ErrorAction Stop)
+} catch {
+    Write-Host 'V6_STAGE_LISTENER_INVENTORY=UNAVAILABLE'
+}
 foreach ($port in @(3711, 5717)) {
     try {
-        $existing = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction Stop)
+        if ($null -eq $listenerInventory) { throw 'LISTENER_INVENTORY_UNAVAILABLE' }
+        $existing = @($listenerInventory | Where-Object { $_.LocalPort -eq $port })
         Write-Host ('V6_STAGE_PORT_' + $port + '_AVAILABLE=' + ($existing.Count -eq 0))
     } catch {
         Write-Host ('V6_STAGE_PORT_' + $port + '_AVAILABLE=UNVERIFIED')
