@@ -1,0 +1,86 @@
+name: V6 Isolated Source Package (NO DEPLOY)
+
+# Only a GitHub-hosted disposable Windows runner can create the source archive.
+# No secrets, self-hosted runner, MT5 account, deployment or service start.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/v6-isolated-source-release.yml'
+      - 'scripts/ops/build-v6-isolated-source-release.py'
+      - 'scripts/ops/check-v6-isolated-stage-readonly.ps1'
+      - 'tests/test_v6_isolated_source_release.py'
+      - 'docs/V6-ISOLATED-SOURCE-RELEASE.md'
+      - 'scripts/xauusd-standalone-server.mjs'
+      - 'scripts/mt5-direct-probe.py'
+      - 'scripts/v6-api-input-guards.mjs'
+      - 'scripts/xauusd_v6_trade_rules.py'
+      - 'scripts/v6_daily_loss_guard.py'
+      - 'apps/web/public/standalone-ui.html'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v6-isolated-source-release.yml'
+      - 'scripts/ops/build-v6-isolated-source-release.py'
+      - 'scripts/ops/check-v6-isolated-stage-readonly.ps1'
+      - 'tests/test_v6_isolated_source_release.py'
+      - 'docs/V6-ISOLATED-SOURCE-RELEASE.md'
+      - 'scripts/xauusd-standalone-server.mjs'
+      - 'scripts/mt5-direct-probe.py'
+      - 'scripts/v6-api-input-guards.mjs'
+      - 'scripts/xauusd_v6_trade_rules.py'
+      - 'scripts/v6_daily_loss_guard.py'
+      - 'apps/web/public/standalone-ui.html'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-only-bundle:
+    name: verify-and-package-v6-no-deploy
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout source on GitHub-hosted disposable Windows
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set up Node 24 for source-only syntax checks
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify deterministic allowlist and fail-closed REAL source
+        shell: pwsh
+        run: python -m unittest discover -s tests -p 'test_v6_isolated_source_release.py' -v
+      - name: Verify server source syntax and isolation contracts
+        shell: pwsh
+        run: |
+          node --check scripts/xauusd-standalone-server.mjs
+          node --test tests/test_v6_server_source.mjs
+      - name: Produce source-only ZIP from exact checked-out HEAD
+        shell: pwsh
+        run: python scripts/ops/build-v6-isolated-source-release.py
+      - name: Extract on disposable hosted runner and verify read-only stage
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $env:RUNNER_TEMP 'v6-source-stage'
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Expand-Archive -LiteralPath 'artifacts/v6-isolated-source-only.zip' -DestinationPath $stage
+          $preflight = Join-Path $stage 'scripts/ops/check-v6-isolated-stage-readonly.ps1'
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $preflight
+          if ($LASTEXITCODE -ne 0) { throw 'Read-only V6 source stage checker did not pass' }
+          Write-Host 'V6_PACKAGE_SMOKE_SOURCE_ONLY=PASS'
+          Write-Host 'V6_LIVE_AUTHORIZATION=FALSE'
+      - name: Upload source-only archive for reviewed main only
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'thiennguyen3004931-sudo/Master-XAUUSD'
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6-isolated-source-only-${{ github.sha }}
+          path: artifacts/v6-isolated-source-only.zip
+          if-no-files-found: error
+          retention-days: 14
