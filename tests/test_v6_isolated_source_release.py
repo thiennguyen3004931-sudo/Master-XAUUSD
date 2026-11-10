@@ -97,6 +97,14 @@ class IsolatedV6SourceReleaseTest(unittest.TestCase):
         with self.assertRaises(release.SourceReleaseRejected):
             release.build(self.root, self.out)
 
+    def test_staged_source_edit_is_rejected_against_head(self):
+        file = self.root / "scripts" / "mt5-direct-probe.py"
+        file.write_bytes(file.read_bytes() + b"\n# staged, not reviewed at HEAD\n")
+        git(self.root, "add", "--", "scripts/mt5-direct-probe.py")
+        with self.assertRaises(release.SourceReleaseRejected):
+            release.build(self.root, self.out)
+        self.assertFalse(self.out.exists())
+
     def test_lifting_real_guard_in_committed_source_is_rejected(self):
         file = self.root / "scripts" / "mt5-direct-probe.py"
         source = file.read_text(encoding="utf-8")

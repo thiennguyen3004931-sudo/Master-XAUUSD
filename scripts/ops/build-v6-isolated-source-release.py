@@ -66,7 +66,10 @@ def _source_bytes(root: Path, commit: str) -> dict[str, bytes]:
         # Let Git apply its own text filters to detect edits, then package only
         # the canonical bytes from HEAD. This is both platform-independent and
         # immune to any untracked working-tree content entering the ZIP.
-        if _git(root, "status", "--porcelain", "--untracked-files=no", "--", rel).strip():
+        # Compare content against HEAD (including staged edits). A status-only
+        # check can transiently report M after a CRLF/stat-cache refresh even
+        # when Git's normalized content is identical to the trusted blob.
+        if _git(root, "diff", "--name-only", "HEAD", "--", rel).strip():
             raise SourceReleaseRejected("allowlisted source has uncommitted changes")
         trusted = _git(root, "show", f"{commit}:{rel}")
         content[rel] = trusted

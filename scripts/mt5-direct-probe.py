@@ -803,6 +803,17 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
         existing_positions = None
     if existing_positions is None:
         return {"ok": False, "message": "Cannot verify broker portfolio positions; new order blocked"}
+    # Pending exposure is account-wide, including manual/foreign symbols and
+    # PLACED requests whose fill has not yet reached positions_get(). Never
+    # interpret a failed inventory as an empty book or cancel orders here.
+    try:
+        pending_orders = mt5.orders_get()
+    except Exception:
+        pending_orders = None
+    if not isinstance(pending_orders, (tuple, list)):
+        return {"ok": False, "message": "Cannot verify broker pending orders; new order blocked"}
+    if pending_orders:
+        return {"ok": False, "message": "Unreconciled broker pending orders exist; new order blocked"}
     open_risk = 0.0
     for existing in existing_positions:
         old_sl = float(getattr(existing, "sl", 0) or 0)
