@@ -1,0 +1,87 @@
+name: V6 Windows isolated source staging (NO START)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/v6-windows-isolated-stage.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v6-windows-isolated-stage.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trusted-bundle:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test offline broker contracts and package source
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p 'test_v6_*.py' -q
+          if ($LASTEXITCODE -ne 0) { throw 'V6_OFFLINE_TESTS_FAILED' }
+          node --test tests/test_v6_server_source.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'V6_NODE_TESTS_FAILED' }
+          python scripts/ops/build-v6-isolated-source-release.py
+          if ($LASTEXITCODE -ne 0) { throw 'V6_SOURCE_BUILD_FAILED' }
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'thiennguyen3004931-sudo/Master-XAUUSD'
+        with:
+          name: v6-host-stage-${{ github.sha }}
+          path: artifacts/v6-isolated-source-only.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  separate-host-stage:
+    # A source-only staging copy, never a production checkout or service install.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'thiennguyen3004931-sudo/Master-XAUUSD'
+    needs: trusted-bundle
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 8
+    concurrency:
+      group: v6-isolated-source-stage
+      cancel-in-progress: false
+    steps:
+      # No checkout/clean, pip, login, Node server, MT5 import, task or service.
+      - name: Reserve a fresh directory under runner temporary storage
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) { throw 'RUNNER_TEMP_MISSING' }
+          $stage = Join-Path $env:RUNNER_TEMP ('masterxauusd-v6-stage-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath $stage) { throw 'STAGE_ALREADY_EXISTS_NO_OVERWRITE' }
+          New-Item -ItemType Directory -Path $stage -ErrorAction Stop | Out-Null
+          ('V6_STAGE_ROOT=' + $stage) | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - uses: actions/download-artifact@v4
+        with:
+          name: v6-host-stage-${{ github.sha }}
+          path: ${{ env.V6_STAGE_ROOT }}/download
+      - name: Extract and verify independent source without starting V6
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:V6_STAGE_ROOT 'download\v6-isolated-source-only.zip'
+          $source = Join-Path $env:V6_STAGE_ROOT 'source'
+          if (Test-Path -LiteralPath $source) { throw 'SOURCE_ALREADY_EXISTS_NO_OVERWRITE' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $source -ErrorAction Stop
+          $manifest = Get-Content -LiteralPath (Join-Path $source 'V6-ISOLATED-RELEASE-MANIFEST.json') -Raw | ConvertFrom-Json
+          if ($manifest.commit -cne $env:GITHUB_SHA) { throw 'SOURCE_SHA_MISMATCH' }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $source 'scripts\ops\check-v6-isolated-stage-readonly.ps1')
+          if ($LASTEXITCODE -ne 0) { throw 'ISOLATED_STAGE_VALIDATION_FAILED' }
+          Write-Host ('V6_VERIFIED_STAGED_SOURCE_SHA=' + $env:GITHUB_SHA)
+          Write-Host 'V6_STAGE_LOCATION=RUNNER_TEMP_SEPARATE_DIRECTORY'
+          Write-Host 'V6_STAGE_PRODUCTION_INSTALL=NO'
+          Write-Host 'V6_STAGE_SERVER_STARTED=NO'
+          Write-Host 'V6_STAGE_MT5_SESSION=NOT_CHECKED'
+          Write-Host 'V6_LIVE_APPROVAL=NO'
