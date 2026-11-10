@@ -78,7 +78,7 @@ def connect_mt5(mt5, config, *, require_account_binding=False):
         return False, "MT5_ACCOUNT_BINDING_REQUIRED"
     if has_identity and not (login_raw and server):
         return False, "MT5_ACCOUNT_BINDING_INCOMPLETE"
-    if login_raw and (not login_raw.isascii() or not login_raw.isdecimal() or int(login_raw) <= 0):
+    if login_raw and (len(login_raw) > 18 or not login_raw.isascii() or not login_raw.isdecimal() or int(login_raw) <= 0):
         return False, "MT5_ACCOUNT_BINDING_INVALID"
 
     initialized = False
