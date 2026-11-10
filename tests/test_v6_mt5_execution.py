@@ -194,10 +194,63 @@ class MockBroker:
                     if p.volume <= 1e-8:
                         self.positions.remove(p)
             return SimpleNamespace(retcode=10009, order=123, price=request["price"])
+        self.positions.append(SimpleNamespace(
+            ticket=123, symbol=request["symbol"], type=request["type"],
+            magic=request["magic"], volume=request["volume"],
+            price_open=request["price"], sl=request["sl"], tp=request["tp"],
+        ))
         return SimpleNamespace(retcode=10009, order=123, price=request["price"])
 
 
 class ExecutionRiskTest(unittest.TestCase):
+    def test_done_ack_requires_actual_protected_position_readback(self):
+        class AckOnlyBroker(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                return SimpleNamespace(retcode=10009, order=123, price=request["price"])
+        mt5 = AckOnlyBroker()
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "BUY", "volume": 0.02, "slDistance": 6.8, "tpDistance": 16,
+        })
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["submitted"])
+        self.assertTrue(result["uncertain"])
+        self.assertEqual(len(mt5.sent), 1)
+
+    def test_done_with_wrong_protection_or_exposure_never_claims_success(self):
+        cases = {"sl": 0, "tp": 0, "volume": 0.01, "symbol": "EURUSD",
+                 "type": 1, "magic": 999, "price_open": 4006.0}
+        for field, value in cases.items():
+            with self.subTest(field=field):
+                class WrongFillBroker(MockBroker):
+                    def order_send(self, request):
+                        result = super().order_send(request)
+                        setattr(self.positions[-1], field, value)
+                        return result
+                mt5 = WrongFillBroker()
+                result = engine.execute_order(mt5, "XAUUSD.G", {
+                    "side": "BUY", "volume": 0.02, "slDistance": 6.8, "tpDistance": 16,
+                })
+                self.assertFalse(result["ok"])
+                self.assertTrue(result["uncertain"])
+                self.assertEqual(len(mt5.sent), 1)
+
+    def test_done_readback_failure_blocks_success_without_second_send(self):
+        for response in (None, [], "unknown"):
+            with self.subTest(response=response):
+                class MissingReadbackBroker(MockBroker):
+                    def positions_get(self, *args, **kwargs):
+                        if "ticket" in kwargs:
+                            return response
+                        return super().positions_get(*args, **kwargs)
+                mt5 = MissingReadbackBroker()
+                result = engine.execute_order(mt5, "XAUUSD.G", {
+                    "side": "SELL", "volume": 0.02, "slDistance": 6.8, "tpDistance": 16,
+                })
+                self.assertFalse(result["ok"])
+                self.assertTrue(result["uncertain"])
+                self.assertEqual(len(mt5.sent), 1)
+
     def test_pending_exposure_blocks_all_entry_paths_account_wide(self):
         # Both manual/automatic entries and DCA eventually use execute_order.
         # Foreign symbol/magic must not be filtered out of the account book.
