@@ -4,6 +4,14 @@ This document covers **scripts/xauusd-standalone-server.mjs** and **scripts/mt5-
 
 **Source-only merge decision (2026-11-09):** The repository owner explicitly waived MT5 DEMO as a **pre-merge condition for integrating the trading mechanism into `main`**. This waiver does not supply missing DEMO / broker evidence, authorize REAL orders, or warrant profitability. Existing fail-closed REAL trade restrictions remain active. Production rollout and real-account acceptance are separate decisions.
 
+## Independent V6 runtime network and Phase7C isolation (source-only hardening)
+
+The standalone V6 **API and Web bind only to `127.0.0.1`** on their configured ports (defaults 3711 and 5717). The server **does not launch or revive Cloudflare/Internet tunnels**, and the `POST /api/v1/mt5/internet-tunnel` route explicitly returns HTTP 403 until a separate secured remote access path is reviewed. Do not open firewall ports, expose these endpoints to a public network, or treat a mobile tunnel link cached by an older installation as active. UI access is local to the V6 machine; remote access requires a separate, explicitly designed and audited solution.
+
+The independently merged V6 uses its **direct Python MT5** integration. Its server no longer writes legacy `packages/mt5-broker/bridge/.env.phase7b-demo` / `.env.phase7b-live`, `phase7c-account-mode.json`, or `phase7c-live-arm.json` when starting or saving an account. **Do not overlay V6 onto the existing Phase7C installation.** In particular, tests showing MT5 is running or legacy TCP ports are open do not prove V6 is installed or attached to the broker.
+
+These boundaries do not start V6 on Windows, install Python packages, validate live-account controls or grant REAL authorization. The Python `live_permission = False` guard continues blocking REAL broker mutations.
+
 ## MT5 existing-session binding (source-only hardening)
 
 V6 direct MT5 uses the **already signed-in MT5 terminal session**. Even a status `probe` must never call `mt5.login()` or silently switch the brokerage account. When `login` and `server` are configured, Python compares both with the existing broker session and fails closed on mismatch, unknown session, invalid account ID or incomplete expected identity; no account ID/password is printed in the rejection. Every broker-mutating action, including existing-position management, now requires **both** an explicit login and server before connection. A read-only probe without an expected identity may inspect the terminal but cannot thereby authorize trading.

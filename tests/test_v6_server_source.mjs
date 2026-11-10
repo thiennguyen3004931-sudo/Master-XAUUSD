@@ -84,18 +84,32 @@ test("pending or partially filled V6 entries disable automatic re-submission", (
   assert.match(manualDca, /positiveDcaConfig\.enabled = false/);
 });
 
-test("DEMO bridge has no shared static API key and defaults to trading disabled", () => {
-  const profile = server.slice(
-    server.indexOf("function writeBridgeEnvAndArmFiles(cfg)"),
-    server.indexOf("function getLanIps()"),
+test("independent V6 never modifies legacy Phase7C bridge, account mode or LIVE ARM", () => {
+  assert.doesNotMatch(server, /writeBridgeEnvAndArmFiles/);
+  assert.doesNotMatch(server, /MT5_TRADING_ENABLED=/);
+  assert.doesNotMatch(server, /MT5_ALLOW_REAL_ACCOUNT=/);
+  assert.doesNotMatch(server, /XAUUSD_PHASE7C_ALLOW_LIVE_TRADING=/);
+  assert.doesNotMatch(server, /phase7c-live-arm[.]json/);
+  assert.doesNotMatch(server, /phase7c-account-mode[.]json/);
+  assert.doesNotMatch(server, /[.]env[.]phase7b-(demo|live)/);
+  assert.match(server, /Independent V6 direct-MT5 must never mutate Phase7C bridge profile/);
+});
+
+test("standalone V6 is loopback-only, remote tunnels are disabled", () => {
+  assert.match(server, /apiServer[.]listen\(API_PORT, "127[.]0[.]0[.]1",/);
+  assert.match(server, /webServer[.]listen\(WEB_PORT, "127[.]0[.]0[.]1",/);
+  assert.doesNotMatch(server, /[.]listen\((?:API_PORT|WEB_PORT), "0[.]0[.]0[.]0"/);
+  assert.doesNotMatch(server, /startInternetTunnelForMobile|readSavedTunnelUrl/);
+  assert.doesNotMatch(server, /\bspawn\s*\(|\bcloudflared\b/i);
+  const tunnelRoute = server.slice(
+    server.indexOf('if (pathname === "/api/v1/mt5/internet-tunnel"'),
+    server.indexOf('if (pathname === "/api/v1/mt5/order"'),
   );
-  assert.ok(profile.length > 0);
-  assert.doesNotMatch(profile, /xauusd_live_bridge_secret_2026_key/);
-  assert.match(profile, /const bridgeApiReady = apiKey\.length >= 32/);
-  assert.match(profile, /MT5_API_KEY=\$\{bridgeApiReady \? apiKey : ""\}/);
-  assert.match(profile, /MT5_TRADING_ENABLED=\$\{bridgeApiReady \? "true" : "false"\}/);
-  assert.match(profile, /if \(isLive\) \{/);
-  assert.match(profile, /return;/);
+  assert.ok(tunnelRoute.length > 0);
+  assert.match(tunnelRoute, /sendJson\(res, 403,/);
+  assert.match(tunnelRoute, /V6_REMOTE_TUNNEL_DISABLED/);
+  assert.doesNotMatch(tunnelRoute, /invokeMt5PythonEngine|startInternetTunnelForMobile/);
+  assert.match(server, /V6_NETWORK_SCOPE=LOOPBACK_ONLY\|REMOTE_TUNNEL=DISABLED/);
 });
 
 test("runtime account and credential files must never be tracked in Git", () => {
