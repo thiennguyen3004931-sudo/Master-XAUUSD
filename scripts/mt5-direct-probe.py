@@ -19,19 +19,12 @@ from xauusd_v6_trade_rules import evaluate_entry, structural_stop, trail_stop, p
 from v6_daily_loss_guard import verify_daily_new_order_budget
 
 def ensure_mt5_installed():
+    """Never modify the Windows runtime or install packages during MT5 probes."""
     try:
         import MetaTrader5 as mt5
         return mt5, None
     except ImportError:
-        try:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "--quiet", "MetaTrader5"],
-                timeout=45
-            )
-            import MetaTrader5 as mt5
-            return mt5, None
-        except Exception as e:
-            return None, f"Chưa cài gói Python MetaTrader5 ({e}). Hãy mở CMD chạy: pip install MetaTrader5"
+        return None, "MT5 Python package is not installed; an operator must install an approved version offline"
 
 def detect_running_terminal_path():
     if os.name != "nt":
