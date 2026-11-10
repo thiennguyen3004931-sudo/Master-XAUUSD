@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 from math import isfinite, floor
 from xauusd_v6_trade_rules import evaluate_entry, structural_stop, trail_stop, peak_profit_stop, closed
+from v6_daily_loss_guard import verify_daily_new_order_budget
 
 def ensure_mt5_installed():
     try:
@@ -801,6 +802,12 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
         open_risk += max(0.0, -float(old_profit)) * 1.05
     if (open_risk + new_risk) > equity * max_total_pct / 100:
         return {"ok": False, "message": "Rejected: portfolio equity risk limit"}
+    # Every V6 entry, including manual requests and positive DCA, must pass
+    # account-wide daily realized/floating loss and an emergency entry halt.
+    # No browser/order-config override can bypass this fail-closed broker check.
+    daily_gate = verify_daily_new_order_budget(mt5, account, existing_positions, new_risk)
+    if not daily_gate["allowed"]:
+        return {"ok": False, "message": daily_gate["message"]}
     req = {
         "action": int(getattr(mt5, "TRADE_ACTION_DEAL", 1)),
         "symbol": active_symbol,

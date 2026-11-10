@@ -19,6 +19,11 @@ spec.loader.exec_module(engine)
 class MockBroker:
     ORDER_TYPE_BUY = 0
     ORDER_TYPE_SELL = 1
+    DEAL_TYPE_BUY = 0
+    DEAL_TYPE_SELL = 1
+    DEAL_ENTRY_IN = 0
+    DEAL_ENTRY_OUT = 1
+    DEAL_ENTRY_OUT_BY = 3
     ORDER_FILLING_FOK = 0
     ORDER_TIME_GTC = 0
     TRADE_ACTION_DEAL = 1
@@ -27,6 +32,7 @@ class MockBroker:
 
     def __init__(self):
         self.positions = []
+        self.deals = []
         self.asks = 4000.20
         self.bids = 4000.00
         self.sent = []
@@ -58,6 +64,9 @@ class MockBroker:
             return [p for p in self.positions if str(p.symbol) == str(symbol)]
         return self.positions
 
+    def history_deals_get(self, start, end):
+        return self.deals
+
     def order_send(self, request):
         self.sent.append(request)
         if request["action"] == self.TRADE_ACTION_SLTP:
@@ -84,6 +93,30 @@ class ExecutionRiskTest(unittest.TestCase):
             "maxRiskPercent": 0.5
         })
         self.assertFalse(result["ok"])
+        self.assertEqual(mt5.sent, [])
+
+    def test_daily_account_loss_veto_blocks_order_before_order_send(self):
+        mt5 = MockBroker()
+        when = int(time.time()) - 60
+        mt5.deals = [
+            SimpleNamespace(
+                time=when, type=0, entry=0, position_id=992,
+                profit=0.0, commission=0.0, swap=0.0, fee=0.0
+            ),
+            SimpleNamespace(
+                time=when, type=1, entry=1, position_id=992,
+                profit=-75.0, commission=0.0, swap=0.0, fee=0.0
+            ),
+        ]
+        # Broker equity 4000, reconstructed opening equity 4075.00:
+        # 2% daily limit 81.50, leaving only 6.50 for new SL risk.
+        result = engine.execute_order(mt5, "XAUUSD.G", {
+            "side": "BUY", "volume": 0.02,
+            "slDistance": 6.8, "tpDistance": 16,
+            "maxRiskPercent": 0.5,
+        })
+        self.assertFalse(result["ok"])
+        self.assertIn("daily account loss", result["message"])
         self.assertEqual(mt5.sent, [])
 
     def test_within_risk_budget_sends_protected_order(self):
