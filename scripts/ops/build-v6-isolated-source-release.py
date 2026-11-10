@@ -62,11 +62,14 @@ def _source_bytes(root: Path, commit: str) -> dict[str, bytes]:
         p = root.joinpath(*rel.split("/"))
         if p.is_symlink() or not p.is_file() or not _is_relative_to(p.resolve(), root):
             raise SourceReleaseRejected("an allowlisted source file is absent or not regular")
-        data = p.read_bytes()
+        # GitHub-hosted Windows can check out LF Git blobs as CRLF working files.
+        # Let Git apply its own text filters to detect edits, then package only
+        # the canonical bytes from HEAD. This is both platform-independent and
+        # immune to any untracked working-tree content entering the ZIP.
+        if _git(root, "status", "--porcelain", "--untracked-files=no", "--", rel).strip():
+            raise SourceReleaseRejected("allowlisted source has uncommitted changes")
         trusted = _git(root, "show", f"{commit}:{rel}")
-        if trusted != data:
-            raise SourceReleaseRejected("source differs from the exact HEAD commit")
-        content[rel] = data
+        content[rel] = trusted
     return content
 
 
@@ -146,8 +149,12 @@ def main() -> int:
     args = parser.parse_args()
     try:
         manifest = build(args.root, args.output)
-    except (SourceReleaseRejected, OSError, UnicodeError) as exc:
-        print(f"V6_ISOLATED_SOURCE_RELEASE=BLOCKED ({type(exc).__name__})", file=sys.stderr)
+    except SourceReleaseRejected as exc:
+        # Rejection messages are fixed, non-sensitive status text (no paths/tokens).
+        print("V6_ISOLATED_SOURCE_RELEASE=BLOCKED " + str(exc), file=sys.stderr)
+        return 2
+    except (OSError, UnicodeError):
+        print("V6_ISOLATED_SOURCE_RELEASE=BLOCKED IO_ERROR", file=sys.stderr)
         return 2
     print("V6_ISOLATED_SOURCE_RELEASE=BUILT_SOURCE_ONLY")
     print("V6_ISOLATED_SOURCE_COMMIT=" + manifest["commit"])
