@@ -43,6 +43,136 @@ jobs:
           Expand-Archive -LiteralPath artifacts/v6-isolated-source-only.zip -DestinationPath artifacts/checker-test
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File artifacts/checker-test/scripts/ops/check-v6-isolated-stage-readonly.ps1
           if ($LASTEXITCODE -ne 0) { throw 'STAGE_CHECKER_FAILED' }
+      - name: Inspect Python runtime metadata without importing MT5
+        shell: powershell
+        env:
+          PYLAUNCHER_ALLOW_INSTALL: ''
+          PYTHON_MANAGER_AUTOMATIC_INSTALL: 'false'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $code = @'
+          import sys, struct, sysconfig, importlib.metadata
+          roots = set(sysconfig.get_paths()[key] for key in ('purelib', 'platlib'))
+          found = any((dist.metadata.get('Name') or '').lower() == 'metatrader5' for dist in importlib.metadata.distributions(path=roots))
+          print('V6_PYTHON_VERSION=' + '.'.join(map(str, sys.version_info[:3])))
+          print('V6_PYTHON_BITS=' + str(struct.calcsize('P') * 8))
+          print('V6_MT5_PACKAGE_METADATA_PRESENT=' + str(found))
+          print('V6_MT5_IMPORT=NOT_PERFORMED')
+          print('V6_MT5_SESSION=NOT_CHECKED')
+          '@
+          $command = Get-Command py.exe -ErrorAction SilentlyContinue
+          if ($null -ne $command) {
+            $result = @(& $command.Source -3 -I -S -c $code 2>$null)
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0) {
+              $result | Where-Object { $_ -match '^V6_(PYTHON_VERSION=\d+\.\d+\.\d+|PYTHON_BITS=(32|64)|MT5_PACKAGE_METADATA_PRESENT=(True|False)|MT5_IMPORT=NOT_PERFORMED|MT5_SESSION=NOT_CHECKED)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'thiennguyen3004931-sudo/Master-XAUUSD'
+        with:
+          name: v6-host-stage-${{ github.sha }}
+          path: artifacts/v6-isolated-source-only.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  separate-host-stage:
+    # A source-only staging copy, never a production checkout or service install.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'thiennguyen3004931-sudo/Master-XAUUSD'
+    needs: trusted-bundle
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 8
+    concurrency:
+      group: v6-isolated-source-stage
+      cancel-in-progress: false
+    steps:
+      # No checkout/clean, pip, login, Node server, MT5 import, task or service.
+      - name: Reserve a fresh directory under runner temporary storage
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) { throw 'RUNNER_TEMP_MISSING' }
+          $stage = Join-Path $env:RUNNER_TEMP ('masterxauusd-v6-stage-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath $stage) { throw 'STAGE_ALREADY_EXISTS_NO_OVERWRITE' }
+          New-Item -ItemType Directory -Path $stage -ErrorAction Stop | Out-Null
+          ('V6_STAGE_ROOT=' + $stage) | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - uses: actions/download-artifact@v4
+        with:
+          name: v6-host-stage-${{ github.sha }}
+          path: ${{ env.V6_STAGE_ROOT }}/download
+      - name: Extract and verify independent source without starting V6
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:V6_STAGE_ROOT 'download\v6-isolated-source-only.zip'
+          $source = Join-Path $env:V6_STAGE_ROOT 'source'
+          if (Test-Path -LiteralPath $source) { throw 'SOURCE_ALREADY_EXISTS_NO_OVERWRITE' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $source -ErrorAction Stop
+          $manifest = Get-Content -LiteralPath (Join-Path $source 'V6-ISOLATED-RELEASE-MANIFEST.json') -Raw | ConvertFrom-Json
+          if ($manifest.commit -cne $env:GITHUB_SHA) { throw 'SOURCE_SHA_MISMATCH' }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $source 'scripts\ops\check-v6-isolated-stage-readonly.ps1')
+          if ($LASTEXITCODE -ne 0) { throw 'ISOLATED_STAGE_VALIDATION_FAILED' }
+          Write-Host ('V6_VERIFIED_STAGED_SOURCE_SHA=' + $env:GITHUB_SHA)
+          Write-Host 'V6_STAGE_LOCATION=RUNNER_TEMP_SEPARATE_DIRECTORY'
+          Write-Host 'V6_STAGE_PRODUCTION_INSTALL=NO'
+          Write-Host 'V6_STAGE_SERVER_STARTED=NO'
+          Write-Host 'V6_STAGE_MT5_SESSION=NOT_CHECKED'
+          Write-Host 'V6_LIVE_APPROVAL=NO'
+
+      - name: Inspect Python runtime metadata without importing MT5
+        shell: powershell
+        env:
+          PYLAUNCHER_ALLOW_INSTALL: ''
+          PYTHON_MANAGER_AUTOMATIC_INSTALL: 'false'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $code = @'
+          import sys, struct, sysconfig, importlib.metadata
+          roots = set(sysconfig.get_paths()[key] for key in ('purelib', 'platlib'))
+          found = any((dist.metadata.get('Name') or '').lower() == 'metatrader5' for dist in importlib.metadata.distributions(path=roots))
+          print('V6_PYTHON_VERSION=' + '.'.join(map(str, sys.version_info[:3])))
+          print('V6_PYTHON_BITS=' + str(struct.calcsize('P') * 8))
+          print('V6_MT5_PACKAGE_METADATA_PRESENT=' + str(found))
+          print('V6_MT5_IMPORT=NOT_PERFORMED')
+          print('V6_MT5_SESSION=NOT_CHECKED')
+          '@
+          $command = Get-Command py.exe -ErrorAction SilentlyContinue
+          if ($null -ne $command) {
+            $result = @(& $command.Source -3 -I -S -c $code 2>$null)
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0) {
+              $result | Where-Object { $_ -match '^V6_(PYTHON_VERSION=\d+\.\d+\.\d+|PYTHON_BITS=(32|64)|MT5_PACKAGE_METADATA_PRESENT=(True|False)|MT5_IMPORT=NOT_PERFORMED|MT5_SESSION=NOT_CHECKED)$' } | Write-Host
+            } else {
+              Write-Host 'V6_PYTHON_METADATA_PROBE=UNAVAILABLE'
+            }
+          } else {
+            Write-Host 'V6_PYTHON_METADATA_PROBE=LAUNCHER_UNAVAILABLE'
+          }
+          try {
+            $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop)
+            foreach ($port in @(3712, 5718)) {
+              $busy = @($listeners | Where-Object { $_.LocalPort -eq $port }).Count -gt 0
+              Write-Host ('V6_CANDIDATE_PORT_' + $port + '_AVAILABLE=' + (-not $busy))
+            }
+          } catch {
+            Write-Host 'V6_CANDIDATE_PORTS=UNVERIFIED'
+          }
+          Write-Host 'V6_LIVE_APPROVAL=NO'
+ } | Write-Host
+            } else {
+              Write-Host 'V6_PYTHON_METADATA_PROBE=UNAVAILABLE'
+            }
+          } else {
+            Write-Host 'V6_PYTHON_METADATA_PROBE=LAUNCHER_UNAVAILABLE'
+          }
+          try {
+            $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop)
+            foreach ($port in @(3712, 5718)) {
+              $busy = @($listeners | Where-Object { $_.LocalPort -eq $port }).Count -gt 0
+              Write-Host ('V6_CANDIDATE_PORT_' + $port + '_AVAILABLE=' + (-not $busy))
+            }
+          } catch {
+            Write-Host 'V6_CANDIDATE_PORTS=UNVERIFIED'
+          }
+          Write-Host 'V6_LIVE_APPROVAL=NO'
+
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'thiennguyen3004931-sudo/Master-XAUUSD'
         with:
