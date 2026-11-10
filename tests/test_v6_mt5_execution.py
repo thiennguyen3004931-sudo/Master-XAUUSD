@@ -16,6 +16,104 @@ engine = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(engine)
 
 
+class ExistingTerminalAccount:
+    """Mock terminal identity fixture: never establishes a real connection."""
+
+    def __init__(self, *, login=111222, server="Broker-Demo", init_ok=True, account_ok=True):
+        self.account = SimpleNamespace(login=login, server=server) if account_ok else None
+        self.init_ok = init_ok
+        self.initialized = 0
+        self.login_calls = 0
+
+    def initialize(self, **kwargs):
+        self.initialized += 1
+        return self.init_ok
+
+    def account_info(self):
+        return self.account
+
+    def login(self, **kwargs):
+        self.login_calls += 1
+        raise AssertionError("V6 must never call MT5 login or switch accounts")
+
+
+class ExistingSessionBindingTest(unittest.TestCase):
+    def test_probe_mismatch_fails_without_switching_even_with_password(self):
+        terminal = ExistingTerminalAccount(login=999111)
+        ok, error = engine.connect_mt5(terminal, {
+            "login": "111222", "server": "Broker-Demo", "password": "not-used"
+        })
+        self.assertFalse(ok)
+        self.assertEqual(error, "MT5_ACCOUNT_BINDING_MISMATCH")
+        self.assertEqual(terminal.login_calls, 0)
+
+    def test_server_mismatch_fails_and_does_not_switch(self):
+        terminal = ExistingTerminalAccount(server="Broker-Other")
+        ok, error = engine.connect_mt5(terminal, {
+            "login": "111222", "server": "Broker-Demo"
+        })
+        self.assertFalse(ok)
+        self.assertEqual(error, "MT5_ACCOUNT_BINDING_MISMATCH")
+        self.assertEqual(terminal.login_calls, 0)
+
+    def test_matching_account_accepts_read_only_probe_without_login(self):
+        terminal = ExistingTerminalAccount()
+        ok, error = engine.connect_mt5(terminal, {
+            "login": "111222", "server": " broker-demo ", "password": "unused"
+        })
+        self.assertTrue(ok, error)
+        self.assertIsNone(error)
+        self.assertEqual(terminal.login_calls, 0)
+
+    def test_mutation_requires_explicit_account_and_server(self):
+        for config in ({}, {"login": "111222"}, {"server": "Broker-Demo"}):
+            with self.subTest(config=config):
+                terminal = ExistingTerminalAccount()
+                ok, error = engine.connect_mt5(
+                    terminal, config, require_account_binding=True
+                )
+                self.assertFalse(ok)
+                self.assertIn(error, (
+                    "MT5_ACCOUNT_BINDING_REQUIRED",
+                    "MT5_ACCOUNT_BINDING_INCOMPLETE",
+                ))
+                self.assertEqual(terminal.initialized, 0)
+                self.assertEqual(terminal.login_calls, 0)
+
+    def test_probe_without_configured_identity_does_not_switch(self):
+        terminal = ExistingTerminalAccount()
+        ok, error = engine.connect_mt5(terminal, {})
+        self.assertTrue(ok, error)
+        self.assertEqual(terminal.login_calls, 0)
+
+    def test_invalid_login_is_rejected_before_initialize(self):
+        for value in ("1e3", "0", "-1", "1.5", "１", True):
+            with self.subTest(value=value):
+                terminal = ExistingTerminalAccount()
+                ok, _ = engine.connect_mt5(terminal, {
+                    "login": value, "server": "Broker-Demo"
+                })
+                self.assertFalse(ok)
+                self.assertEqual(terminal.initialized, 0)
+
+    def test_missing_or_unverifiable_terminal_account_rejected(self):
+        terminal = ExistingTerminalAccount(account_ok=False)
+        ok, error = engine.connect_mt5(terminal, {
+            "login": "111222", "server": "Broker-Demo"
+        })
+        self.assertFalse(ok)
+        self.assertEqual(error, "MT5_ACCOUNT_SESSION_UNAVAILABLE")
+        self.assertEqual(terminal.login_calls, 0)
+
+    def test_matching_explicit_binding_allows_mutation_gate_to_continue(self):
+        terminal = ExistingTerminalAccount()
+        ok, error = engine.connect_mt5(terminal, {
+            "login": 111222, "server": "Broker-Demo",
+        }, require_account_binding=True)
+        self.assertTrue(ok, error)
+        self.assertEqual(terminal.login_calls, 0)
+
+
 class MockBroker:
     ORDER_TYPE_BUY = 0
     ORDER_TYPE_SELL = 1
