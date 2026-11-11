@@ -224,7 +224,7 @@ test("V6 disconnected Web clears broker identity, quotes and percent-risk lot ca
   const rootUi = readFileSync(resolve(root, "MO_WEB_TRUC_TIEP_KHONG_CAN_SERVER.html"), "utf8");
   assert.equal(ui, rootUi, "fallback Web must receive the same MT5-disconnect protection");
   assert.ok(ui.includes("data.mt5LiveBridgeConnected === true && h.connected === true"));
-  assert.ok(ui.includes('if (connected) {\n        dotEl.className = "dot dot-up"'));
+  assert.match(ui, /if \(connected\) \{\s*dotEl\.className = "dot dot-up"/);
   assert.ok(ui.includes("window.__latestAccountBalance = null"));
   assert.ok(ui.includes("window.__mt5BalanceVerified = false"));
   assert.ok(ui.includes('window.__mt5BalanceVerified !== true'));
