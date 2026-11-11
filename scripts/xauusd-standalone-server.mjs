@@ -14,7 +14,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { execFile, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { parseRequiredTicket, parseOptionalBoolean } from "./v6-api-input-guards.mjs";
+import { parseRequiredTicket, parseOptionalBoolean, parseReadOnlyLotQuoteRequest } from "./v6-api-input-guards.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -588,7 +588,7 @@ function invokeMt5PythonEngineDirect(extraPayload = {}, force = false) {
         try {
           const lines = stdout.trim().split(/\r?\n/);
           const parsed = JSON.parse(lines[lines.length - 1]);
-          if (isProbeOnly || parsed.connected !== undefined) {
+          if (isProbeOnly) {
             lastDirectProbeSnapshot = parsed;
             lastDirectProbeTime = Date.now();
           }
@@ -982,6 +982,41 @@ async function handleApiRequest(req, res) {
     sendJson(res, CONTROL_TOKEN ? 401 : 503, {
       error: CONTROL_TOKEN ? "V6_CONTROL_TOKEN_INVALID" : "V6_CONTROL_TOKEN_NOT_CONFIGURED",
       message: "ZIQ_V6_CONTROL_TOKEN and x-v6-control-token are required for all MT5 API access"
+    });
+    return;
+  }
+
+  // Read-only broker-priced risk estimate. Never activate LIVE, store volumes
+  // or pass a client-selected symbol/account through to the MT5 helper.
+  if (pathname === "/api/v1/mt5/lot-quote" && req.method === "POST") {
+    let request;
+    try {
+      request = parseReadOnlyLotQuoteRequest(await readJsonBody(req));
+    } catch {
+      sendJson(res, 400, { ok: false, executionAuthorized: false, reason: "INVALID_READ_ONLY_RISK_REQUEST" });
+      return;
+    }
+    if (!currentAccountConfig.login || !currentAccountConfig.server || !currentAccountConfig.brokerSymbol) {
+      sendJson(res, 503, { ok: false, executionAuthorized: false, reason: "EXPLICIT_BROKER_BINDING_REQUIRED" });
+      return;
+    }
+    const snap = await invokeMt5PythonEngine({
+      action: "quote_lot",
+      symbol: currentAccountConfig.brokerSymbol,
+      side: request.side,
+      slPrice: request.slPrice,
+      riskPercent: request.riskPercent,
+      maxRiskPercent: 0.5,
+    }, true);
+    const quote = snap?.quoteOnly === true && snap.connected === true
+      ? snap.actionResult
+      : { ok: false, executionAuthorized: false, reason: "MT5_BROKER_QUOTE_UNAVAILABLE" };
+    sendJson(res, quote?.ok === true ? 200 : 422, {
+      ok: quote?.ok === true,
+      quoteResult: { ...quote, executionAuthorized: false },
+      quoteOnly: true,
+      liveAuthorized: false,
+      source: "BROKER_ORDER_CALC_PROFIT_READ_ONLY",
     });
     return;
   }
