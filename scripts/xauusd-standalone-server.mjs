@@ -312,8 +312,6 @@ let lastHoldReportTime = 0;
 
 function formatOrderEntryTelegramMsg(orderRes, accountLogin, balance) {
   const sideIcon = orderRes.side === "BUY" ? "🟢" : "🔴";
-  const riskUsd = ((orderRes.slDistance || 6.8) * (orderRes.volume || 0.05) * 100).toFixed(2);
-  const rewardUsd = ((orderRes.tpDistance || 15.0) * (orderRes.volume || 0.05) * 100).toFixed(2);
   return [
     `${sideIcon} <b>[VÀO LỆNH MỚI] ${orderRes.side} ${Number(orderRes.volume).toFixed(2)} LOT ${orderRes.symbol} (#${orderRes.ticket || "MT5"})</b>`,
     `🤖 <b>Bot thực thi:</b> ${orderRes.botName || getActiveBotDisplayName()}`,
@@ -322,7 +320,7 @@ function formatOrderEntryTelegramMsg(orderRes, accountLogin, balance) {
     `🛡 <b>Stoploss (SL):</b> <b>${Number(orderRes.sl).toFixed(2)}</b> (${orderRes.slReason || "Theo cấu trúc 6–8 giá"})`,
     `🎯 <b>Take Profit (TP):</b> <b>${Number(orderRes.tp).toFixed(2)}</b> (${orderRes.tpReason || "Tại vùng cản H1/H4"})`,
     `📌 <b>Cơ chế giữ lệnh:</b> Đạt R:R 1:1 tự kéo BE → Nâng SL theo đáy/đỉnh M5 & Khóa cách đỉnh 10 giá nếu nến M15 giật mạnh`,
-    `💰 <b>Lãi/Lỗ hiện tại:</b> $0.00 USD (Rủi ro 1R: -$${riskUsd} | Kỳ vọng TP: +$${rewardUsd} | Số dư TK #${accountLogin}: $${balance})`,
+    `💰 <b>Rủi ro 1R và lợi nhuận TP:</b> Chưa đối chiếu order_calc_profit/chi phí broker; xem MT5 để xác nhận. Số dư do MT5 báo cáo: ${balance ?? "CHƯA XÁC MINH"} (${accountLogin ?? "OFFLINE"}).`,
   ].join("\n");
 }
 
@@ -1143,18 +1141,12 @@ async function handleApiRequest(req, res) {
     const payload = buildStatusPayload(probe);
     let testResult = null;
     if (body.sendTest) {
-      const mtf = payload.mtfAnalysis;
-      const msg = [
-        `🤖 <b>XAUUSD AI MASTER V6.2 · KẾT NỐI TELEGRAM THÀNH CÔNG</b>`,
-        `📊 Tài khoản: <b>#${payload.health.accountLogin} (${payload.health.brokerSymbol})</b> · Số dư: <b>$${payload.health.accountBalance}</b>`,
-        `💵 Giá hiện tại: <b>${mtf.currentPrice}</b> · Chế độ Bot: <b>${autoBotState.strategyMode}</b>`,
-        `📈 <b>Phân tích Đa khung (Cập nhật 15p):</b>`,
-        `  • <b>H4:</b> ${mtf.h4.bias} (EMA34: ${mtf.h4.ema34})`,
-        `  • <b>H1:</b> ${mtf.h1.bias} (Cầu: ${mtf.h1.demandZone})`,
-        `  • <b>M15:</b> ${mtf.m15.patternName} (${mtf.m15.signalSide} - ${mtf.m15.confidence}%)`,
-        `🎯 <b>Kịch bản 15p:</b> ${mtf.scenario15m.title} · Entry: <b>${mtf.scenario15m.entryZone}</b> · SL: <b>${mtf.scenario15m.stopLoss}</b> · BE: <b>${mtf.scenario15m.beTrigger}</b> · TP: <b>${mtf.scenario15m.tp2}</b>`,
-      ].join("\n");
-      testResult = await sendTelegramNotification(msg);
+      // Connectivity test is neutral: Telegram delivery does not verify MT5,
+      // market analysis, account mode or automatic trading.
+      testResult = await sendTelegramNotification(
+        "✅ <b>Kiểm tra kết nối Telegram V6</b>\n" +
+        "Đây chỉ là tin nhắn kiểm tra kênh. Không xác nhận trạng thái tài khoản MT5, dữ liệu thị trường, điều kiện vào lệnh hoặc quyền LIVE."
+      );
     }
     sendJson(res, 200, {
       ...buildStatusPayload(probe),
@@ -1170,7 +1162,11 @@ async function handleApiRequest(req, res) {
     const payload = buildStatusPayload(probe);
     if (body.sendTelegram && telegramConfig.enabled && telegramConfig.botToken && telegramConfig.chatId) {
       const mtf = payload.mtfAnalysis;
-      await sendTelegramNotification([
+      if (!payload.mt5LiveBridgeConnected || !mtf?.h4 || !mtf?.h1 || !mtf?.m15 || !mtf?.scenario15m) {
+        // A successful API call alone is not a verified MT5 analysis.
+        payload.telegramResult = { ok: false, code: "MT5_MTF_UNVERIFIED", message: "MT5 chưa xác minh dữ liệu đa khung; không gửi Telegram." };
+      } else {
+        payload.telegramResult = await sendTelegramNotification([
         `⏱ <b>KỊCH BẢN GIÁ VÀNG ĐA KHUNG (H4 · H1 · M15) — CẬP NHẬT 15 PHÚT</b>`,
         `💎 Mã: <b>${payload.health.brokerSymbol} (${mtf.currentPrice})</b>`,
         `• <b>H4:</b> ${mtf.h4.summary}`,
@@ -1179,7 +1175,8 @@ async function handleApiRequest(req, res) {
         `👉 <b>Kịch bản hành động:</b> ${mtf.scenario15m.title}`,
         `• Vùng chờ vào: <b>${mtf.scenario15m.entryZone}</b> | SL: <b>${mtf.scenario15m.stopLoss}</b> | Kéo BE: <b>${mtf.scenario15m.beTrigger}</b> | TP: <b>${mtf.scenario15m.tp1} / ${mtf.scenario15m.tp2}</b>`,
         `• Quy tắc DCA Dương: ${mtf.scenario15m.dcaCondition}`,
-      ].join("\n"));
+        ].join("\n"));
+      }
     }
     sendJson(res, 200, payload);
     return;
