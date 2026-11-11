@@ -345,3 +345,30 @@ test("V6 read-only risk API never authorizes execution or contaminates cached MT
   assert.match(transport, /if \(isProbeOnly\) \{\s*lastDirectProbeSnapshot = parsed/);
   assert.doesNotMatch(transport, /isProbeOnly \|\| parsed\.connected !== undefined/);
 });
+
+
+test("V6 operator Web provides on-demand read-only broker lot preview without changing trade parameters", () => {
+  const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  const mirror = readFileSync(resolve(root, "MO_WEB_TRUC_TIEP_KHONG_CAN_SERVER.html"), "utf8");
+  assert.equal(ui, mirror, "root Web must match hosted V6 UI");
+  assert.match(ui, /data-v6-quote-only="true"/);
+  assert.match(ui, /id="v6QuoteAbsoluteSL"[^>]*value=""/);
+  assert.match(ui, /id="v6QuoteRiskPct"[^>]*max="0.5"/);
+  assert.match(ui, /onclick="quoteV6BrokerLotReadOnly\(\)"/);
+  const begin = ui.indexOf("async function quoteV6BrokerLotReadOnly()");
+  const end = ui.indexOf("function computeLotFromRiskPct(", begin);
+  const preview = ui.slice(begin, end);
+  assert.ok(preview.length > 200);
+  assert.match(preview, /sessionStorage\.getItem\("xauusd_v6_control_token"\)/);
+  assert.match(preview, /window\.__mt5BalanceVerified !== true/);
+  assert.match(preview, /method: "POST"/);
+  assert.match(preview, /\/api\/v1\/mt5\/lot-quote/);
+  assert.match(preview, /JSON\.stringify\(\{ side, slPrice, riskPercent \}\)/);
+  assert.match(preview, /q\?\.executionAuthorized !== false/);
+  assert.match(preview, /data\?\.liveAuthorized !== false/);
+  assert.match(preview, /q\?\.indicativeOnly !== true/);
+  assert.match(preview, /pricedLoss > budget/);
+  assert.doesNotMatch(preview, /getElementById\("tradeLot"\)|setQuickLot\(|saveTradeParamsToServer\(|localStorage\.setItem\(|\/mt5\/order|\/mt5\/auto-bot/);
+  assert.match(ui, /window\.__mt5BalanceVerified = false;\s*clearV6ReadOnlyLotQuote\(\)/);
+  assert.doesNotMatch(ui, /Vốn \(\$4,131\.83\)|Đang áp dụng: 0\.05 Lot \(0\.8% Vốn/);
+});
