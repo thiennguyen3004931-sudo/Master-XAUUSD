@@ -2607,6 +2607,7 @@ Branch : main
     }
 
     function clearV6ReadOnlyLotQuote() {
+      window.__v6RiskQuoteNonce = (window.__v6RiskQuoteNonce || 0) + 1;
       const resultEl = document.getElementById("v6LotQuoteReadOnlyResult");
       if (resultEl) resultEl.textContent = "CHƯA BÁO GIÁ — kết quả cũ không còn hiệu lực.";
     }
@@ -2616,6 +2617,12 @@ Branch : main
       const button = document.getElementById("v6QuotePreviewButton");
       if (!resultEl || !button || button.disabled) return;
       clearV6ReadOnlyLotQuote();
+      const requestNonce = window.__v6RiskQuoteNonce;
+      const observedSession = {
+        login: lastLiveMt5Payload?.health?.accountLogin,
+        server: lastLiveMt5Payload?.health?.server,
+        symbol: lastLiveMt5Payload?.health?.brokerSymbol
+      };
       const side = document.getElementById("v6QuoteSide")?.value;
       const slRaw = String(document.getElementById("v6QuoteAbsoluteSL")?.value ?? "").trim();
       const pctRaw = String(document.getElementById("v6QuoteRiskPct")?.value ?? "").trim();
@@ -2653,9 +2660,16 @@ Branch : main
         });
         const data = await response.json();
         const q = data?.quoteResult;
-        const freshStatus = window.__mt5BalanceVerified === true &&
+        const freshStatus = window.__v6RiskQuoteNonce === requestNonce &&
+          window.__mt5BalanceVerified === true &&
           lastLiveMt5Payload?.mt5LiveBridgeConnected === true &&
-          lastLiveMt5Payload?.health?.connected === true;
+          lastLiveMt5Payload?.health?.connected === true &&
+          lastLiveMt5Payload?.health?.accountLogin === observedSession.login &&
+          lastLiveMt5Payload?.health?.server === observedSession.server &&
+          lastLiveMt5Payload?.health?.brokerSymbol === observedSession.symbol &&
+          document.getElementById("v6QuoteSide")?.value === side &&
+          Number(document.getElementById("v6QuoteAbsoluteSL")?.value) === slPrice &&
+          Number(document.getElementById("v6QuoteRiskPct")?.value) === riskPercent;
         const volume = Number(q?.volume);
         const pricedLoss = Number(q?.estimatedSlLossWithBuffer);
         const budget = Number(q?.riskBudget);
@@ -2682,7 +2696,9 @@ Branch : main
           " theo tiền tệ tài khoản. KHÔNG ĐẶT LỆNH, KHÔNG TỰ ĐIỀN LOT, KHÔNG CẤP QUYỀN LIVE.";
         // Deliberately never update tradeLot, localStorage, auto-bot or mutation API.
       } catch {
-        resultEl.textContent = "BLOCKED: API/MT5 báo giá không khả dụng hoặc hết thời gian. Không dùng giá trị cũ.";
+        if (window.__v6RiskQuoteNonce === requestNonce) {
+          resultEl.textContent = "BLOCKED: API/MT5 báo giá không khả dụng hoặc hết thời gian. Không dùng giá trị cũ.";
+        }
       } finally {
         clearTimeout(timeout);
         button.disabled = false;
