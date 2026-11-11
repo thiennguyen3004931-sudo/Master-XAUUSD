@@ -93,6 +93,14 @@ const internetTunnelState = {
   statusText: "V6 giới hạn ở localhost; Cloudflare/LAN tunnel chưa được cấp quyền.",
 };
 
+// Hard-coded UI samples only: NOT verified strategy results, broker history, or LIVE authority.
+const V6_SAMPLE_EVIDENCE = Object.freeze({
+  source: "STATIC_UI_DEMONSTRATION",
+  brokerVerified: false,
+  backtestVerified: false,
+  liveAuthorized: false,
+});
+
 // Dữ liệu Thống kê mẫu lệnh của các Bot & Danh sách Đề xuất chờ Người dùng Phê duyệt
 const botSampleStats = [
   {
@@ -901,6 +909,7 @@ function buildStatusPayload(probe) {
     trendManagementConfig,
     positiveDcaConfig,
     positiveDcaStatus: probe?.positiveDcaStatus || null,
+    botSampleEvidence: V6_SAMPLE_EVIDENCE,
     botSampleStats,
     strategyProposals,
     actionResult: probe?.actionResult || null,
@@ -1309,6 +1318,7 @@ async function handleApiRequest(req, res) {
     autoBotState,
     trendManagementConfig,
     positiveDcaConfig,
+    botSampleEvidence: V6_SAMPLE_EVIDENCE,
     botSampleStats,
     strategyProposals,
     accountConfig: { ...currentAccountConfig, password: "***" },
