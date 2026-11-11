@@ -102,7 +102,7 @@ def build(root: Path, output: Path) -> dict:
         "liveAuthorized: false" in server,
         "live_permission = False" in broker,
         "verify_daily_new_order_budget(mt5, account, existing_positions, new_risk)" in broker,
-        "require_account_binding=(action in mutation_actions)" in broker,
+        "require_account_binding=(action in mutation_actions or action == \"quote_lot\")" in broker,
         "def _read_stdin_payload():" in broker,
         "def connect_mt5(" in broker,
         "writeBridgeEnvAndArmFiles" not in server,
