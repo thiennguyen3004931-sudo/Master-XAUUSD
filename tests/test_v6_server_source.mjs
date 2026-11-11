@@ -170,3 +170,15 @@ test("public V6 UI never embeds or persists Telegram credentials", () => {
   assert.doesNotMatch(ui, /<input[^>]+id="inpTgChatId"[^>]+value="[^"]+"/);
   assert.match(ui, /if \(!tok \|\| !chat\)/);
 });
+
+
+test("Telegram notifier is disabled on first start without explicit operator configuration", () => {
+  const block = server.slice(
+    server.indexOf("function loadTelegramConfig()"),
+    server.indexOf("let telegramConfig = loadTelegramConfig()"),
+  );
+  assert.match(block, /enabled: false/);
+  assert.match(block, /botToken: process\.env\.ZIQ_TELEGRAM_BOT_TOKEN \|\| ""/);
+  assert.match(block, /chatId: process\.env\.ZIQ_TELEGRAM_CHAT_ID \|\| ""/);
+  assert.doesNotMatch(block, /chatId: process\.env\.ZIQ_TELEGRAM_CHAT_ID \|\| "\d+"/);
+});
