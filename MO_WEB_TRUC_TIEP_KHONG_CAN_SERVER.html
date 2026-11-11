@@ -2542,11 +2542,8 @@ Branch : main
       window.__userLockedLot = cleanLot;
       const allocMode = document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT";
       const riskPct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
-      const slDist = Number(document.getElementById("tradeSlDist")?.value || 6.8);
       const bal = Number(window.__latestAccountBalance);
       const verifiedBalance = window.__mt5BalanceVerified === true && Number.isFinite(bal) && bal > 0;
-      const riskUsd = verifiedBalance ? Math.round(cleanLot * slDist * 100) : null;
-      const actualPct = verifiedBalance ? ((riskUsd / bal) * 100).toFixed(2) : null;
 
       try {
         localStorage.setItem("xauusd_locked_lot", String(cleanLot));
@@ -2559,8 +2556,8 @@ Branch : main
         badge.textContent = !verifiedBalance
           ? "CHỜ XÁC MINH MT5 — chưa tính rủi ro/lot từ số dư mẫu"
           : allocMode === "AUTO_RISK_PCT"
-            ? `Ước tính: ${cleanLot.toFixed(2)} Lot (${riskPct}% Vốn ≈ ${riskUsd}; chưa kiểm tra tick value broker)`
-            : `Lot cố định: ${cleanLot.toFixed(2)} (ước tính ${actualPct}% Vốn / ${riskUsd}; chưa kiểm tra tick value)`;
+            ? "TẠM KHÓA: thiếu order_calc_profit của broker cho mức SL đang chọn"
+            : `Lot cố định: ${cleanLot.toFixed(2)} — chưa tính USD rủi ro theo broker`;
       }
 
       const jCell = document.getElementById("journalReadyLotCell");
@@ -2587,9 +2584,11 @@ Branch : main
         if (logBox) logBox.textContent = "CHẶN TÍNH LOT: MT5 chưa xác minh số dư và phiên broker.";
         return null;
       }
-      const slDist = Math.max(2.0, Number(document.getElementById("tradeSlDist")?.value || 6.8));
-      const riskUsd = bal * (Number(pctVal || 0.8) / 100.0);
-      return Math.max(0.01, Math.round((riskUsd / (slDist * 100.0)) * 100) / 100);
+      // Equity verification alone cannot price SL risk. Require future
+      // independent, fresh broker order_calc_profit and volume_step evidence.
+      const logBox = document.getElementById("tradeExecutionLog");
+      if (logBox) logBox.textContent = "CHẶN TÍNH LOT: chưa có order_calc_profit/lot theo giá, SL và chiều lệnh broker.";
+      return null;
     }
 
     function onChangeLotAllocMode() {
@@ -2666,10 +2665,9 @@ Branch : main
     }
 
     async function saveTradeParamsToServer(customNote) {
-      if ((document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT") === "AUTO_RISK_PCT" &&
-          window.__mt5BalanceVerified !== true) {
+      if ((document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT") === "AUTO_RISK_PCT") {
         const logBox = document.getElementById("tradeExecutionLog");
-        if (logBox) logBox.textContent = "ĐÃ CHẶN GỬI THAM SỐ LOT THEO %: chưa xác minh MT5.";
+        if (logBox) logBox.textContent = "ĐÃ CHẶN GỬI THAM SỐ LOT THEO %: chưa có phép tính order_calc_profit broker cho SL hiện tại.";
         return;
       }
       lastUserParamEditTime = Date.now();
@@ -3613,16 +3611,27 @@ Branch : main
       const chat = document.getElementById("inpTgChatId")?.value.trim() || "";
       const logBox = document.getElementById("tradeExecutionLog");
       if (!tok || !chat) { if (logBox) logBox.textContent = "Vui lòng nhập Telegram Bot Token và Chat ID; không dùng thông tin mặc định."; return; }
+      if (window.__mt5BalanceVerified !== true ||
+          lastLiveMt5Payload?.mt5LiveBridgeConnected !== true ||
+          lastLiveMt5Payload?.health?.connected !== true ||
+          !Number.isFinite(Number(lastLiveMt5Payload?.quote?.bid)) ||
+          Number(lastLiveMt5Payload?.quote?.bid) <= 0) {
+        if (logBox) logBox.textContent = "CHẶN BÁO CÁO MT5: chưa xác minh tài khoản và giá broker; không gửi dữ liệu minh họa.";
+        return;
+      }
       const botSelectEl = document.getElementById("botStrategySelect");
       const botName = botSelectEl ? botSelectEl.options[botSelectEl.selectedIndex].text : "1. Tự động Thông minh + Gồng Trend Cấu Trúc V6.3";
-      const curPrice = document.getElementById("livePriceChip")?.textContent || "XAUUSD.G 4678.96";
-      const openPos = Array.isArray(lastLiveMt5Payload?.positions) ? lastLiveMt5Payload.positions : [];
-      const recent = Array.isArray(lastLiveMt5Payload?.recentTrades) ? lastLiveMt5Payload.recentTrades : [];
+      const snap = lastLiveMt5Payload;
+      const curPrice = `${snap.health.brokerSymbol} ${Number(snap.quote.bid).toFixed(2)}`;
+      const openPos = Array.isArray(snap.positions) ? snap.positions : [];
+      const recent = Array.isArray(snap.recentTrades) ? snap.recentTrades : [];
+      const accountLabel = Number(snap.health.accountLogin);
+      const accountBalance = Number(snap.health.accountBalance);
 
       let lines = [
-        `📊 <b>[BÁO CÁO CHI TIẾT LỆNH & LÃI/LỖ MT5 — TK #5201362]</b>`,
+        `📊 <b>[BÁO CÁO MT5 ĐÃ KẾT NỐI — TK #${accountLabel}]</b>`,
         `🤖 <b>Bot đang chọn:</b> ${botName}`,
-        `💎 <b>Giá MT5 hiện tại:</b> <b>${curPrice}</b> · <b>Số dư:</b> <b>${document.getElementById("infoBalance")?.textContent || "$4,131.83 USD"}</b>`,
+        `💎 <b>Giá MT5:</b> <b>${curPrice}</b> · <b>Số dư:</b> <b>${accountBalance.toFixed(2)} ${snap.health.accountCurrency || ""}</b>`,
       ];
 
       if (openPos.length > 0) {
@@ -3637,12 +3646,7 @@ Branch : main
           );
         });
       } else {
-        const slP = document.getElementById("mtfPlanSl")?.textContent || "4,672.16";
-        const beP = document.getElementById("mtfPlanBe")?.textContent || "4,685.76";
-        const tpP = document.getElementById("mtfPlanTp")?.textContent || "4,693.40";
-        lines.push(
-          `\n⏳ <b>Trạng thái lệnh mở:</b> Chưa có vị thế đang mở (Bot đang quét điểm vào theo cấu trúc SL 6–8 giá [${slP}], đạt 1R kéo BE [${beP}] và TP tại vùng cản H1/H4 [${tpP}]).`
-        );
+        lines.push("\n⏳ <b>Vị thế đang mở:</b> Không có trong snapshot MT5 đã xác minh.");
       }
 
       if (recent.length > 0) {
@@ -3662,9 +3666,6 @@ Branch : main
     async function triggerMtfScenarioRefresh(sendTelegram) {
       const logBox = document.getElementById("tradeExecutionLog");
       mtfRemainingSeconds = 900;
-      const tok = document.getElementById("inpTgToken")?.value.trim() || "";
-      const chat = document.getElementById("inpTgChatId")?.value.trim() || "";
-
       try {
         const fn = window["fet" + "ch"];
         const res = await fn(getApiOrigin() + "/api/v1/mt5/mtf-refresh", {
@@ -3672,39 +3673,27 @@ Branch : main
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ sendTelegram: Boolean(sendTelegram), sourceDevice: getDeviceLabel() })
         });
-        if (res && res.ok) {
-          const data = await res.json();
-          applyMt5StatusToUi(data);
-          logBox.textContent = sendTelegram
-            ? "✓ Đã cập nhật Kịch bản Giá Vàng H4/H1/M15 và gửi báo cáo về tài khoản Telegram (" + chat + ")!"
-            : "✓ Đã cập nhật mới Kịch bản Giá Vàng Đa khung H4 · H1 · M15!";
+        if (!res || !res.ok) throw new Error("API_UNAVAILABLE");
+        const data = await res.json();
+        applyMt5StatusToUi(data);
+        if (data.mt5LiveBridgeConnected !== true ||
+            data.health?.connected !== true ||
+            !data.mtfAnalysis?.h4 || !data.mtfAnalysis?.h1 || !data.mtfAnalysis?.m15) {
+          if (logBox) logBox.textContent = "MT5 CHƯA XÁC MINH: không gửi báo cáo giá hoặc kịch bản minh họa.";
           return;
         }
-      } catch (e) {}
-
-      // Fallback gửi trực tiếp từ trình duyệt tới Telegram API ngay cả khi chưa khởi động lại server
-      if (sendTelegram && tok && chat) {
-        const curPrice = document.getElementById("livePriceChip")?.textContent || "XAUUSD.G 4678.96";
-        const h4Txt = document.getElementById("mtfH4Bias")?.textContent || "TĂNG CHỦ ĐẠO";
-        const h1Txt = document.getElementById("mtfH1Bias")?.textContent || "ĐỒNG PHA TĂNG";
-        const m15Txt = document.getElementById("mtfM15Pattern")?.textContent || "Quét Thanh Khoản + Pinbar";
-        const entryTxt = document.getElementById("mtfPlanEntry")?.textContent || "4,677.76 – 4,679.46";
-        const slTxt = document.getElementById("mtfPlanSl")?.textContent || "4,673.96";
-        const beTxt = document.getElementById("mtfPlanBe")?.textContent || "4,682.46";
-        const tpTxt = document.getElementById("mtfPlanTp")?.textContent || "4,686.46 / 4,690.96";
-        const msg = [
-          `⏱ <b>KỊCH BẢN GIÁ VÀNG ĐA KHUNG (H4 · H1 · M15) — CẬP NHẬT 15 PHÚT</b>`,
-          `💎 Mã: <b>${curPrice}</b> · TK: <b>#5201362</b>`,
-          `• <b>Khung H4:</b> ${h4Txt}`,
-          `• <b>Khung H1:</b> ${h1Txt}`,
-          `• <b>Khung M15:</b> ${m15Txt}`,
-          `🎯 <b>Kịch bản 15p:</b> Entry <b>${entryTxt}</b> | SL: <b>${slTxt}</b> | Kéo BE: <b>${beTxt}</b> | TP: <b>${tpTxt}</b>`,
-          `🛡 <b>Quy tắc DCA Dương:</b> Chỉ nhồi khi lệnh đầu đã kéo BE (${beTxt}), đang Dương và có tín hiệu M15 mới của Loại Bot đang chạy.`
-        ].join("\n");
-        const tgRes = await sendDirectTelegramFromBrowser(tok, chat, msg);
-        logBox.textContent = tgRes.message;
-      } else {
-        logBox.textContent = "✓ Đã làm mới Kịch bản Đa khung H4 · H1 · M15 (Chu kỳ 15:00).";
+        if (logBox) {
+          logBox.textContent = !sendTelegram
+            ? "Đã nhận dữ liệu đa khung từ MT5."
+            : data.telegramResult?.ok === true
+              ? "Telegram xác nhận đã gửi kịch bản MT5."
+              : "Kịch bản MT5 chưa được gửi qua Telegram: " + (data.telegramResult?.message || "Chưa xác minh trạng thái gửi.");
+        }
+      } catch (err) {
+        // Never send a synthetic market report directly from the browser
+        // when the local MT5 server is unavailable.
+        applyMt5StatusToUi({ mt5LiveBridgeConnected: false, health: { connected: false } });
+        if (logBox) logBox.textContent = "Không kết nối API/MT5; không gửi Telegram bằng dữ liệu mẫu.";
       }
     }
 
@@ -3729,17 +3718,11 @@ Branch : main
 
       // 1. Luôn gửi tin nhắn xác nhận trực tiếp tới Telegram API ngay lập tức để đảm bảo 100% nhận được
       if (sendTest) {
-        const curPrice = document.getElementById("livePriceChip")?.textContent || "XAUUSD.G 4678.96";
+        // This confirms a Telegram channel only, not broker account mode,
+        // market data, delivery of future alerts or LIVE trading permission.
         const msg = [
-          `🤖 <b>XAUUSD AI MASTER V6.2 · ĐÃ KẾT NỐI TELEGRAM THÀNH CÔNG!</b>`,
-          `📊 Tài khoản MT5: <b>LIVE #5201362 (XAUUSD.G)</b> · Số dư: <b>$4,131.83 USD</b>`,
-          `💵 Giá hiện tại: <b>${curPrice}</b>`,
-          `📈 <b>Phân tích Đa khung (Cập nhật mỗi 15 phút):</b>`,
-          `  • <b>H4:</b> ${document.getElementById("mtfH4Bias")?.textContent || "TĂNG CHỦ ĐẠO"}`,
-          `  • <b>H1:</b> ${document.getElementById("mtfH1Bias")?.textContent || "ĐỒNG PHA TĂNG"}`,
-          `  • <b>M15:</b> ${document.getElementById("mtfM15Pattern")?.textContent || "Quét Thanh Khoản Đáy + Pinbar"}`,
-          `🎯 <b>Kịch bản 15p:</b> Entry <b>${document.getElementById("mtfPlanEntry")?.textContent || "4,677.76 – 4,679.46"}</b> · SL: <b>${document.getElementById("mtfPlanSl")?.textContent || "4,673.96"}</b> · Kéo BE: <b>${document.getElementById("mtfPlanBe")?.textContent || "4,682.46"}</b> · TP: <b>${document.getElementById("mtfPlanTp")?.textContent || "4,686.46 / 4,690.96"}</b>`,
-          `✅ Từ bây giờ, Bot sẽ tự động nhắn tin cho bạn khi khớp lệnh, kéo BE, nhồi DCA Dương và cập nhật kịch bản mỗi 15 phút!`
+          "✅ <b>Kiểm tra kết nối Telegram XAUUSD V6</b>",
+          "Thông báo thử nghiệm kênh. Không xác minh MT5, số dư, giá vàng, chiến lược hay quyền giao dịch LIVE."
         ].join("\n");
 
         try {
