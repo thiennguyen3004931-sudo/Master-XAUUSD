@@ -890,3 +890,76 @@ class BrokerRiskLotQuoteTest(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertAlmostEqual(result["entry"], 4000.0)
         self.assertEqual(result["side"], "SELL")
+
+
+class ReadOnlyLotQuoteRoutingTest(unittest.TestCase):
+    """The CLI quote path never runs entries, symbol selection or order sends."""
+
+    def test_quote_cli_requires_binding_and_avoids_terminal_mutations(self):
+        class QuoteTerminal(MockBroker):
+            def __init__(self):
+                super().__init__()
+                self.initialized = 0
+                self.shutdowns = 0
+                self.symbol_selections = 0
+                self.orders_sent = 0
+            def initialize(self, **kwargs):
+                self.initialized += 1
+                return True
+            def terminal_info(self):
+                return SimpleNamespace(trade_allowed=False)
+            def account_info(self):
+                return SimpleNamespace(login=111222, server="Broker-Demo", equity=4000.0)
+            def symbols_get(self):
+                raise AssertionError("quote must not scan symbols")
+            def symbol_select(self, *args):
+                self.symbol_selections += 1
+                raise AssertionError("quote must not select or mutate symbols")
+            def order_send(self, request):
+                self.orders_sent += 1
+                raise AssertionError("quote must not submit orders")
+            def shutdown(self):
+                self.shutdowns += 1
+        terminal = QuoteTerminal()
+        cfg = {
+            "action": "quote_lot", "login": "111222", "server": "Broker-Demo",
+            "brokerSymbol": "XAUUSD.G", "symbol": "XAUUSD.G",
+            "side": "BUY", "slPrice": 3993.4, "riskPercent": 0.5,
+        }
+        out = io.StringIO()
+        with mock.patch.object(engine, "ensure_mt5_installed", return_value=(terminal, None)):
+            with mock.patch.object(sys, "argv", ["mt5-direct-probe.py"]), mock.patch.object(sys, "stdin", io.StringIO(__import__("json").dumps(cfg) + "\n")):
+                with mock.patch.object(sys, "stdout", out):
+                    engine.main()
+        result = __import__("json").loads(out.getvalue())
+        self.assertTrue(result["quoteOnly"])
+        self.assertTrue(result["connected"])
+        self.assertFalse(result["executionAuthorized"])
+        self.assertTrue(result["actionResult"]["ok"], result)
+        self.assertEqual(terminal.symbol_selections, 0)
+        self.assertEqual(terminal.orders_sent, 0)
+        self.assertEqual(terminal.shutdowns, 1)
+
+    def test_quote_cli_blocks_account_mismatch_without_broker_mutation(self):
+        class MismatchedTerminal:
+            def initialize(self, **kwargs):
+                return True
+            def account_info(self):
+                return SimpleNamespace(login=999999, server="Broker-Demo")
+            def login(self, **kwargs):
+                raise AssertionError("no account switching")
+            def order_send(self, *args):
+                raise AssertionError("no orders")
+        cfg = {
+            "action": "quote_lot", "login": "111222", "server": "Broker-Demo",
+            "brokerSymbol": "XAUUSD.G", "symbol": "XAUUSD.G",
+            "side": "BUY", "slPrice": 3993.4, "riskPercent": 0.5,
+        }
+        out = io.StringIO()
+        with mock.patch.object(engine, "ensure_mt5_installed", return_value=(MismatchedTerminal(), None)):
+            with mock.patch.object(sys, "argv", ["mt5-direct-probe.py"]), mock.patch.object(sys, "stdin", io.StringIO(__import__("json").dumps(cfg) + "\n")):
+                with mock.patch.object(sys, "stdout", out):
+                    engine.main()
+        result = __import__("json").loads(out.getvalue())
+        self.assertFalse(result["connected"])
+        self.assertEqual(result["errorCode"], "MT5_TERMINAL_OR_LOGIN_FAILED")
