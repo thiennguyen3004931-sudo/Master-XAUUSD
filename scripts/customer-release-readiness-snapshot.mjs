@@ -5,22 +5,21 @@ import { fileURLToPath } from "node:url";
 
 export const REQUIRED_WORKFLOWS = Object.freeze([
   "Phase7C Canonical PR Gate",
-  "Private Master Core Self-Hosted CI",
-  "Customer Handoff Final Production Acceptance Read-Only",
-  "Customer Authenticated API Gateway CI",
+  "V6 Isolated Source Package (NO DEPLOY)",
+  "Public Runtime Tracking Boundary",
 ]);
 const STATUS = "BLOCKED";
 export function evaluateCustomerReleaseSnapshot({ sha, issues, workflowRuns }) {
   const cleanSha = typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
   const blockers = [];
   if (!cleanSha) blockers.push("SOURCE_SHA_MISSING");
-  for (const issue of [166, 176]) {
+  for (const issue of [7]) {
     const record = issues?.[issue];
-    if (record !== "closed") blockers.push("ISSUE_" + issue + "_NOT_CLOSED");
+    if (record !== "closed") blockers.push("ISSUE_7_V6_LIVE_BLOCKERS_NOT_CLOSED");
   }
   const workflows = REQUIRED_WORKFLOWS.map(name => {
     const matching = Array.isArray(workflowRuns)
-      ? workflowRuns.filter(x => x && x.name === name && x.head_sha === cleanSha)
+      ? workflowRuns.filter(x => x && x.name === name && x.head_sha === cleanSha && (x.event === "push" || x.event === "workflow_dispatch"))
       : [];
     // A later failed or queued rerun on the same SHA invalidates older green evidence.
     // Use GitHub's monotonic run ID rather than trusting array order.
@@ -31,13 +30,13 @@ export function evaluateCustomerReleaseSnapshot({ sha, issues, workflowRuns }) {
   });
   // GitHub cannot attest local Windows host acceptance, KMS, publisher enrollment,
   // independent operator approval or pilot execution from software CI.
-  blockers.push("INDEPENDENT_AUTHORITY_HOST_AND_PUBLISHER_APPROVAL_NOT_ATTESTED");
+  blockers.push("INDEPENDENT_V6_HOST_BROKER_AND_OPERATOR_ACCEPTANCE_NOT_ATTESTED");
   return {
     schemaVersion: 1,
     sourceSha: cleanSha,
     status: STATUS,
     releaseAuthorized: false,
-    scope: "READ_ONLY_GITHUB_SOFTWARE_EVIDENCE",
+    scope: "INDEPENDENT_V6_READ_ONLY_GITHUB_SOURCE_EVIDENCE",
     workflows,
     blockers: [...new Set(blockers)],
   };
@@ -60,23 +59,30 @@ async function main() {
   const repo = process.env.GITHUB_REPOSITORY ?? "";
   const sha = process.env.SOURCE_SHA ?? process.env.GITHUB_SHA ?? "";
   const token = process.env.GITHUB_TOKEN ?? "";
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || !token) {
-    throw new Error("GITHUB_EVIDENCE_UNAVAILABLE");
-  }
+  // Only collect evidence for the independent public V6 repository. Never
+  // treat inherited private-core issue IDs or CI as V6 release evidence.
   const issues = {};
-  for (const issue of [166, 176]) {
-    const result = await githubJson("/repos/" + repo + "/issues/" + issue, token);
-    issues[issue] = result.state;
+  let workflowRuns = [];
+  let evidenceUnavailable = false;
+  try {
+    if (repo !== "thiennguyen3004931-sudo/Master-XAUUSD" || !token || !/^[0-9a-f]{40}$/.test(sha)) {
+      throw new Error("GITHUB_EVIDENCE_UNAVAILABLE");
+    }
+    const issue = await githubJson("/repos/" + repo + "/issues/7", token);
+    issues[7] = issue.state;
+    const runs = await githubJson(
+      "/repos/" + repo + "/actions/runs?head_sha=" + encodeURIComponent(sha) + "&per_page=100",
+      token,
+    );
+    workflowRuns = Array.isArray(runs.workflow_runs) ? runs.workflow_runs : [];
+    if (!Array.isArray(runs.workflow_runs)) throw new Error("GITHUB_EVIDENCE_UNAVAILABLE");
+  } catch {
+    evidenceUnavailable = true;
   }
-  const runs = await githubJson(
-    "/repos/" + repo + "/actions/runs?head_sha=" + encodeURIComponent(sha) + "&per_page=100",
-    token,
-  );
-  const report = evaluateCustomerReleaseSnapshot({
-    sha,
-    issues,
-    workflowRuns: runs.workflow_runs,
-  });
+  const report = evaluateCustomerReleaseSnapshot({ sha, issues, workflowRuns });
+  if (evidenceUnavailable) {
+    report.blockers.push("GITHUB_EVIDENCE_UNAVAILABLE");
+  }
   const path = "customer-release-readiness.json";
   await writeFile(path, JSON.stringify(report, null, 2) + "\n", { flag: "wx" });
   if (process.env.GITHUB_STEP_SUMMARY) {
@@ -87,6 +93,9 @@ async function main() {
       "**This reporting job cannot authorize distribution or LIVE trading.**\n");
   }
   process.stdout.write("CUSTOMER_RELEASE_AUTHORIZATION=BLOCKED\nCUSTOMER_RELEASE_READINESS_REPORT=" + path + "\n");
+  // Preserve the sanitized BLOCKED artifact even on external evidence errors;
+  // fail the reporter run rather than falsely producing a green evidence check.
+  if (evidenceUnavailable) process.exitCode = 1;
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   main().catch(() => {
