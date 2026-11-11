@@ -139,3 +139,22 @@ test("V6 broker credentials are sent over stdin, never via Windows process argum
   assert.match(probe, /if len\(sys\.argv\) != 1:/);
   assert.doesNotMatch(probe, /sys\.argv\[1\]/);
 });
+
+
+test("V6 synthetic strategy metrics cannot masquerade as broker-verified results", () => {
+  const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  const banner = 'data-v6-synthetic-evidence-warning="true"';
+  assert.equal(ui.split(banner).length - 1, 4, "dashboard, approvals, backtest and performance must disclose synthetic evidence");
+  for (const section of ["route-dashboard", "route-approvals", "route-backtest", "route-performance"]) {
+    const fragment = ui.slice(ui.indexOf('<section id="' + section + '"'));
+    assert.ok(fragment.startsWith('<section id="' + section + '"'), "missing section " + section);
+    assert.ok(fragment.indexOf(banner) > 0 && fragment.indexOf(banner) < 300, "no conspicuous evidence warning on " + section);
+  }
+  assert.match(ui, /MINH HỌA — KHÔNG PHẢI BẰNG CHỨNG GIAO DỊCH/);
+  assert.match(ui, /không phải xác nhận lợi nhuận hay cấp quyền giao dịch LIVE/);
+  assert.match(server, /source: "STATIC_UI_DEMONSTRATION"/);
+  assert.match(server, /brokerVerified: false/);
+  assert.match(server, /backtestVerified: false/);
+  assert.match(server, /liveAuthorized: false/);
+  assert.equal(server.split("botSampleEvidence: V6_SAMPLE_EVIDENCE").length - 1, 2);
+});
