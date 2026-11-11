@@ -2499,7 +2499,8 @@ Branch : main
 
 
     let lastUserParamEditTime = 0;
-    window.__latestAccountBalance = 4131.83;
+    window.__latestAccountBalance = null;
+    window.__mt5BalanceVerified = false;
     window.__userLockedLot = parseFloat(localStorage.getItem("xauusd_locked_lot") || "0.05") || 0.05;
 
     // DỮ LIỆU MINH HỌA CỐ ĐỊNH: không phải kết quả backtest broker có thể tái chạy.
@@ -2542,9 +2543,10 @@ Branch : main
       const allocMode = document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT";
       const riskPct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
       const slDist = Number(document.getElementById("tradeSlDist")?.value || 6.8);
-      const bal = window.__latestAccountBalance || 4131.83;
-      const riskUsd = Math.round(cleanLot * slDist * 100);
-      const actualPct = ((riskUsd / bal) * 100).toFixed(2);
+      const bal = Number(window.__latestAccountBalance);
+      const verifiedBalance = window.__mt5BalanceVerified === true && Number.isFinite(bal) && bal > 0;
+      const riskUsd = verifiedBalance ? Math.round(cleanLot * slDist * 100) : null;
+      const actualPct = verifiedBalance ? ((riskUsd / bal) * 100).toFixed(2) : null;
 
       try {
         localStorage.setItem("xauusd_locked_lot", String(cleanLot));
@@ -2554,9 +2556,11 @@ Branch : main
 
       const badge = document.getElementById("lotLiveSummaryBadge");
       if (badge) {
-        badge.textContent = allocMode === "AUTO_RISK_PCT"
-          ? `Đang áp dụng: ${cleanLot.toFixed(2)} Lot (${riskPct}% Vốn ≈ $${riskUsd} rủi ro)`
-          : `Đang áp dụng: ${cleanLot.toFixed(2)} Lot cố định (≈ ${actualPct}% Vốn / $${riskUsd})`;
+        badge.textContent = !verifiedBalance
+          ? "CHỜ XÁC MINH MT5 — chưa tính rủi ro/lot từ số dư mẫu"
+          : allocMode === "AUTO_RISK_PCT"
+            ? `Ước tính: ${cleanLot.toFixed(2)} Lot (${riskPct}% Vốn ≈ ${riskUsd}; chưa kiểm tra tick value broker)`
+            : `Lot cố định: ${cleanLot.toFixed(2)} (ước tính ${actualPct}% Vốn / ${riskUsd}; chưa kiểm tra tick value)`;
       }
 
       const jCell = document.getElementById("journalReadyLotCell");
@@ -2577,7 +2581,12 @@ Branch : main
     }
 
     function computeLotFromRiskPct(pctVal) {
-      const bal = window.__latestAccountBalance || 4131.83;
+      const bal = Number(window.__latestAccountBalance);
+      if (window.__mt5BalanceVerified !== true || !Number.isFinite(bal) || bal <= 0) {
+        const logBox = document.getElementById("tradeExecutionLog");
+        if (logBox) logBox.textContent = "CHẶN TÍNH LOT: MT5 chưa xác minh số dư và phiên broker.";
+        return null;
+      }
       const slDist = Math.max(2.0, Number(document.getElementById("tradeSlDist")?.value || 6.8));
       const riskUsd = bal * (Number(pctVal || 0.8) / 100.0);
       return Math.max(0.01, Math.round((riskUsd / (slDist * 100.0)) * 100) / 100);
@@ -2588,6 +2597,7 @@ Branch : main
       if (mode === "AUTO_RISK_PCT") {
         const pct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
         const calcLot = computeLotFromRiskPct(pct);
+        if (calcLot === null) return;
         const lotEl = document.getElementById("tradeLot");
         if (lotEl) lotEl.value = calcLot.toFixed(2);
         syncLotDisplayEverywhere(calcLot);
@@ -2604,6 +2614,7 @@ Branch : main
       if (modeEl) modeEl.value = "AUTO_RISK_PCT";
       const pct = Math.max(0.1, Number(document.getElementById("tradeRiskPct")?.value || 0.8));
       const calcLot = computeLotFromRiskPct(pct);
+      if (calcLot === null) return;
       const lotEl = document.getElementById("tradeLot");
       if (lotEl) lotEl.value = calcLot.toFixed(2);
       syncLotDisplayEverywhere(calcLot);
@@ -2625,6 +2636,7 @@ Branch : main
       if (mode === "AUTO_RISK_PCT") {
         const pct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
         const calcLot = computeLotFromRiskPct(pct);
+        if (calcLot === null) return;
         const lotEl = document.getElementById("tradeLot");
         if (lotEl) lotEl.value = calcLot.toFixed(2);
         syncLotDisplayEverywhere(calcLot);
@@ -2654,6 +2666,12 @@ Branch : main
     }
 
     async function saveTradeParamsToServer(customNote) {
+      if ((document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT") === "AUTO_RISK_PCT" &&
+          window.__mt5BalanceVerified !== true) {
+        const logBox = document.getElementById("tradeExecutionLog");
+        if (logBox) logBox.textContent = "ĐÃ CHẶN GỬI THAM SỐ LOT THEO %: chưa xác minh MT5.";
+        return;
+      }
       lastUserParamEditTime = Date.now();
       const volume = Math.max(0.01, Number(document.getElementById("tradeLot")?.value || window.__userLockedLot || 0.05));
       window.__userLockedLot = volume;
