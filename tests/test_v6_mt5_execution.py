@@ -928,7 +928,7 @@ class ReadOnlyLotQuoteRoutingTest(unittest.TestCase):
         }
         out = io.StringIO()
         with mock.patch.object(engine, "ensure_mt5_installed", return_value=(terminal, None)):
-            with mock.patch.object(sys, "stdin", io.StringIO(__import__("json").dumps(cfg) + "\n")):
+            with mock.patch.object(sys, "argv", ["mt5-direct-probe.py"]), mock.patch.object(sys, "stdin", io.StringIO(__import__("json").dumps(cfg) + "\n")):
                 with mock.patch.object(sys, "stdout", out):
                     engine.main()
         result = __import__("json").loads(out.getvalue())
@@ -957,7 +957,7 @@ class ReadOnlyLotQuoteRoutingTest(unittest.TestCase):
         }
         out = io.StringIO()
         with mock.patch.object(engine, "ensure_mt5_installed", return_value=(MismatchedTerminal(), None)):
-            with mock.patch.object(sys, "stdin", io.StringIO(__import__("json").dumps(cfg) + "\n")):
+            with mock.patch.object(sys, "argv", ["mt5-direct-probe.py"]), mock.patch.object(sys, "stdin", io.StringIO(__import__("json").dumps(cfg) + "\n")):
                 with mock.patch.object(sys, "stdout", out):
                     engine.main()
         result = __import__("json").loads(out.getvalue())
