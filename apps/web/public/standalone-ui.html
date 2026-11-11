@@ -3646,7 +3646,7 @@ Branch : main
           );
         });
       } else {
-        lines.push("\\n⏳ <b>Vị thế đang mở:</b> Không có trong snapshot MT5 đã xác minh.");
+        lines.push("\n⏳ <b>Vị thế đang mở:</b> Không có trong snapshot MT5 đã xác minh.");
       }
 
       if (recent.length > 0) {
@@ -3723,7 +3723,7 @@ Branch : main
         const msg = [
           "✅ <b>Kiểm tra kết nối Telegram XAUUSD V6</b>",
           "Thông báo thử nghiệm kênh. Không xác minh MT5, số dư, giá vàng, chiến lược hay quyền giao dịch LIVE."
-        ].join("\\n");
+        ].join("\n");
 
         try {
           const directRes = await sendDirectTelegramFromBrowser(botToken, chatId, msg);
