@@ -2288,11 +2288,16 @@ Branch : main
     function applyMt5StatusToUi(data) {
       if (!data || !data.health) return;
       const h = data.health;
-      const connected = Boolean(data.mt5LiveBridgeConnected);
-      const mode = String(h.configuredAccountMode || "LIVE").toUpperCase();
-      const login = h.accountLogin || "5201362";
-      const srv = h.server || "DBG Market Limited";
-      const sym = h.brokerSymbol || "XAUUSD.G";
+      const connected = data.mt5LiveBridgeConnected === true && h.connected === true &&
+        Number.isFinite(Number(h.accountBalance)) && Number(h.accountBalance) > 0 &&
+        Number.isFinite(Number(h.accountEquity)) &&
+        Number.isSafeInteger(Number(h.accountLogin)) && Number(h.accountLogin) > 0 &&
+        Boolean(h.server) && Boolean(h.brokerSymbol) &&
+        ["LIVE", "DEMO"].includes(String(h.accountMode || "").toUpperCase());
+      const mode = connected ? String(h.accountMode).toUpperCase() : "OFFLINE";
+      const login = connected ? h.accountLogin : "—";
+      const srv = connected ? h.server : "Chưa xác minh";
+      const sym = connected ? h.brokerSymbol : "XAUUSD";
       activeBrokerSymbol = sym;
 
       if (data.lanIp) {
@@ -2302,13 +2307,13 @@ Branch : main
 
       document.getElementById("chartSymbolTitle").textContent = sym;
       document.getElementById("execSymbolBadge").textContent = sym;
-      document.getElementById("headerAccountBadge").textContent = `${mode} · #${login} (${sym})`;
+      document.getElementById("headerAccountBadge").textContent = connected ? `${mode} · #${login} (${sym})` : "MT5 · CHƯA KẾT NỐI";
       document.getElementById("navModeTag").textContent = mode;
       document.getElementById("infoServer").textContent = srv;
-      document.getElementById("infoLogin").textContent = "#" + login;
-      document.getElementById("infoMode").textContent = mode === "LIVE" ? "LIVE (Tài khoản thật)" : "DEMO (Thử nghiệm)";
+      document.getElementById("infoLogin").textContent = connected ? "#" + login : "—";
+      document.getElementById("infoMode").textContent = !connected ? "OFFLINE (chưa xác minh tài khoản)" : mode === "LIVE" ? "LIVE (Tài khoản thật)" : "DEMO (Thử nghiệm)";
       document.getElementById("infoSymbol").textContent = sym;
-      document.getElementById("journalSourceBadge").textContent = `TK #${login} · ${sym}`;
+      document.getElementById("journalSourceBadge").textContent = connected ? `TK #${login} · ${sym}` : "MT5 chưa xác minh";
 
       if (data.diagnostics) {
         const d = data.diagnostics;
@@ -2416,7 +2421,7 @@ Branch : main
       }
 
       const dotEl = document.getElementById("sidebarConnDot");
-      if (h.accountBalance !== null && h.accountBalance !== undefined) {
+      if (connected) {
         dotEl.className = "dot dot-up";
         document.getElementById("sidebarConnTitle").textContent = `MT5 ${mode} · Đã kết nối`;
         document.getElementById("sidebarConnSub").textContent = `TK #${login} · ${srv} · ${sym}`;
@@ -2433,6 +2438,7 @@ Branch : main
         document.getElementById("dashEquityVal").textContent = `$${eq.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
         document.getElementById("dashAccSub").innerHTML = `Số dư: <b>$${bal.toLocaleString("en-US", { minimumFractionDigits: 2 })}</b> · Lãi mở: <span class="${pf >= 0 ? 'text-up' : 'text-down'}">${pf >= 0 ? '+' : ''}${pf.toFixed(2)} ${cur}</span>`;
         window.__latestAccountBalance = bal;
+        window.__mt5BalanceVerified = true;
         document.getElementById("infoBalance").textContent = `$${bal.toLocaleString("en-US", { minimumFractionDigits: 2 })} ${cur}`;
         document.getElementById("infoEquity").textContent = `$${eq.toLocaleString("en-US", { minimumFractionDigits: 2 })} ${cur}`;
         const pfEl = document.getElementById("infoProfit");
@@ -2444,6 +2450,31 @@ Branch : main
           document.getElementById("livePriceChip").textContent = `${sym} ${liveBid.toFixed(2)}`;
           renderLiveMt5DataOnDashboard(data, liveBid, sym);
         }
+      } else {
+        // Show DISCONNECTED even when a prior status poll showed LIVE.
+        window.__latestAccountBalance = null;
+        window.__mt5BalanceVerified = false;
+        lastLiveMt5Payload = null;
+        dotEl.className = "dot dot-warn";
+        document.getElementById("sidebarConnTitle").textContent = "MT5 · CHƯA KẾT NỐI";
+        document.getElementById("sidebarConnSub").textContent = "Không có bằng chứng phiên broker";
+        for (const id of ["cardAccStatusBadge", "dashAccModeBadge"]) {
+          const el = document.getElementById(id);
+          if (el) { el.className = "badge badge-warn"; el.textContent = "OFFLINE · CHƯA XÁC MINH"; }
+        }
+        document.getElementById("dashEquityVal").textContent = "—";
+        document.getElementById("dashAccSub").textContent = "Số dư và lãi/lỗ chưa xác minh";
+        for (const id of ["infoBalance", "infoEquity", "infoProfit"]) {
+          const el = document.getElementById(id);
+          if (el) { el.textContent = "—"; el.className = "kv-val"; }
+        }
+        document.getElementById("livePriceChip").textContent = "XAUUSD · CHƯA CÓ GIÁ MT5";
+        for (const id of ["mtfH4Bias", "mtfH1Bias", "mtfM15Pattern"]) {
+          const el = document.getElementById(id);
+          if (el) el.textContent = "CHƯA CÓ DỮ LIỆU MT5";
+        }
+        const riskBadge = document.getElementById("lotLiveSummaryBadge");
+        if (riskBadge) riskBadge.textContent = "CHỜ XÁC MINH MT5 — chưa tính lot theo % rủi ro";
       }
     }
 
@@ -2468,7 +2499,8 @@ Branch : main
 
 
     let lastUserParamEditTime = 0;
-    window.__latestAccountBalance = 4131.83;
+    window.__latestAccountBalance = null;
+    window.__mt5BalanceVerified = false;
     window.__userLockedLot = parseFloat(localStorage.getItem("xauusd_locked_lot") || "0.05") || 0.05;
 
     // DỮ LIỆU MINH HỌA CỐ ĐỊNH: không phải kết quả backtest broker có thể tái chạy.
@@ -2511,9 +2543,10 @@ Branch : main
       const allocMode = document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT";
       const riskPct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
       const slDist = Number(document.getElementById("tradeSlDist")?.value || 6.8);
-      const bal = window.__latestAccountBalance || 4131.83;
-      const riskUsd = Math.round(cleanLot * slDist * 100);
-      const actualPct = ((riskUsd / bal) * 100).toFixed(2);
+      const bal = Number(window.__latestAccountBalance);
+      const verifiedBalance = window.__mt5BalanceVerified === true && Number.isFinite(bal) && bal > 0;
+      const riskUsd = verifiedBalance ? Math.round(cleanLot * slDist * 100) : null;
+      const actualPct = verifiedBalance ? ((riskUsd / bal) * 100).toFixed(2) : null;
 
       try {
         localStorage.setItem("xauusd_locked_lot", String(cleanLot));
@@ -2523,9 +2556,11 @@ Branch : main
 
       const badge = document.getElementById("lotLiveSummaryBadge");
       if (badge) {
-        badge.textContent = allocMode === "AUTO_RISK_PCT"
-          ? `Đang áp dụng: ${cleanLot.toFixed(2)} Lot (${riskPct}% Vốn ≈ $${riskUsd} rủi ro)`
-          : `Đang áp dụng: ${cleanLot.toFixed(2)} Lot cố định (≈ ${actualPct}% Vốn / $${riskUsd})`;
+        badge.textContent = !verifiedBalance
+          ? "CHỜ XÁC MINH MT5 — chưa tính rủi ro/lot từ số dư mẫu"
+          : allocMode === "AUTO_RISK_PCT"
+            ? `Ước tính: ${cleanLot.toFixed(2)} Lot (${riskPct}% Vốn ≈ ${riskUsd}; chưa kiểm tra tick value broker)`
+            : `Lot cố định: ${cleanLot.toFixed(2)} (ước tính ${actualPct}% Vốn / ${riskUsd}; chưa kiểm tra tick value)`;
       }
 
       const jCell = document.getElementById("journalReadyLotCell");
@@ -2546,7 +2581,12 @@ Branch : main
     }
 
     function computeLotFromRiskPct(pctVal) {
-      const bal = window.__latestAccountBalance || 4131.83;
+      const bal = Number(window.__latestAccountBalance);
+      if (window.__mt5BalanceVerified !== true || !Number.isFinite(bal) || bal <= 0) {
+        const logBox = document.getElementById("tradeExecutionLog");
+        if (logBox) logBox.textContent = "CHẶN TÍNH LOT: MT5 chưa xác minh số dư và phiên broker.";
+        return null;
+      }
       const slDist = Math.max(2.0, Number(document.getElementById("tradeSlDist")?.value || 6.8));
       const riskUsd = bal * (Number(pctVal || 0.8) / 100.0);
       return Math.max(0.01, Math.round((riskUsd / (slDist * 100.0)) * 100) / 100);
@@ -2557,6 +2597,7 @@ Branch : main
       if (mode === "AUTO_RISK_PCT") {
         const pct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
         const calcLot = computeLotFromRiskPct(pct);
+        if (calcLot === null) return;
         const lotEl = document.getElementById("tradeLot");
         if (lotEl) lotEl.value = calcLot.toFixed(2);
         syncLotDisplayEverywhere(calcLot);
@@ -2573,6 +2614,7 @@ Branch : main
       if (modeEl) modeEl.value = "AUTO_RISK_PCT";
       const pct = Math.max(0.1, Number(document.getElementById("tradeRiskPct")?.value || 0.8));
       const calcLot = computeLotFromRiskPct(pct);
+      if (calcLot === null) return;
       const lotEl = document.getElementById("tradeLot");
       if (lotEl) lotEl.value = calcLot.toFixed(2);
       syncLotDisplayEverywhere(calcLot);
@@ -2594,6 +2636,7 @@ Branch : main
       if (mode === "AUTO_RISK_PCT") {
         const pct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
         const calcLot = computeLotFromRiskPct(pct);
+        if (calcLot === null) return;
         const lotEl = document.getElementById("tradeLot");
         if (lotEl) lotEl.value = calcLot.toFixed(2);
         syncLotDisplayEverywhere(calcLot);
@@ -2623,6 +2666,12 @@ Branch : main
     }
 
     async function saveTradeParamsToServer(customNote) {
+      if ((document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT") === "AUTO_RISK_PCT" &&
+          window.__mt5BalanceVerified !== true) {
+        const logBox = document.getElementById("tradeExecutionLog");
+        if (logBox) logBox.textContent = "ĐÃ CHẶN GỬI THAM SỐ LOT THEO %: chưa xác minh MT5.";
+        return;
+      }
       lastUserParamEditTime = Date.now();
       const volume = Math.max(0.01, Number(document.getElementById("tradeLot")?.value || window.__userLockedLot || 0.05));
       window.__userLockedLot = volume;
@@ -3758,6 +3807,8 @@ Branch : main
             }
           } catch (e) {}
         }
+        // A failed API poll cannot preserve a stale ONLINE badge.
+        applyMt5StatusToUi({ mt5LiveBridgeConnected: false, health: { connected: false } });
       }
       pollLocalServer();
       setInterval(pollLocalServer, 1500);

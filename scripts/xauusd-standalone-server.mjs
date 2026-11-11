@@ -250,11 +250,11 @@ let lastSyncAction = {
 };
 
 let lastKnownAccountMetrics = {
-  balance: 4131.83,
-  equity: 4131.83,
-  profit: 0.0,
-  bid: 4678.96,
-  ask: 4679.16,
+  balance: null,
+  equity: null,
+  profit: null,
+  bid: null,
+  ask: null,
 };
 
 function loadTelegramConfig() {
@@ -882,8 +882,10 @@ function buildStatusPayload(probe) {
     if (probe.bid > 0) lastKnownAccountMetrics.bid = Number(probe.bid);
     if (probe.ask > 0) lastKnownAccountMetrics.ask = Number(probe.ask);
   }
-  const activeBid = isConnected && probe?.bid > 0 ? Number(probe.bid) : lastKnownAccountMetrics.bid;
-  const mtfAnalysis = probe?.mtfAnalysis || buildFallbackMtfAnalysis(activeBid);
+  // MTF analysis is broker evidence only when provided by the connected probe.
+  // Never substitute a synthetic analysis, including when MT5 is connected but
+  // no verified multi-timeframe analysis has been returned yet.
+  const mtfAnalysis = isConnected ? (probe?.mtfAnalysis || null) : null;
   const ips = getLanIps();
   return {
     status: "ok",
@@ -931,19 +933,19 @@ function buildStatusPayload(probe) {
       tradingEnabled: isConnected && probe?.accountMode === "DEMO",
       terminalTradeAllowed: probe?.terminalTradeAllowed ?? false,
       expertTradeAllowed: probe?.expertTradeAllowed ?? false,
-      accountLogin: isConnected ? probe.accountLogin : Number(currentAccountConfig.login || 5201362),
+      accountLogin: isConnected ? probe.accountLogin : null,
       accountName: isConnected ? probe.accountName : "",
-      accountMode: isConnected ? probe.accountMode.toLowerCase() : currentAccountConfig.accountMode.toLowerCase(),
+      accountMode: isConnected ? probe.accountMode.toLowerCase() : "unknown",
       configuredAccountMode: isConnected ? probe.accountMode : currentAccountConfig.accountMode,
       liveExecutionArmed: Boolean(currentAccountConfig.liveArmed),
-      accountBalance: isConnected ? probe.balance : lastKnownAccountMetrics.balance,
-      accountEquity: isConnected ? probe.equity : lastKnownAccountMetrics.equity,
-      accountFreeMargin: isConnected ? probe.freeMargin : lastKnownAccountMetrics.equity,
-      accountProfit: isConnected ? probe.profit : lastKnownAccountMetrics.profit,
-      accountCurrency: isConnected ? probe.currency : "USD",
-      server: isConnected ? probe.server : currentAccountConfig.server,
-      brokerSymbol: isConnected ? probe.brokerSymbol : (currentAccountConfig.brokerSymbol || "XAUUSD.G"),
-      availableGoldSymbols: probe?.availableGoldSymbols || ["XAUUSD.G", "XAUUSD"],
+      accountBalance: isConnected ? probe.balance : null,
+      accountEquity: isConnected ? probe.equity : null,
+      accountFreeMargin: isConnected ? probe.freeMargin : null,
+      accountProfit: isConnected ? probe.profit : null,
+      accountCurrency: isConnected ? probe.currency : null,
+      server: isConnected ? probe.server : null,
+      brokerSymbol: isConnected ? probe.brokerSymbol : null,
+      availableGoldSymbols: isConnected ? (probe?.availableGoldSymbols || []) : [],
       timestamp: Date.now(),
     },
     quote:
@@ -957,8 +959,8 @@ function buildStatusPayload(probe) {
             timestamp: Date.now(),
           }
         : null,
-    liveAnalysis: probe?.liveAnalysis || null,
-    entrySignal: probe?.entrySignal || { allowed: false, side: "WAIT", reason: "MT5 not connected" },
+    liveAnalysis: isConnected ? (probe?.liveAnalysis || null) : null,
+    entrySignal: isConnected ? (probe?.entrySignal || { allowed: false, side: "WAIT", reason: "No signal" }) : { allowed: false, side: "WAIT", reason: "MT5 not connected" },
     candles: isConnected && Array.isArray(probe.candles) ? probe.candles : [],
     positions: isConnected && Array.isArray(probe.openPositions) ? probe.openPositions : [],
     recentTrades: isConnected && Array.isArray(probe.recentTrades) ? probe.recentTrades : [],
