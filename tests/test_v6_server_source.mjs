@@ -3,6 +3,7 @@ import { execFileSync as gitExecFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { Script } from "node:vm";
 import { dirname, resolve } from "node:path";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -235,4 +236,72 @@ test("V6 disconnected Web clears broker identity, quotes and percent-risk lot ca
   assert.ok(ui.includes('document.getElementById("dashEquityVal").textContent = "—"'));
   assert.doesNotMatch(ui, /window\.__latestAccountBalance = 4131\.83/);
   assert.doesNotMatch(ui, /const bal = window\.__latestAccountBalance \|\| 4131\.83/);
+});
+
+
+test("V6 market Telegram notifications cannot use offline synthetic data", () => {
+  const mtf = server.slice(
+    server.indexOf('if (pathname === "/api/v1/mt5/mtf-refresh"'),
+    server.indexOf("// API BẬT ĐƯỜNG HẦM", server.indexOf('if (pathname === "/api/v1/mt5/mtf-refresh"')),
+  );
+  assert.ok(mtf.length > 0);
+  assert.match(mtf, /if \(!payload\.mt5LiveBridgeConnected \|\| !mtf\?\.h4 \|\| !mtf\?\.h1 \|\| !mtf\?\.m15 \|\| !mtf\?\.scenario15m\)/);
+  assert.match(mtf, /code: "MT5_MTF_UNVERIFIED"/);
+  assert.match(mtf, /payload\.telegramResult = await sendTelegramNotification/);
+  const testEndpoint = server.slice(
+    server.indexOf('if (pathname === "/api/v1/mt5/telegram-config"'),
+    server.indexOf('if (pathname === "/api/v1/mt5/mtf-refresh"'),
+  );
+  assert.match(testEndpoint, /Đây chỉ là tin nhắn kiểm tra kênh/);
+  assert.doesNotMatch(testEndpoint, /mtf\.currentPrice|mtf\.h4\.bias|mtf\.scenario15m/);
+  const entryMsg = server.slice(server.indexOf("function formatOrderEntryTelegramMsg("), server.indexOf("function sendTelegramNotification("));
+  assert.doesNotMatch(entryMsg, /\*\s*100/);
+  assert.match(entryMsg, /Chưa đối chiếu order_calc_profit/);
+});
+
+test("V6 percent-risk sizing never assumes $100 per price-unit/lot", () => {
+  const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  const rootUi = readFileSync(resolve(root, "MO_WEB_TRUC_TIEP_KHONG_CAN_SERVER.html"), "utf8");
+  assert.equal(ui, rootUi);
+  const sizing = ui.slice(ui.indexOf("function syncLotDisplayEverywhere("), ui.indexOf("async function saveTradeParamsToServer("));
+  assert.ok(sizing.length > 0);
+  assert.doesNotMatch(sizing, /slDist\s*\*\s*100|slDist\s*\*\s*100\.0/);
+  assert.doesNotMatch(sizing, /riskUsd\s*\/\s*\(slDist\s*\*\s*100/);
+  assert.match(sizing, /thiếu order_calc_profit/);
+  assert.match(sizing, /return null/);
+  const mutation = ui.slice(ui.indexOf("async function saveTradeParamsToServer("), ui.indexOf("function onChangeBotStrategyMode("));
+  assert.match(mutation, /if \(\(document\.getElementById\("lotAllocMode"\)\?\.value \|\| "AUTO_RISK_PCT"\) === "AUTO_RISK_PCT"\)/);
+  assert.match(mutation, /ĐÃ CHẶN GỬI THAM SỐ LOT THEO %/);
+});
+
+test("V6 Web Telegram tests are neutral and unverified market reports cannot be sent", () => {
+  const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  const report = ui.slice(
+    ui.indexOf("async function sendDetailedTradeStatusToTelegram()"),
+    ui.indexOf("async function triggerMtfScenarioRefresh("),
+  );
+  assert.match(report, /CHẶN BÁO CÁO MT5/);
+  assert.match(report, /lastLiveMt5Payload\?\.mt5LiveBridgeConnected !== true/);
+  assert.doesNotMatch(report, /\$4,131\.83|TK #5201362/);
+  const refresh = ui.slice(
+    ui.indexOf("async function triggerMtfScenarioRefresh("),
+    ui.indexOf("async function saveAndTestTelegram("),
+  );
+  assert.match(refresh, /!data\.mtfAnalysis\?\.h4/);
+  assert.match(refresh, /data\.telegramResult\?\.ok === true/);
+  assert.doesNotMatch(refresh, /sendDirectTelegramFromBrowser/);
+  assert.match(refresh, /Không kết nối API\/MT5; không gửi Telegram bằng dữ liệu mẫu/);
+  const telegramTest = ui.slice(
+    ui.indexOf("async function saveAndTestTelegram("),
+    ui.indexOf("(function initLiveUrlAndApi()"),
+  );
+  assert.match(telegramTest, /Thông báo thử nghiệm kênh\. Không xác minh MT5/);
+  assert.doesNotMatch(telegramTest, /\$4,131\.83|LIVE #5201362/);
+});
+
+test("V6 operator inline script remains syntactically valid", () => {
+  const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  const inlineJs = ui.split("<script>")[1]?.split("</script>")[0];
+  assert.ok(inlineJs && inlineJs.length > 10000);
+  assert.doesNotThrow(() => new Script(inlineJs), "public standalone UI must parse without executing trading actions");
 });
