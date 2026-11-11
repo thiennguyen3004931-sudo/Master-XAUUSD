@@ -265,9 +265,9 @@ function loadTelegramConfig() {
     }
   } catch {}
   return {
-    enabled: true,
+    enabled: false,
     botToken: process.env.ZIQ_TELEGRAM_BOT_TOKEN || "",
-    chatId: process.env.ZIQ_TELEGRAM_CHAT_ID || "1629602548",
+    chatId: process.env.ZIQ_TELEGRAM_CHAT_ID || "",
     notifyOrders: true,
     notifyMtf15m: false,
     lastSentAt: null,
