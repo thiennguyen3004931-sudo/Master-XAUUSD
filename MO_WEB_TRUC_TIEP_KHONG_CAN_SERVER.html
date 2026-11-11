@@ -809,6 +809,10 @@
              TRANG 1: BẢNG ĐIỀU KHIỂN, ĐẶT LỆNH & CHẾ ĐỘ DCA DƯƠNG
              ========================================================= -->
         <section id="route-dashboard" class="view-section active">
+          <div class="card" role="note" data-v6-synthetic-evidence-warning="true" style="margin:0 0 12px;padding:12px;border:1px solid var(--warn)">
+            <strong>MINH HỌA — KHÔNG PHẢI BẰNG CHỨNG GIAO DỊCH</strong>
+            <div style="font-size:12px;color:var(--text-secondary)">Winrate, Profit Factor, PnL, backtest và trạng thái đề xuất khởi tạo là dữ liệu giao diện mẫu. Chưa xác minh bằng lịch sử MT5 hoặc backtest tái lập; không phải xác nhận lợi nhuận hay cấp quyền giao dịch LIVE.</div>
+          </div>
           <!-- HÀNG 1: 4 THẺ CHỈ SỐ CÂN ĐỐI -->
           <div class="grid-4">
             <div class="card">
@@ -1222,6 +1226,10 @@
              TRANG 2 (MỚI): THỐNG KÊ MẪU LỆNH CỦA CÁC BOT & PHÊ DUYỆT CHIẾN LƯỢC
              ========================================================= -->
         <section id="route-approvals" class="view-section">
+          <div class="card" role="note" data-v6-synthetic-evidence-warning="true" style="margin:0 0 12px;padding:12px;border:1px solid var(--warn)">
+            <strong>MINH HỌA — KHÔNG PHẢI BẰNG CHỨNG GIAO DỊCH</strong>
+            <div style="font-size:12px;color:var(--text-secondary)">Winrate, Profit Factor, PnL, backtest và trạng thái đề xuất khởi tạo là dữ liệu giao diện mẫu. Chưa xác minh bằng lịch sử MT5 hoặc backtest tái lập; không phải xác nhận lợi nhuận hay cấp quyền giao dịch LIVE.</div>
+          </div>
           <div class="card">
             <div class="card-top">
               <div class="card-header">
@@ -1408,11 +1416,11 @@ Nhánh chính  : main
               <div class="form-grid-3">
                 <div class="field">
                   <label>1. Telegram Bot Token (Lấy từ @BotFather)</label>
-                  <input type="text" id="inpTgToken" value="" placeholder="VD: 8957841283:AAGSp1..." />
+                  <input type="password" id="inpTgToken" autocomplete="off" value="" placeholder="VD: 8957841283:AAGSp1..." />
                 </div>
                 <div class="field">
                   <label>2. Telegram Chat ID của bạn (Lấy từ @userinfobot)</label>
-                  <input type="text" id="inpTgChatId" value="1629602548" placeholder="VD: 1629602548" />
+                  <input type="text" id="inpTgChatId" value="" placeholder="VD: 1629602548" />
                 </div>
                 <div class="field">
                   <label>3. Chế độ nhận thông báo tự động</label>
@@ -1463,6 +1471,10 @@ Hướng dẫn lấy nhanh trong 30 giây trên Telegram:
              TRANG 5: BACKTEST 4 CHẾ ĐỘ BOT V6.3 & CHI TIẾT LÃI LỖ TỪNG LỆNH (/backtest)
              ========================================================= -->
         <section id="route-backtest" class="view-section">
+          <div class="card" role="note" data-v6-synthetic-evidence-warning="true" style="margin:0 0 12px;padding:12px;border:1px solid var(--warn)">
+            <strong>MINH HỌA — KHÔNG PHẢI BẰNG CHỨNG GIAO DỊCH</strong>
+            <div style="font-size:12px;color:var(--text-secondary)">Winrate, Profit Factor, PnL, backtest và trạng thái đề xuất khởi tạo là dữ liệu giao diện mẫu. Chưa xác minh bằng lịch sử MT5 hoặc backtest tái lập; không phải xác nhận lợi nhuận hay cấp quyền giao dịch LIVE.</div>
+          </div>
           <div class="card">
             <div class="card-top">
               <div class="card-header">
@@ -1634,6 +1646,10 @@ Hướng dẫn lấy nhanh trong 30 giây trên Telegram:
              TRANG 6: HIỆU SUẤT & 5 ĐỀ XUẤT NÂNG CẤP BOT (/performance)
              ========================================================= -->
         <section id="route-performance" class="view-section">
+          <div class="card" role="note" data-v6-synthetic-evidence-warning="true" style="margin:0 0 12px;padding:12px;border:1px solid var(--warn)">
+            <strong>MINH HỌA — KHÔNG PHẢI BẰNG CHỨNG GIAO DỊCH</strong>
+            <div style="font-size:12px;color:var(--text-secondary)">Winrate, Profit Factor, PnL, backtest và trạng thái đề xuất khởi tạo là dữ liệu giao diện mẫu. Chưa xác minh bằng lịch sử MT5 hoặc backtest tái lập; không phải xác nhận lợi nhuận hay cấp quyền giao dịch LIVE.</div>
+          </div>
           <div class="grid-2" id="proposalsCardsContainer"></div>
         </section>
 
@@ -3434,17 +3450,13 @@ Branch : main
     renderProposalsPage();
     renderStrategyApprovalQueue();
 
-    const DEFAULT_TG_PART_A = "8957841283:AAGSp1KebI9";
-    const DEFAULT_TG_PART_B = "Axu9G5N-tQJhx-969nyAJRIQ";
-    const DEFAULT_TG_CHAT_ID = "1629602548";
-
     (function initDefaultTelegramInputs() {
       try {
-        const savedTok = localStorage.getItem("xauusd_tg_token") || (DEFAULT_TG_PART_A + DEFAULT_TG_PART_B);
-        const savedChat = localStorage.getItem("xauusd_tg_chatid") || DEFAULT_TG_CHAT_ID;
+        localStorage.removeItem("xauusd_tg_token"); // Clear any previously persisted browser token
+        const savedChat = localStorage.getItem("xauusd_tg_chatid") || "";
         const tokEl = document.getElementById("inpTgToken");
         const chatEl = document.getElementById("inpTgChatId");
-        if (tokEl && !tokEl.value) tokEl.value = savedTok;
+        if (tokEl) tokEl.value = ""; // Require explicit operator entry per browser session
         if (chatEl && !chatEl.value) chatEl.value = savedChat;
       } catch (e) {}
     })();
@@ -3548,9 +3560,10 @@ Branch : main
 
 
     async function sendDetailedTradeStatusToTelegram() {
-      const tok = document.getElementById("inpTgToken")?.value.trim() || (DEFAULT_TG_PART_A + DEFAULT_TG_PART_B);
-      const chat = document.getElementById("inpTgChatId")?.value.trim() || DEFAULT_TG_CHAT_ID;
+      const tok = document.getElementById("inpTgToken")?.value.trim() || "";
+      const chat = document.getElementById("inpTgChatId")?.value.trim() || "";
       const logBox = document.getElementById("tradeExecutionLog");
+      if (!tok || !chat) { if (logBox) logBox.textContent = "Vui lòng nhập Telegram Bot Token và Chat ID; không dùng thông tin mặc định."; return; }
       const botSelectEl = document.getElementById("botStrategySelect");
       const botName = botSelectEl ? botSelectEl.options[botSelectEl.selectedIndex].text : "1. Tự động Thông minh + Gồng Trend Cấu Trúc V6.3";
       const curPrice = document.getElementById("livePriceChip")?.textContent || "XAUUSD.G 4678.96";
@@ -3600,8 +3613,8 @@ Branch : main
     async function triggerMtfScenarioRefresh(sendTelegram) {
       const logBox = document.getElementById("tradeExecutionLog");
       mtfRemainingSeconds = 900;
-      const tok = document.getElementById("inpTgToken")?.value.trim() || (DEFAULT_TG_PART_A + DEFAULT_TG_PART_B);
-      const chat = document.getElementById("inpTgChatId")?.value.trim() || DEFAULT_TG_CHAT_ID;
+      const tok = document.getElementById("inpTgToken")?.value.trim() || "";
+      const chat = document.getElementById("inpTgChatId")?.value.trim() || "";
 
       try {
         const fn = window["fet" + "ch"];
@@ -3659,7 +3672,7 @@ Branch : main
       }
 
       try {
-        localStorage.setItem("xauusd_tg_token", botToken);
+        localStorage.removeItem("xauusd_tg_token");
         localStorage.setItem("xauusd_tg_chatid", chatId);
       } catch (e) {}
 

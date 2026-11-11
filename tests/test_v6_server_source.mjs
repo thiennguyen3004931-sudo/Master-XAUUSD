@@ -158,3 +158,36 @@ test("V6 synthetic strategy metrics cannot masquerade as broker-verified results
   assert.match(server, /liveAuthorized: false/);
   assert.equal(server.split("botSampleEvidence: V6_SAMPLE_EVIDENCE").length - 1, 2);
 });
+
+
+test("public V6 UI never embeds or persists Telegram credentials", () => {
+  const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  assert.doesNotMatch(ui, /DEFAULT_TG_PART_[AB]|DEFAULT_TG_CHAT_ID/);
+  assert.doesNotMatch(ui, /localStorage\.(?:getItem|setItem)\(["']xauusd_tg_token["']/);
+  assert.match(ui, /localStorage\.removeItem\("xauusd_tg_token"\)/);
+  assert.match(ui, /id="inpTgToken" autocomplete="off"/);
+  assert.match(ui, /const tok = document\.getElementById\("inpTgToken"\)\?\.value\.trim\(\) \|\| "";/);
+  assert.doesNotMatch(ui, /<input[^>]+id="inpTgChatId"[^>]+value="[^"]+"/);
+  assert.match(ui, /if \(!tok \|\| !chat\)/);
+});
+
+
+test("Telegram notifier is disabled on first start without explicit operator configuration", () => {
+  const block = server.slice(
+    server.indexOf("function loadTelegramConfig()"),
+    server.indexOf("let telegramConfig = loadTelegramConfig()"),
+  );
+  assert.match(block, /enabled: false/);
+  assert.match(block, /botToken: process\.env\.ZIQ_TELEGRAM_BOT_TOKEN \|\| ""/);
+  assert.match(block, /chatId: process\.env\.ZIQ_TELEGRAM_CHAT_ID \|\| ""/);
+  assert.doesNotMatch(block, /chatId: process\.env\.ZIQ_TELEGRAM_CHAT_ID \|\| "\d+"/);
+});
+
+
+test("public root standalone HTML mirrors credential-safe V6 UI", () => {
+  const appHtml = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  const fallbackHtml = readFileSync(resolve(root, "MO_WEB_TRUC_TIEP_KHONG_CAN_SERVER.html"), "utf8");
+  assert.equal(fallbackHtml, appHtml, "fallback HTML must never retain a prior exposed token");
+  assert.doesNotMatch(fallbackHtml, /DEFAULT_TG_PART_[AB]|DEFAULT_TG_CHAT_ID/);
+  assert.doesNotMatch(fallbackHtml, /localStorage\.(?:getItem|setItem)\(["']xauusd_tg_token["']/);
+});
