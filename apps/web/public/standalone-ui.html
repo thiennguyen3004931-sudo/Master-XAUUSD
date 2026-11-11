@@ -2542,11 +2542,8 @@ Branch : main
       window.__userLockedLot = cleanLot;
       const allocMode = document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT";
       const riskPct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
-      const slDist = Number(document.getElementById("tradeSlDist")?.value || 6.8);
       const bal = Number(window.__latestAccountBalance);
       const verifiedBalance = window.__mt5BalanceVerified === true && Number.isFinite(bal) && bal > 0;
-      const riskUsd = verifiedBalance ? Math.round(cleanLot * slDist * 100) : null;
-      const actualPct = verifiedBalance ? ((riskUsd / bal) * 100).toFixed(2) : null;
 
       try {
         localStorage.setItem("xauusd_locked_lot", String(cleanLot));
@@ -2559,8 +2556,8 @@ Branch : main
         badge.textContent = !verifiedBalance
           ? "CHỜ XÁC MINH MT5 — chưa tính rủi ro/lot từ số dư mẫu"
           : allocMode === "AUTO_RISK_PCT"
-            ? `Ước tính: ${cleanLot.toFixed(2)} Lot (${riskPct}% Vốn ≈ ${riskUsd}; chưa kiểm tra tick value broker)`
-            : `Lot cố định: ${cleanLot.toFixed(2)} (ước tính ${actualPct}% Vốn / ${riskUsd}; chưa kiểm tra tick value)`;
+            ? "TẠM KHÓA: thiếu order_calc_profit của broker cho mức SL đang chọn"
+            : `Lot cố định: ${cleanLot.toFixed(2)} — chưa tính USD rủi ro theo broker`;
       }
 
       const jCell = document.getElementById("journalReadyLotCell");
@@ -2587,9 +2584,11 @@ Branch : main
         if (logBox) logBox.textContent = "CHẶN TÍNH LOT: MT5 chưa xác minh số dư và phiên broker.";
         return null;
       }
-      const slDist = Math.max(2.0, Number(document.getElementById("tradeSlDist")?.value || 6.8));
-      const riskUsd = bal * (Number(pctVal || 0.8) / 100.0);
-      return Math.max(0.01, Math.round((riskUsd / (slDist * 100.0)) * 100) / 100);
+      // Equity verification alone cannot price SL risk. Require future
+      // independent, fresh broker order_calc_profit and volume_step evidence.
+      const logBox = document.getElementById("tradeExecutionLog");
+      if (logBox) logBox.textContent = "CHẶN TÍNH LOT: chưa có order_calc_profit/lot theo giá, SL và chiều lệnh broker.";
+      return null;
     }
 
     function onChangeLotAllocMode() {
@@ -2666,10 +2665,9 @@ Branch : main
     }
 
     async function saveTradeParamsToServer(customNote) {
-      if ((document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT") === "AUTO_RISK_PCT" &&
-          window.__mt5BalanceVerified !== true) {
+      if ((document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT") === "AUTO_RISK_PCT") {
         const logBox = document.getElementById("tradeExecutionLog");
-        if (logBox) logBox.textContent = "ĐÃ CHẶN GỬI THAM SỐ LOT THEO %: chưa xác minh MT5.";
+        if (logBox) logBox.textContent = "ĐÃ CHẶN GỬI THAM SỐ LOT THEO %: chưa có phép tính order_calc_profit broker cho SL hiện tại.";
         return;
       }
       lastUserParamEditTime = Date.now();
