@@ -41,7 +41,7 @@ def quote_broker_risk_lot_readonly(mt5, symbol, side, sl_price, risk_percent, *,
         info = mt5.symbol_info(symbol)
         tick = mt5.symbol_info_tick(symbol)
         account = mt5.account_info()
-        if info is None or tick is None or account is None:
+        if info is None or tick is None or account is None or not getattr(info, "visible", False):
             return blocked("BROKER_EVIDENCE_UNAVAILABLE")
         equity = float(getattr(account, "equity", 0) or 0)
         min_lot = float(getattr(info, "volume_min", 0) or 0)
@@ -1426,7 +1426,7 @@ def main():
 
     mutation_actions = ("order", "dca_plus", "manage_positions", "breakeven", "close")
     ok_conn, conn_err = connect_mt5(
-        mt5, cfg, require_account_binding=(action in mutation_actions)
+        mt5, cfg, require_account_binding=(action in mutation_actions or action == "quote_lot")
     )
     if not ok_conn:
         sys.stdout.write(json.dumps({
@@ -1452,6 +1452,29 @@ def main():
             "connected": False,
             "errorCode": "MT5_ACCOUNT_NONE",
             "errorMessage": "Phần mềm MT5 đang mở nhưng chưa đăng nhập tài khoản.",
+            "timestamp": int(time.time() * 1000),
+        }, ensure_ascii=False) + "\n")
+        return
+
+    if action == "quote_lot":
+        # Exit before symbol_select, candle sampling, position management, or
+        # any broker mutation. Exact configured symbol and account binding only.
+        requested_symbol = str(cfg.get("symbol") or "").strip()
+        configured_symbol = str(cfg.get("brokerSymbol") or "").strip()
+        if (not requested_symbol or requested_symbol != configured_symbol
+                or not requested_symbol.upper().startswith(("XAUUSD", "GOLD"))):
+            result = {"ok": False, "executionAuthorized": False, "reason": "BROKER_SYMBOL_BINDING_REQUIRED"}
+        else:
+            result = quote_broker_risk_lot_readonly(
+                mt5, requested_symbol, cfg.get("side"),
+                cfg.get("slPrice"), cfg.get("riskPercent"),
+            )
+        mt5.shutdown()
+        sys.stdout.write(json.dumps({
+            "connected": True,
+            "quoteOnly": True,
+            "executionAuthorized": False,
+            "actionResult": result,
             "timestamp": int(time.time() * 1000),
         }, ensure_ascii=False) + "\n")
         return
