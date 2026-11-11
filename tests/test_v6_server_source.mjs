@@ -182,3 +182,12 @@ test("Telegram notifier is disabled on first start without explicit operator con
   assert.match(block, /chatId: process\.env\.ZIQ_TELEGRAM_CHAT_ID \|\| ""/);
   assert.doesNotMatch(block, /chatId: process\.env\.ZIQ_TELEGRAM_CHAT_ID \|\| "\d+"/);
 });
+
+
+test("public root standalone HTML mirrors credential-safe V6 UI", () => {
+  const appHtml = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  const fallbackHtml = readFileSync(resolve(root, "MO_WEB_TRUC_TIEP_KHONG_CAN_SERVER.html"), "utf8");
+  assert.equal(fallbackHtml, appHtml, "fallback HTML must never retain a prior exposed token");
+  assert.doesNotMatch(fallbackHtml, /DEFAULT_TG_PART_[AB]|DEFAULT_TG_CHAT_ID/);
+  assert.doesNotMatch(fallbackHtml, /localStorage\.(?:getItem|setItem)\(["']xauusd_tg_token["']/);
+});
