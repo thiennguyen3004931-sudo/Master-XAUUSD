@@ -158,3 +158,15 @@ test("V6 synthetic strategy metrics cannot masquerade as broker-verified results
   assert.match(server, /liveAuthorized: false/);
   assert.equal(server.split("botSampleEvidence: V6_SAMPLE_EVIDENCE").length - 1, 2);
 });
+
+
+test("public V6 UI never embeds or persists Telegram credentials", () => {
+  const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  assert.doesNotMatch(ui, /DEFAULT_TG_PART_[AB]|DEFAULT_TG_CHAT_ID/);
+  assert.doesNotMatch(ui, /localStorage\.(?:getItem|setItem)\(["']xauusd_tg_token["']/);
+  assert.match(ui, /localStorage\.removeItem\("xauusd_tg_token"\)/);
+  assert.match(ui, /id="inpTgToken" autocomplete="off"/);
+  assert.match(ui, /const tok = document\.getElementById\("inpTgToken"\)\?\.value\.trim\(\) \|\| "";/);
+  assert.doesNotMatch(ui, /<input[^>]+id="inpTgChatId"[^>]+value="[^"]+"/);
+  assert.match(ui, /if \(!tok \|\| !chat\)/);
+});
