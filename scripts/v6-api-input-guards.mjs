@@ -18,3 +18,20 @@ export function parseOptionalBoolean(value, field = "flag") {
   }
   return value;
 }
+
+
+/** Reject implicit coercion, hidden account/symbol overrides and unsafe risk caps. */
+export function parseReadOnlyLotQuoteRequest(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).some(key => !["side", "slPrice", "riskPercent"].includes(key))) {
+    throw new TypeError("INVALID_READ_ONLY_RISK_REQUEST");
+  }
+  const { side, slPrice, riskPercent } = body;
+  if (!["BUY", "SELL"].includes(side) ||
+      typeof slPrice !== "number" || !Number.isFinite(slPrice) || slPrice <= 0 ||
+      typeof riskPercent !== "number" || !Number.isFinite(riskPercent) ||
+      riskPercent <= 0 || riskPercent > 0.5) {
+    throw new TypeError("INVALID_READ_ONLY_RISK_REQUEST");
+  }
+  return { side, slPrice, riskPercent };
+}
