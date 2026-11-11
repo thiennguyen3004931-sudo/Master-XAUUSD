@@ -370,5 +370,10 @@ test("V6 operator Web provides on-demand read-only broker lot preview without ch
   assert.match(preview, /pricedLoss > budget/);
   assert.doesNotMatch(preview, /getElementById\("tradeLot"\)|setQuickLot\(|saveTradeParamsToServer\(|localStorage\.setItem\(|\/mt5\/order|\/mt5\/auto-bot/);
   assert.match(ui, /window\.__mt5BalanceVerified = false;\s*clearV6ReadOnlyLotQuote\(\)/);
-  assert.doesNotMatch(ui, /Vốn \(\$4,131\.83\)|Đang áp dụng: 0\.05 Lot \(0\.8% Vốn/);
+  const allocationPanel = ui.slice(
+    ui.indexOf("<!-- KHUNG PHÂN BỔ"),
+    ui.indexOf("<!-- THÔNG SỐ SL CẤU TRÚC"),
+  );
+  assert.ok(allocationPanel.length > 0, "lot allocation UI must be present");
+  assert.doesNotMatch(allocationPanel, /Vốn \(\$4,131\.83\)|Đang áp dụng: 0\.05 Lot \(0\.8% Vốn/);
 });
