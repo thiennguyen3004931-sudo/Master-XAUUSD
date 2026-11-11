@@ -819,3 +819,74 @@ class SecureStdinTransportTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class BrokerRiskLotQuoteTest(unittest.TestCase):
+    """Pure mock-broker checks; neither initialize nor order_send may be called."""
+
+    def _quote(self, broker=None, **kwargs):
+        mt5 = broker or MockBroker()
+        result = engine.quote_broker_risk_lot_readonly(
+            mt5, "XAUUSD.G", kwargs.pop("side", "BUY"),
+            kwargs.pop("sl_price", 3993.40),
+            kwargs.pop("risk_percent", 0.5), **kwargs,
+        )
+        self.assertEqual(mt5.sent, [], "risk quote must not submit broker orders")
+        return result
+
+    def test_broker_priced_lot_quantizes_down_and_remains_nonexecutable(self):
+        result = self._quote()
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["source"], "MT5_ORDER_CALC_PROFIT_READ_ONLY")
+        self.assertFalse(result["executionAuthorized"])
+        self.assertTrue(result["indicativeOnly"])
+        self.assertEqual(result["volume"], 0.02)
+        self.assertLessEqual(result["estimatedSlLossWithBuffer"], result["riskBudget"])
+
+    def test_rejects_when_minimum_lot_exceeds_budget(self):
+        result = self._quote(risk_percent=0.1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "BROKER_MINIMUM_LOT_EXCEEDS_RISK")
+
+    def test_rejects_wrong_direction_and_high_risk_percent(self):
+        for params in (
+            {"side": "WAIT"},
+            {"sl_price": 4002.0},
+            {"risk_percent": 5.0},
+            {"risk_percent": float("nan")},
+        ):
+            with self.subTest(params=params):
+                self.assertFalse(self._quote(**params)["ok"])
+
+    def test_rejects_stale_quotes_and_broker_pricing_failure(self):
+        class StaleBroker(MockBroker):
+            def symbol_info_tick(self, symbol):
+                return SimpleNamespace(ask=self.asks, bid=self.bids, time=int(time.time()) - 100)
+        class NonePricingBroker(MockBroker):
+            def order_calc_profit(self, *args):
+                return None
+        self.assertFalse(self._quote(StaleBroker())["ok"])
+        self.assertEqual(self._quote(NonePricingBroker())["reason"], "BROKER_SL_LOSS_UNVERIFIED")
+
+    def test_rejects_unverifiable_volume_step(self):
+        class InvalidStepBroker(MockBroker):
+            def symbol_info(self, symbol):
+                info = super().symbol_info(symbol)
+                info.volume_step = 0
+                return info
+        self.assertFalse(self._quote(InvalidStepBroker())["ok"])
+
+    def test_uses_broker_contract_pricing_not_assumed_100(self):
+        class LargerContractBroker(MockBroker):
+            def order_calc_profit(self, kind, symbol, lot, entry, stop):
+                return super().order_calc_profit(kind, symbol, lot, entry, stop) * 4
+        # 4x risk: even broker minimum lot exceeds 0.5% of $4,000.
+        result = self._quote(LargerContractBroker())
+        self.assertEqual(result["reason"], "BROKER_MINIMUM_LOT_EXCEEDS_RISK")
+
+    def test_sell_side_uses_bid_and_stop_above_ask(self):
+        result = self._quote(side="SELL", sl_price=4006.8)
+        self.assertTrue(result["ok"], result)
+        self.assertAlmostEqual(result["entry"], 4000.0)
+        self.assertEqual(result["side"], "SELL")
