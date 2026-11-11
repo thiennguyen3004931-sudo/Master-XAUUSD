@@ -305,3 +305,43 @@ test("V6 operator inline script remains syntactically valid", () => {
   assert.ok(inlineJs && inlineJs.length > 10000);
   assert.doesNotThrow(() => new Script(inlineJs), "public standalone UI must parse without executing trading actions");
 });
+
+
+import { parseReadOnlyLotQuoteRequest } from "../scripts/v6-api-input-guards.mjs";
+
+test("V6 read-only broker risk quote parser rejects account/symbol overrides", () => {
+  assert.deepEqual(parseReadOnlyLotQuoteRequest({ side: "BUY", slPrice: 3993.4, riskPercent: 0.5 }),
+    { side: "BUY", slPrice: 3993.4, riskPercent: 0.5 });
+  for (const payload of [
+    null, [], {}, { side:"SELL", slPrice: 4008, riskPercent: 0.8 },
+    { side:"BUY", slPrice: 3993.4, riskPercent: 0.5, symbol:"XAUUSD" },
+    { side:"BUY", slPrice: 3993.4, riskPercent: 0.5, action:"order" },
+    { side:"BUY", slPrice: 3993.4, riskPercent: "0.5" },
+    { side:"WAIT", slPrice: 3993.4, riskPercent: 0.5 },
+    { side:"BUY", slPrice: null, riskPercent: 0.5 },
+    { side:"BUY", slPrice: Infinity, riskPercent: 0.5 },
+  ]) {
+    assert.throws(() => parseReadOnlyLotQuoteRequest(payload), /INVALID_READ_ONLY_RISK_REQUEST/);
+  }
+});
+
+test("V6 read-only risk API never authorizes execution or contaminates cached MT5 status", () => {
+  const route = server.slice(
+    server.indexOf('if (pathname === "/api/v1/mt5/lot-quote"'),
+    server.indexOf('if (pathname === "/api/v1/mt5/connect-account"'),
+  );
+  assert.ok(route.length > 0);
+  assert.match(route, /parseReadOnlyLotQuoteRequest/);
+  assert.match(route, /action: "quote_lot"/);
+  assert.match(route, /symbol: currentAccountConfig\.brokerSymbol/);
+  assert.match(route, /maxRiskPercent: 0\.5/);
+  assert.match(route, /executionAuthorized: false/);
+  assert.match(route, /liveAuthorized: false/);
+  assert.doesNotMatch(route, /action: "order"|order_send|liveArmed = true|saveAccountConfig/);
+  const transport = server.slice(
+    server.indexOf("function invokeMt5PythonEngineDirect("),
+    server.indexOf("// All broker-mutating actions are serialized"),
+  );
+  assert.match(transport, /if \(isProbeOnly\) \{\s*lastDirectProbeSnapshot = parsed/);
+  assert.doesNotMatch(transport, /isProbeOnly \|\| parsed\.connected !== undefined/);
+});
