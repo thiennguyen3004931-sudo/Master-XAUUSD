@@ -882,9 +882,10 @@ function buildStatusPayload(probe) {
     if (probe.bid > 0) lastKnownAccountMetrics.bid = Number(probe.bid);
     if (probe.ask > 0) lastKnownAccountMetrics.ask = Number(probe.ask);
   }
-  const activeBid = isConnected && probe?.bid > 0 ? Number(probe.bid) : null;
-  // Never represent cached or synthetic market data as live on MT5 disconnect.
-  const mtfAnalysis = isConnected ? (probe?.mtfAnalysis || buildFallbackMtfAnalysis(activeBid)) : null;
+  // MTF analysis is broker evidence only when provided by the connected probe.
+  // Never substitute a synthetic analysis, including when MT5 is connected but
+  // no verified multi-timeframe analysis has been returned yet.
+  const mtfAnalysis = isConnected ? (probe?.mtfAnalysis || null) : null;
   const ips = getLanIps();
   return {
     status: "ok",
