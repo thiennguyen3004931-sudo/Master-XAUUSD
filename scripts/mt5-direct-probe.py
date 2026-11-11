@@ -18,6 +18,98 @@ from math import isfinite, floor
 from xauusd_v6_trade_rules import evaluate_entry, structural_stop, trail_stop, peak_profit_stop, closed
 from v6_daily_loss_guard import verify_daily_new_order_budget
 
+def quote_broker_risk_lot_readonly(mt5, symbol, side, sl_price, risk_percent, *, max_risk_percent=0.5):
+    """Quote a NON-EXECUTABLE lot from broker loss pricing; never place orders.
+
+    Caller must separately attest the exact MT5 login/server and symbol.
+    This function deliberately neither initializes/logs in nor switches symbols.
+    Returns BLOCKED if any broker data is missing or ambiguous.
+    """
+    def blocked(reason):
+        return {"ok": False, "executionAuthorized": False, "reason": reason}
+
+    try:
+        side = str(side).upper()
+        symbol = str(symbol)
+        pct = float(risk_percent)
+        cap = float(max_risk_percent)
+        stop = float(sl_price)
+        if side not in ("BUY", "SELL") or not symbol or not all(
+            isfinite(x) for x in (pct, cap, stop)
+        ) or not (0 < pct <= cap <= 1.0) or stop <= 0:
+            return blocked("INVALID_RISK_REQUEST")
+        info = mt5.symbol_info(symbol)
+        tick = mt5.symbol_info_tick(symbol)
+        account = mt5.account_info()
+        if info is None or tick is None or account is None:
+            return blocked("BROKER_EVIDENCE_UNAVAILABLE")
+        equity = float(getattr(account, "equity", 0) or 0)
+        min_lot = float(getattr(info, "volume_min", 0) or 0)
+        max_lot = float(getattr(info, "volume_max", 0) or 0)
+        step = float(getattr(info, "volume_step", 0) or 0)
+        point = float(getattr(info, "point", 0) or 0)
+        bid = float(getattr(tick, "bid", 0) or 0)
+        ask = float(getattr(tick, "ask", 0) or 0)
+        age = time.time() - float(getattr(tick, "time", 0) or 0)
+        stop_level = float(getattr(info, "trade_stops_level", 0) or 0)
+        values = (equity, min_lot, max_lot, step, point, bid, ask, age, stop_level)
+        if not all(isfinite(x) for x in values):
+            return blocked("BROKER_NUMERIC_VALUE_INVALID")
+        if not (equity > 0 and 0 < step <= min_lot <= max_lot and point > 0
+                and 0 < bid <= ask and 0 <= age <= 20 and stop_level >= 0):
+            return blocked("BROKER_SPEC_OR_QUOTE_INVALID")
+        entry = ask if side == "BUY" else bid
+        gap = max(point, stop_level * point)
+        if (side == "BUY" and not (stop < bid - gap)) or (
+            side == "SELL" and not (stop > ask + gap)
+        ):
+            return blocked("STOP_PRICE_INVALID_FOR_BROKER")
+        calc = getattr(mt5, "order_calc_profit", None)
+        if not callable(calc):
+            return blocked("ORDER_CALC_PROFIT_UNAVAILABLE")
+        kind = getattr(mt5, "ORDER_TYPE_BUY" if side == "BUY" else "ORDER_TYPE_SELL", None)
+        if kind is None:
+            return blocked("ORDER_TYPE_UNAVAILABLE")
+        # Quote risk at broker minimum lot first, not an assumed gold contract size.
+        ref = calc(kind, symbol, min_lot, entry, stop)
+        if ref is None or not isfinite(float(ref)) or float(ref) >= 0:
+            return blocked("BROKER_SL_LOSS_UNVERIFIED")
+        budget = equity * pct / 100
+        safety_factor = 1.05  # conservative allowance; commission/slippage not guaranteed
+        loss_min = -float(ref) * safety_factor
+        if loss_min > budget:
+            return blocked("BROKER_MINIMUM_LOT_EXCEEDS_RISK")
+        # Quantize DOWN only; never round a trade into excess risk.
+        max_units = floor((max_lot + 1e-10) / step)
+        min_units = -floor(-(min_lot - 1e-10) / step)
+        initial_units = floor((min_lot * budget / loss_min + 1e-10) / step)
+        units = min(max_units, initial_units)
+        if units < min_units:
+            return blocked("NO_BROKER_LOT_WITHIN_RISK")
+        # Reprice exact candidate via broker before reporting.
+        for _ in range(12):
+            volume = round(units * step, 8)
+            result = calc(kind, symbol, volume, entry, stop)
+            if result is None or not isfinite(float(result)) or float(result) >= 0:
+                return blocked("BROKER_LOT_PRICE_UNVERIFIED")
+            loss = -float(result) * safety_factor
+            if loss <= budget + 1e-8:
+                return {
+                    "ok": True, "executionAuthorized": False,
+                    "indicativeOnly": True, "symbol": symbol, "side": side,
+                    "entry": entry, "stop": stop, "volume": volume,
+                    "estimatedSlLossWithBuffer": round(loss, 2),
+                    "riskBudget": round(budget, 2), "volumeStep": step,
+                    "source": "MT5_ORDER_CALC_PROFIT_READ_ONLY",
+                }
+            units -= 1
+            if units < min_units:
+                break
+        return blocked("BROKER_RISK_REPRICE_FAILED")
+    except (TypeError, ValueError, OverflowError, AttributeError):
+        return blocked("BROKER_RISK_QUOTE_FAILED")
+
+
 def ensure_mt5_installed():
     """Never modify the Windows runtime or install packages during MT5 probes."""
     try:
