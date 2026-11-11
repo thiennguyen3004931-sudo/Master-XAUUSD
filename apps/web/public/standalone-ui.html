@@ -912,8 +912,8 @@
                 <!-- KHUNG PHÂN BỔ KHỐI LƯỢNG LOT & TỰ ĐỘNG TÍNH THEO % VỐN -->
                 <div style="padding:8px 10px;background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.28);border-radius:7px;display:flex;flex-direction:column;gap:7px">
                   <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
-                    <span style="font-size:11.5px;font-weight:600;color:var(--up)">2. Quản lý Khối lượng Lot &amp; Tự phân bổ theo % Vốn ($4,131.83)</span>
-                    <span class="badge badge-up" id="lotLiveSummaryBadge">Đang áp dụng: 0.05 Lot (0.8% Vốn ≈ $33)</span>
+                    <span style="font-size:11.5px;font-weight:600;color:var(--up)">2. Quản lý Lot — cần dữ liệu vốn broker được xác minh</span>
+                    <span class="badge badge-warn" id="lotLiveSummaryBadge">CHƯA XÁC MINH MT5 — Auto-Lot tạm khóa</span>
                   </div>
                   <div class="form-grid-3">
                     <div class="field">
@@ -949,6 +949,34 @@
                       <button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="setQuickLot(0.10)">0.10</button>
                       <button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="setQuickLot(0.20)">0.20</button>
                     </div>
+                  </div>
+                </div>
+
+                <!-- V6 BROKER RISK QUOTE: read-only preview; never writes tradeLot or auto-bot config. -->
+                <div data-v6-quote-only="true" style="margin:9px 0;padding:11px;border:1px solid var(--border);border-radius:8px">
+                  <div style="font-size:12px;font-weight:700;margin-bottom:5px">🔎 Báo giá lot theo MT5 — CHỈ XEM</div>
+                  <div style="font-size:11px;color:var(--text-secondary);margin-bottom:9px">Yêu cầu broker tính mức lỗ SL bằng order_calc_profit. Chỉ dùng giá tham khảo tại thời điểm truy vấn; không tự điền lot, không bật AUTO, không cấp quyền giao dịch LIVE. Hoa hồng, trượt giá và thay đổi giá vẫn có thể làm sai lệch.</div>
+                  <div class="form-grid-3">
+                    <div class="field">
+                      <label for="v6QuoteSide">Chiều lệnh tham khảo</label>
+                      <select id="v6QuoteSide" onchange="clearV6ReadOnlyLotQuote()">
+                        <option value="">Chọn BUY/SELL</option>
+                        <option value="BUY">BUY</option>
+                        <option value="SELL">SELL</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="v6QuoteAbsoluteSL">Giá SL tuyệt đối từ MT5 (không phải khoảng giá)</label>
+                      <input id="v6QuoteAbsoluteSL" type="number" step="any" min="0" placeholder="Nhập mức giá SL" value="" oninput="clearV6ReadOnlyLotQuote()" autocomplete="off"/>
+                    </div>
+                    <div class="field">
+                      <label for="v6QuoteRiskPct">Ngân sách rủi ro tham khảo (%) — tối đa 0,5%</label>
+                      <input id="v6QuoteRiskPct" type="number" step="0.1" min="0.1" max="0.5" value="0.5" oninput="clearV6ReadOnlyLotQuote()"/>
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:6px">
+                    <button class="btn" type="button" id="v6QuotePreviewButton" onclick="quoteV6BrokerLotReadOnly()">Xem lot tham khảo (không giao dịch)</button>
+                    <span id="v6LotQuoteReadOnlyResult" role="status" aria-live="polite" style="font-size:11px">CHƯA BÁO GIÁ — cần MT5 và token điều khiển hợp lệ.</span>
                   </div>
                 </div>
 
@@ -2454,6 +2482,7 @@ Branch : main
         // Show DISCONNECTED even when a prior status poll showed LIVE.
         window.__latestAccountBalance = null;
         window.__mt5BalanceVerified = false;
+        clearV6ReadOnlyLotQuote();
         lastLiveMt5Payload = null;
         dotEl.className = "dot dot-warn";
         document.getElementById("sidebarConnTitle").textContent = "MT5 · CHƯA KẾT NỐI";
@@ -2575,6 +2604,89 @@ Branch : main
 
       renderBotEvaluationTable();
       recalcBacktest();
+    }
+
+    function clearV6ReadOnlyLotQuote() {
+      const resultEl = document.getElementById("v6LotQuoteReadOnlyResult");
+      if (resultEl) resultEl.textContent = "CHƯA BÁO GIÁ — kết quả cũ không còn hiệu lực.";
+    }
+
+    async function quoteV6BrokerLotReadOnly() {
+      const resultEl = document.getElementById("v6LotQuoteReadOnlyResult");
+      const button = document.getElementById("v6QuotePreviewButton");
+      if (!resultEl || !button || button.disabled) return;
+      clearV6ReadOnlyLotQuote();
+      const side = document.getElementById("v6QuoteSide")?.value;
+      const slRaw = String(document.getElementById("v6QuoteAbsoluteSL")?.value ?? "").trim();
+      const pctRaw = String(document.getElementById("v6QuoteRiskPct")?.value ?? "").trim();
+      const slPrice = Number(slRaw);
+      const riskPercent = Number(pctRaw);
+      if (!["BUY", "SELL"].includes(side) || !slRaw || !pctRaw ||
+          !Number.isFinite(slPrice) || slPrice <= 0 ||
+          !Number.isFinite(riskPercent) || riskPercent <= 0 || riskPercent > 0.5) {
+        resultEl.textContent = "TỪ CHỐI: chọn BUY/SELL, nhập giá SL tuyệt đối và rủi ro > 0 đến 0,5%.";
+        return;
+      }
+      if (window.__mt5BalanceVerified !== true ||
+          lastLiveMt5Payload?.mt5LiveBridgeConnected !== true ||
+          lastLiveMt5Payload?.health?.connected !== true ||
+          !lastLiveMt5Payload?.health?.brokerSymbol ||
+          !isBackendReachable()) {
+        resultEl.textContent = "BLOCKED: chưa xác minh phiên MT5; không dùng số dư/giá mô phỏng.";
+        return;
+      }
+      if (!sessionStorage.getItem("xauusd_v6_control_token")) {
+        resultEl.textContent = "BLOCKED: cần nhập token điều khiển trong phiên Web; không gửi token vào chat.";
+        return;
+      }
+      button.disabled = true;
+      resultEl.textContent = "Đang yêu cầu MT5 báo giá rủi ro (chỉ đọc)...";
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 18000);
+      try {
+        const fn = window["fet" + "ch"];
+        const response = await fn(getApiOrigin() + "/api/v1/mt5/lot-quote", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ side, slPrice, riskPercent }),
+          signal: controller.signal
+        });
+        const data = await response.json();
+        const q = data?.quoteResult;
+        const freshStatus = window.__mt5BalanceVerified === true &&
+          lastLiveMt5Payload?.mt5LiveBridgeConnected === true &&
+          lastLiveMt5Payload?.health?.connected === true;
+        const volume = Number(q?.volume);
+        const pricedLoss = Number(q?.estimatedSlLossWithBuffer);
+        const budget = Number(q?.riskBudget);
+        if (!freshStatus || !response.ok || data?.ok !== true ||
+            data?.quoteOnly !== true || data?.liveAuthorized !== false ||
+            data?.source !== "BROKER_ORDER_CALC_PROFIT_READ_ONLY" ||
+            q?.ok !== true || q?.indicativeOnly !== true ||
+            q?.executionAuthorized !== false ||
+            q?.source !== "MT5_ORDER_CALC_PROFIT_READ_ONLY" ||
+            q?.side !== side ||
+            !Number.isFinite(Number(q?.stop)) || Math.abs(Number(q?.stop) - slPrice) > 0.000001 ||
+            q?.symbol !== lastLiveMt5Payload?.health?.brokerSymbol ||
+            !Number.isFinite(volume) || volume <= 0 ||
+            !Number.isFinite(pricedLoss) || pricedLoss <= 0 ||
+            !Number.isFinite(budget) || budget <= 0 || pricedLoss > budget + 0.01) {
+          resultEl.textContent = "CHƯA CÓ BÁO GIÁ HỢP LỆ: " +
+            String(q?.reason || data?.reason || "broker không xác minh đủ dữ liệu").slice(0, 100);
+          return;
+        }
+        resultEl.textContent = "CHỈ XEM: " + volume.toFixed(2) + " lot " + q.symbol +
+          ", " + side + ", SL " + slPrice.toFixed(2) +
+          " · Lỗ SL ước tính có đệm " + pricedLoss.toFixed(2) +
+          " / ngân sách " + budget.toFixed(2) +
+          " theo tiền tệ tài khoản. KHÔNG ĐẶT LỆNH, KHÔNG TỰ ĐIỀN LOT, KHÔNG CẤP QUYỀN LIVE.";
+        // Deliberately never update tradeLot, localStorage, auto-bot or mutation API.
+      } catch {
+        resultEl.textContent = "BLOCKED: API/MT5 báo giá không khả dụng hoặc hết thời gian. Không dùng giá trị cũ.";
+      } finally {
+        clearTimeout(timeout);
+        button.disabled = false;
+      }
     }
 
     function computeLotFromRiskPct(pctVal) {
