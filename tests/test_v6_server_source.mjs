@@ -191,3 +191,48 @@ test("public root standalone HTML mirrors credential-safe V6 UI", () => {
   assert.doesNotMatch(fallbackHtml, /DEFAULT_TG_PART_[AB]|DEFAULT_TG_CHAT_ID/);
   assert.doesNotMatch(fallbackHtml, /localStorage\.(?:getItem|setItem)\(["']xauusd_tg_token["']/);
 });
+
+
+test("V6 disconnected status never presents configured or demonstration broker metrics", () => {
+  const status = server.slice(
+    server.indexOf("function buildStatusPayload(probe)"),
+    server.indexOf("async function handleApiRequest("),
+  );
+  assert.ok(status.length > 0, "missing V6 status builder");
+  for (const sourceLine of [
+    "accountLogin: isConnected ? probe.accountLogin : null,",
+    'accountMode: isConnected ? probe.accountMode.toLowerCase() : "unknown",',
+    "accountBalance: isConnected ? probe.balance : null,",
+    "accountEquity: isConnected ? probe.equity : null,",
+    "accountFreeMargin: isConnected ? probe.freeMargin : null,",
+    "accountProfit: isConnected ? probe.profit : null,",
+    "accountCurrency: isConnected ? probe.currency : null,",
+    "server: isConnected ? probe.server : null,",
+    "brokerSymbol: isConnected ? probe.brokerSymbol : null,",
+    "availableGoldSymbols: isConnected ? (probe?.availableGoldSymbols || []) : [],",
+  ]) {
+    assert.ok(status.includes(sourceLine), "disconnected broker metric is not fail-closed: " + sourceLine);
+  }
+  assert.match(status, /mtfAnalysis = isConnected \?/);
+  assert.match(status, /entrySignal: isConnected \?/);
+  assert.doesNotMatch(status, /currentAccountConfig\.login \|\| 5201362/);
+  assert.doesNotMatch(status, /accountBalance: isConnected \? probe\.balance : lastKnownAccountMetrics\.balance/);
+});
+
+test("V6 disconnected Web clears broker identity, quotes and percent-risk lot calculations", () => {
+  const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  const rootUi = readFileSync(resolve(root, "MO_WEB_TRUC_TIEP_KHONG_CAN_SERVER.html"), "utf8");
+  assert.equal(ui, rootUi, "fallback Web must receive the same MT5-disconnect protection");
+  assert.ok(ui.includes("data.mt5LiveBridgeConnected === true && h.connected === true"));
+  assert.ok(ui.includes('if (connected) {\n        dotEl.className = "dot dot-up"'));
+  assert.ok(ui.includes("window.__latestAccountBalance = null"));
+  assert.ok(ui.includes("window.__mt5BalanceVerified = false"));
+  assert.ok(ui.includes('window.__mt5BalanceVerified !== true'));
+  assert.ok(ui.includes("if (calcLot === null) return"));
+  assert.ok(ui.includes("CHẶN TÍNH LOT: MT5 chưa xác minh"));
+  assert.ok(ui.includes("ĐÃ CHẶN GỬI THAM SỐ LOT THEO %"));
+  assert.ok(ui.includes("applyMt5StatusToUi({ mt5LiveBridgeConnected: false, health: { connected: false } })"));
+  assert.ok(ui.includes('document.getElementById("dashEquityVal").textContent = "—"'));
+  assert.doesNotMatch(ui, /window\.__latestAccountBalance = 4131\.83/);
+  assert.doesNotMatch(ui, /const bal = window\.__latestAccountBalance \|\| 4131\.83/);
+});
