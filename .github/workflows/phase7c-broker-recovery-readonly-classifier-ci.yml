@@ -1,0 +1,32 @@
+name: Phase7C Broker Recovery Read-Only Classifier CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-broker-recovery-readonly-classifier
+    paths:
+      - "scripts/classify-phase7c-broker-recovery-readonly-local.ps1"
+      - "scripts/test-phase7c-broker-recovery-readonly-classifier.ps1"
+      - ".github/workflows/phase7c-broker-recovery-readonly-classifier-ci.yml"
+  pull_request:
+    paths:
+      - "scripts/classify-phase7c-broker-recovery-readonly-local.ps1"
+      - "scripts/test-phase7c-broker-recovery-readonly-classifier.ps1"
+      - ".github/workflows/phase7c-broker-recovery-readonly-classifier-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  broker-recovery-readonly-classifier:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Broker recovery read-only classifier contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-broker-recovery-readonly-classifier.ps1
+      - name: Broker recovery read-only classifier contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-broker-recovery-readonly-classifier.ps1

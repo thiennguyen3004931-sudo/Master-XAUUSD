@@ -1,0 +1,77 @@
+﻿name: Phase7C AUTO Reversal Contracts CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-auto-reversal-entry-check-actual
+      - fix/phase7c-auto-reversal-explanation-consistency
+      - fix/phase7c-auto-reversal-ui-gate-consistency
+    paths:
+      - "apps/api/src/services/phase7c-decision-monitor.service.ts"
+      - "apps/api/src/services/phase7c-live-regime.service.ts"
+      - "apps/api/src/services/phase7c-ui-contract.service.ts"
+      - "scripts/phase7c-trend-mode-gate.mjs"
+      - "scripts/phase7c-auto-reversal-entry-check-actual.test.mjs"
+      - "scripts/phase7c-auto-reversal-explanation.test.mjs"
+      - "scripts/phase7c-auto-reversal-ui-gate.test.mjs"
+      - ".github/workflows/phase7c-auto-reversal-contracts-ci.yml"
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/api/src/services/phase7c-decision-monitor.service.ts"
+      - "apps/api/src/services/phase7c-live-regime.service.ts"
+      - "apps/api/src/services/phase7c-ui-contract.service.ts"
+      - "scripts/phase7c-trend-mode-gate.mjs"
+      - "scripts/phase7c-auto-reversal-entry-check-actual.test.mjs"
+      - "scripts/phase7c-auto-reversal-explanation.test.mjs"
+      - "scripts/phase7c-auto-reversal-ui-gate.test.mjs"
+      - ".github/workflows/phase7c-auto-reversal-contracts-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase7c-auto-reversal-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  auto-reversal-contracts:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        timeout-minutes: 3
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+
+      - name: AUTO REVERSAL entry-check actual contract
+        run: node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-auto-reversal-entry-check-actual.test.mjs
+
+      - name: AUTO REVERSAL explanation contract
+        run: node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-auto-reversal-explanation.test.mjs
+
+      - name: AUTO REVERSAL UI gate contract
+        run: node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-auto-reversal-ui-gate.test.mjs
+
+      - name: Diff hygiene
+        run: git diff --check

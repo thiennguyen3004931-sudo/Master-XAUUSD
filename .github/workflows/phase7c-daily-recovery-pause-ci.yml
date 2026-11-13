@@ -1,0 +1,51 @@
+name: Phase7C Daily Recovery Temporarily Paused CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/phase7c-daily-recovery-pause.mjs"
+      - "scripts/phase7c-daily-recovery-pause.test.mjs"
+      - "scripts/phase7c-canonical-daily-recovery-executor.mjs"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - "scripts/test-phase7c-canonical-daily-recovery-executors-contract.mjs"
+      - ".github/workflows/phase7c-daily-recovery-pause-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/phase7c-daily-recovery-pause.mjs"
+      - "scripts/phase7c-daily-recovery-pause.test.mjs"
+      - ".github/workflows/phase7c-daily-recovery-pause-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase7c-daily-recovery-pause-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  recovery-disabled-for-new-orders:
+    name: Negative P/L remains native / no MT5 mutation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Syntax verification
+        run: |
+          node --check scripts/phase7c-daily-recovery-pause.mjs
+          node --check scripts/phase7c-canonical-daily-recovery-executor.mjs
+          node --check scripts/run-phase7c-sideway-controller.mjs
+          node --check scripts/phase7c-daily-recovery-pause.test.mjs
+      - name: Negative P/L no-Recovery tests + canonical final gate
+        run: |
+          node --test scripts/phase7c-daily-recovery-pause.test.mjs
+          node scripts/test-phase7c-canonical-daily-recovery-executors-contract.mjs
+      - name: Preserve management for preexisting Recovery positions
+        run: node scripts/test-phase7c-sideway-recovery-management-contract.mjs
+      - name: Diff whitespace
+        run: git diff --check

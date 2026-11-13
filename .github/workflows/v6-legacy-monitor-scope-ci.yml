@@ -1,0 +1,41 @@
+name: V6 Legacy Monitor Scope Source CI
+
+# Hosted, source-only checks. Never contacts MT5, old private production,
+# or GitHub issues and never schedules the legacy production monitor.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/auto-live-event-monitor.yml'
+      - '.github/workflows/v6-legacy-monitor-scope-ci.yml'
+      - 'scripts/test-auto-live-event-monitor-source.ps1'
+      - 'scripts/test-auto-live-offline-lease.ps1'
+      - 'scripts/ops/auto-live-event-monitor.ps1'
+      - 'scripts/ops/auto-live-offline-lease.ps1'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/auto-live-event-monitor.yml'
+      - '.github/workflows/v6-legacy-monitor-scope-ci.yml'
+      - 'scripts/test-auto-live-event-monitor-source.ps1'
+      - 'scripts/test-auto-live-offline-lease.ps1'
+      - 'scripts/ops/auto-live-event-monitor.ps1'
+      - 'scripts/ops/auto-live-offline-lease.ps1'
+
+permissions:
+  contents: read
+
+jobs:
+  legacy-scope-source:
+    name: v6-legacy-monitor-scope-source
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Assert monitor cannot schedule or run in V6 public repository
+        shell: powershell
+        run: .\scripts\test-auto-live-event-monitor-source.ps1
+      - name: Offline lease classifier regression without MT5
+        shell: powershell
+        run: .\scripts\test-auto-live-offline-lease.ps1

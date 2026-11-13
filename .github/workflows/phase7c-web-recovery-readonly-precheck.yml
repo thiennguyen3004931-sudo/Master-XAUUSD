@@ -1,0 +1,59 @@
+name: Phase7C Web Recovery Independent Read-Only Precheck
+
+on:
+  workflow_dispatch:
+    inputs:
+      operator_confirmed_read_only:
+        description: 'I confirm independent MT5 GET-only reads; NO Web restart/ARM/mode/trade mutations'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase7c-web-recovery-readonly-precheck
+  cancel-in-progress: false
+
+jobs:
+  precheck:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.operator_confirmed_read_only == true }}
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout canonical diagnostic source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Static no-mutation precheck contract
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-phase7c-web-recovery-readonly-precheck-source.ps1
+
+      - name: Independent live bridge and local-state GET-only assessment
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receipt = Join-Path $env:RUNNER_TEMP 'phase7c-web-recovery-precheck.json'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/ops/check-phase7c-web-recovery-eligibility-readonly.ps1 -ExpectedSource '196a8420ff008548773f5d385cf5785a9f84e297' -ReceiptPath $receipt
+          if ($LASTEXITCODE -ne 0) { throw 'READ_ONLY_WEB_RECOVERY_PRECHECK_ERROR' }
+          if (-not (Test-Path -LiteralPath $receipt -PathType Leaf)) { throw 'READ_ONLY_WEB_RECOVERY_RECEIPT_MISSING' }
+          $result = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+          if ($result.webRestartAuthorized -ne $false) { throw 'UNSAFE_WEB_RESTART_AUTHORIZATION' }
+          if ($result.preRecoveryChecksPass -eq $true) {
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'All point-in-time independent prechecks PASS. No Web task restart is authorized or performed. Revalidate before separate approved recovery.'
+          } else {
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'Prechecks BLOCKED; view blocker codes in logs/artifact. No runtime changes were made.'
+          }
+
+      - name: Upload sanitized read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-recovery-readonly-precheck-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase7c-web-recovery-precheck.json
+          retention-days: 7
+          if-no-files-found: warn

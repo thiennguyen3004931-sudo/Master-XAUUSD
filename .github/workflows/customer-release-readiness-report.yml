@@ -1,0 +1,48 @@
+name: Customer Release Readiness Evidence (Not Authorization)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/customer-release-readiness-snapshot*.mjs"
+      - "packages/customer-runtime-session/src/api-token-lifecycle*"
+      - ".github/workflows/customer-release-readiness-report.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/customer-release-readiness-snapshot*.mjs"
+      - "packages/customer-runtime-session/src/api-token-lifecycle*"
+      - ".github/workflows/customer-release-readiness-report.yml"
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+
+jobs:
+  report-readiness:
+    name: Read-only evidence; customer distribution remains BLOCKED
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Test release readiness evaluator
+        run: node --test scripts/customer-release-readiness-snapshot.test.mjs
+      - name: Gather exact-SHA GitHub evidence (never signs or publishes)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/customer-release-readiness-snapshot.mjs
+      - name: Upload sanitized BLOCKED report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-release-readiness-not-authorization
+          path: customer-release-readiness.json
+          if-no-files-found: warn

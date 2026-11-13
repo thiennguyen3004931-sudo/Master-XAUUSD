@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "defaultClassification": "PRIVATE_REQUIRED",
+  "safePublicPrefixes": [
+    "packages/copy-protocol/",
+    "packages/license-service/",
+    "packages/installation-proof/",
+    "docs/public/"
+  ],
+  "safePublicExact": [
+    ".gitignore",
+    "README.md",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "tsconfig.base.json",
+    "turbo.json",
+    "security/repository-boundary.json",
+    "security/credential-remediation.json",
+    "scripts/security/classify-repository.mjs",
+    "scripts/security/classify-repository.test.mjs",
+    "scripts/security/check-public-change-freeze.mjs",
+    "scripts/security/validate-credential-remediation.mjs",
+    "scripts/security/validate-credential-remediation.test.mjs",
+    "scripts/security/check-public-boundary.mjs",
+    "scripts/security/check-public-boundary.test.mjs",
+    "scripts/security/check-distribution-artifact.mjs",
+    "scripts/security/check-distribution-artifact.test.mjs",
+    "scripts/security/accept-public-private-split.mjs",
+    ".github/workflows/public-private-boundary-ci.yml",
+    ".github/workflows/public-distribution-ci.yml",
+    "scripts/test-bot-ip-protection-p1-boundary.mjs",
+    "scripts/test-bot-ip-protection-p2-boundary.mjs",
+    "scripts/test-bot-ip-protection-p3-boundary.mjs",
+    ".github/workflows/bot-ip-protection-p1-copy-protocol-ci.yml",
+    ".github/workflows/bot-ip-protection-p2-license-service-ci.yml",
+    ".github/workflows/bot-ip-protection-p3-installation-proof-ci.yml"
+  ]
+}

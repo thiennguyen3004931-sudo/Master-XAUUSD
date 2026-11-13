@@ -1,0 +1,291 @@
+name: Phase7C Web Unmanaged Multi Position Status CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-web-unmanaged-multi-position-status
+    paths:
+      - "apps/web/src/pages/Phase7CControlCenterPage.tsx"
+      - "apps/api/src/services/phase7c-decision-monitor.service.ts"
+      - "scripts/phase7c-web-unmanaged-multi-position-status.test.mjs"
+      - "scripts/phase7c-mt5-unmanaged-multi-position-status.test.mjs"
+      - ".github/workflows/phase7c-web-unmanaged-multi-position-status-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/web/src/pages/Phase7CControlCenterPage.tsx"
+      - "apps/api/src/services/phase7c-decision-monitor.service.ts"
+      - "scripts/phase7c-web-unmanaged-multi-position-status.test.mjs"
+      - ".github/workflows/phase7c-web-unmanaged-multi-position-status-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  web-unmanaged-multi-position-status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build Web dependency graph
+        run: pnpm --filter @xauusd/web... build
+      - name: Existing MT5 unmanaged multi-position status contract
+        run: node --test scripts/phase7c-mt5-unmanaged-multi-position-status.test.mjs
+      - name: Web unmanaged multi-position status contract
+        run: node --test scripts/phase7c-web-unmanaged-multi-position-status.test.mjs
+
+  source-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Lifecycle broker source contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-system-lifecycle-broker-source.ps1
+      - name: Lifecycle broker source contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-system-lifecycle-broker-source.ps1
+
+  protocol-safety-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Broker protocol and safety contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-system-lifecycle-broker-contract.ps1
+      - name: Broker protocol and safety contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-system-lifecycle-broker-contract.ps1
+
+  acl-source-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Lifecycle broker ACL contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-lifecycle-broker-acl-source.ps1
+      - name: Lifecycle broker ACL contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-lifecycle-broker-acl-source.ps1
+
+  api-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+
+  web-lifecycle-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 24
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Web auto-account lifecycle regression
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/test-phase7c-web-auto-account-start.ts
+      - name: Lifecycle caller provenance regression
+        run: node scripts/test-phase7c-lifecycle-caller-provenance.mjs
+      - name: Existing dual-account regression
+        run: node scripts/test-phase7c-dual-account-mode.mjs
+      - name: Web LIVE Start fail-closed source assertions
+        run: node scripts/test-phase7c-web-live-start-guard-source.mjs
+      - name: Build risk engine dependency graph
+        run: pnpm --filter @xauusd/risk-engine... build
+      - name: Build API
+        run: pnpm --filter @xauusd/api... build
+      - name: Build Web
+        run: pnpm --filter @xauusd/web... build
+
+  sideway-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test MT5 Bridge reconnect safety and LIVE ARM fail-closed behavior
+        working-directory: packages/mt5-broker/bridge
+        run: |
+          python -m pip install "pydantic>=2.12,<3"
+          python -m compileall -q mt5_bridge tests
+          python -m unittest discover -s tests -p 'test_*.py'
+      - name: Build strategy-engine dependency graph
+        run: pnpm --filter @xauusd/strategy-engine... build
+      - name: Typecheck strategy-engine
+        run: pnpm --filter @xauusd/strategy-engine typecheck
+      - name: Test strategy-engine
+        run: pnpm --filter @xauusd/strategy-engine test
+      - name: Test Phase7C execution logic
+        run: |
+          node --test scripts/phase7c-sideway-logic.test.mjs
+          node --test scripts/phase7c-sideway-execution-guards.test.mjs
+          node --test scripts/phase7c-execution-lock.test.mjs
+          node --test scripts/phase7c-forward-report.test.mjs
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+      - name: Test Phase7C lot, decision, UI freshness, and position-state contracts
+        run: |
+          node --test scripts/phase7c-lot-settings.test.mjs
+          node --test scripts/phase7c-decision-audit.test.mjs
+          node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-decision-monitor.test.mjs
+          node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-current-pretrade-freshness.test.mjs
+          node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-sideway-entry-check-freshness.test.mjs
+          pnpm --filter @xauusd/api exec tsx ../../scripts/test-phase7c-ui-current-wait-reason-freshness.ts
+          pnpm --filter @xauusd/api exec tsx ../../scripts/test-phase7c-ui-entry-wait-reason-freshness.ts
+          node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-current-position-exit-reason-ticket-isolation.test.mjs
+          node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-current-position-management-reason-ticket-isolation.test.mjs
+          node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-multiple-position-monitor-fail-closed.test.mjs
+          node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-multiple-position-ui-management-reason-fail-closed.test.mjs
+          node --test scripts/phase7c-mt5-unmanaged-multi-position-status.test.mjs
+          node --test scripts/phase7c-web-unmanaged-multi-position-status.test.mjs
+          node --test scripts/phase7c-web-autostart-contract.test.mjs
+          node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-auto-reversal-ui-gate.test.mjs
+          node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-auto-reversal-explanation.test.mjs
+          node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-auto-reversal-entry-check-actual.test.mjs
+          node scripts/test-phase7c-daily-recovery-preview-actual-lot-source.mjs
+      - name: Build Phase7C Web
+        run: pnpm --filter @xauusd/web... build
+      - name: Parse critical Phase7C Node controllers
+        run: |
+          node --check scripts/run-phase7c-telegram-mode-controller.mjs
+          node --check scripts/run-phase7c-regime-notifier.mjs
+          node --check scripts/run-phase7c-auto-journal.mjs
+          node --check scripts/run-phase7c-forward-dashboard.mjs
+          node --check scripts/run-phase7c-trend-controller.mjs
+          node --check scripts/phase7c-sideway-logic.mjs
+          node --check scripts/phase7c-sideway-execution-guards.mjs
+          node --check scripts/phase7c-execution-lock.mjs
+          node --check scripts/phase7c-forward-report-utils.mjs
+          node --check scripts/phase7c-decision-audit.mjs
+          node --check scripts/report-phase7c-forward.mjs
+          node --check scripts/run-phase7c-sideway-controller.mjs
+          node --check scripts/run-phase7c-sideway-locked.mjs
+      - name: Parse critical Phase7C PowerShell launchers
+        shell: pwsh
+        run: |
+          $files = @(
+            "scripts/run-phase7c-executor-task-runner-local.ps1",
+            "scripts/run-phase7c-executors-local.ps1",
+            "scripts/stop-phase7c-executors-local.ps1",
+            "scripts/activate-phase7c-local.ps1",
+            "scripts/verify-phase7c-executors-local.ps1"
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file :: $($_.Message)" }
+              exit 1
+            }
+            Write-Host "PHASE7C_POWERSHELL_PARSE_PASS=$file"
+          }
+      - name: Verify MT5 panel is read-only
+        run: |
+          grep -q 'WebRequest("GET"' mt5/XAUUSD_AI_Master_Decision_Panel.mq5
+          grep -q 'ORDER PERMISSION = ' mt5/XAUUSD_AI_Master_Decision_Panel.mq5
+          ! grep -Eq 'OrderSend|CTrade|PositionClose|PositionModify' mt5/XAUUSD_AI_Master_Decision_Panel.mq5
+
+  notifier-regression:
+    name: notifier-supervision-regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Supervisor, wrapper, and startup safety contract
+        shell: pwsh
+        run: ./scripts/test-phase7c-trade-notifier-source.ps1
+      - name: Notifier JavaScript syntax
+        run: node --check ./scripts/run-phase7b-telegram-notifier.mjs
+      - name: Wrapper LIVE and DEMO journal integration
+        shell: pwsh
+        run: ./scripts/test-phase7c-trade-notifier-wrapper.ps1
+      - name: Synthetic ENTRY-HOLD-BE-partial-EXIT lifecycle
+        run: node --test ./scripts/phase7c-trade-notifier-synthetic.test.mjs
+      - name: Production-format Sideway Telegram sample harness
+        run: node --test ./scripts/phase7c-sideway-production-telegram-sample.test.mjs
+
+  windows-full-regression:
+    runs-on: windows-latest
+    timeout-minutes: 24
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Prepare runtime directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force .runtime | Out-Null
+      - name: LIVE ARM source safety contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-arm-source.ps1
+      - name: LIVE ARM source safety contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-live-arm-source.ps1
+      - name: Startup runner guard with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-startup-runner-guard-local.ps1
+      - name: Startup acceptance source contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-startup-acceptance-source.ps1
+      - name: Startup runner guard with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-startup-runner-guard-local.ps1
+      - name: Startup acceptance source contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-startup-acceptance-source.ps1

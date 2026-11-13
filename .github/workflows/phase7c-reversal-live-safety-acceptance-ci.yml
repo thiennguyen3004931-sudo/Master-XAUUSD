@@ -1,0 +1,77 @@
+name: Phase7C REVERSAL LIVE Safety Acceptance CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/phase7c-auto-live-reversal-lock.mjs'
+      - 'scripts/phase7c-auto-live-reversal-lock.test.mjs'
+      - 'scripts/run-phase7c-trend-controller.mjs'
+      - 'apps/api/src/services/phase7c-live-regime.service.ts'
+      - 'apps/api/src/services/phase7c-reversal-trend-filter.ts'
+      - 'scripts/phase7c-reversal-trend-filter.test.mjs'
+      - '.github/workflows/phase7c-reversal-live-safety-acceptance-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reversal-live-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  safety-acceptance:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+
+      - name: Mandatory reversal LIVE hard lock contract
+        run: node --test scripts/phase7c-auto-live-reversal-lock.test.mjs
+      - name: Mandatory reversal H1 H4 shadow-only contract
+        run: pnpm --dir apps/api exec tsx ../../scripts/phase7c-reversal-trend-filter.test.mjs
+      - name: Canonical reversal/auto mode decision regressions
+        run: node --test scripts/test-phase7c-reversal-entry-contract.mjs scripts/phase7c-trend-mode-gate.test.mjs
+
+      # Equivalent SOURCE/UNIT coverage for GitHub-hosted jobs that can fail
+      # without allocating a runner (steps=null). No broker or production calls.
+      - name: Trend M5 runtime wiring and owner contracts
+        run: node --test scripts/phase7c-trend-m5-runtime-wiring.test.mjs scripts/phase7c-trend-m5-single-owner.test.mjs
+      - name: Daily Recovery canonical executor source
+        run: node scripts/test-phase7c-canonical-daily-recovery-executors-contract.mjs
+      - name: Trend singleton and shared execution lock
+        run: node --test scripts/phase7c-trend-singleton-ownership.test.mjs scripts/phase7c-execution-lock.test.mjs scripts/phase7c-atomic-state-write.test.mjs
+      - name: Sideway execution isolation regression
+        run: node --test scripts/phase7c-sideway-logic.test.mjs scripts/phase7c-sideway-execution-guards.test.mjs
+      - name: SEMI management and entry isolation regression
+        run: node --test scripts/phase7c-semi-trend-production-wiring.test.mjs scripts/phase7c-semi-post-entry-contract.test.mjs
+      - name: Controller syntax
+        run: |
+          node --check scripts/run-phase7c-trend-controller.mjs
+          node --check scripts/phase7c-auto-live-reversal-lock.mjs
+          node --check scripts/run-phase7c-sideway-locked.mjs
+      - name: Confirm checkout unchanged
+        shell: pwsh
+        run: |
+          git diff --check
+          $dirty = git status --porcelain --untracked-files=no
+          if ($dirty) { Write-Error "TRACKED_WORKTREE_DIRTY"; exit 1 }
+          Write-Host "LIVE_SAFETY_SOURCE_ACCEPTANCE=PASS"

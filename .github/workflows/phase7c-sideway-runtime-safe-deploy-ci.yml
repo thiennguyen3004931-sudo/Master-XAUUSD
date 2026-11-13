@@ -1,0 +1,52 @@
+name: Phase7C Sideway Runtime Safe Deploy CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-sideway-runtime-deploy-contract
+    paths:
+      - "scripts/deploy-phase7c-sideway-runtime-local.ps1"
+      - "scripts/test-phase7c-sideway-runtime-safe-deploy-source.ps1"
+      - ".github/workflows/phase7c-sideway-runtime-safe-deploy-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/deploy-phase7c-sideway-runtime-local.ps1"
+      - "scripts/test-phase7c-sideway-runtime-safe-deploy-source.ps1"
+      - ".github/workflows/phase7c-sideway-runtime-safe-deploy-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Safe deploy contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-sideway-runtime-safe-deploy-source.ps1
+
+      - name: Safe deploy contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-sideway-runtime-safe-deploy-source.ps1
+
+      - name: Parse helper with PowerShell 7
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path .\scripts\deploy-phase7c-sideway-runtime-local.ps1) {
+            [void][scriptblock]::Create((Get-Content .\scripts\deploy-phase7c-sideway-runtime-local.ps1 -Raw))
+          }
+
+      - name: Parse helper with Windows PowerShell 5.1
+        if: always()
+        shell: powershell
+        run: |
+          if (Test-Path .\scripts\deploy-phase7c-sideway-runtime-local.ps1) {
+            [void][scriptblock]::Create((Get-Content .\scripts\deploy-phase7c-sideway-runtime-local.ps1 -Raw))
+          }

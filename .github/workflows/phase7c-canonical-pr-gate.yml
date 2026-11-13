@@ -1,0 +1,230 @@
+name: Phase7C Canonical PR Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# Scope long-path support to CI git processes, including checkout cleanup.
+env:
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: core.longpaths
+  GIT_CONFIG_VALUE_0: "true"
+
+concurrency:
+  group: canonical-pr-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canonical-linux:
+    name: canonical-pr-linux
+    # Source-only gate: GitHub-hosted Linux avoids executing untrusted PR code on local MT5 hosts.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline --network-concurrency=4 --fetch-retries=4 --fetch-retry-maxtimeout=30000
+      - name: Runtime source attestation service tests
+        run: pnpm --filter @xauusd/api exec node --import tsx --test src/services/phase7c-runtime-source-attestation.service.test.ts
+      - name: Canonical gate source contract
+        run: node --test scripts/test-phase7c-canonical-pr-gate-contract.mjs
+      - name: Repository workflow pruning contract
+        run: node --test scripts/test-repository-workflow-pruning-contract.mjs
+      - name: Build and test broker risk strategy foundations
+        shell: pwsh
+        run: |
+          pnpm --filter @xauusd/mt5-broker... build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @xauusd/risk-engine... build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @xauusd/risk-engine typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @xauusd/risk-engine test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @xauusd/strategy-engine... build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @xauusd/strategy-engine typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @xauusd/strategy-engine test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Canonical strategy and recovery contracts
+        shell: pwsh
+        run: |
+          node scripts/test-phase7c-strategy-entry-conditions-core-contract.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/test-phase7c-trend-entry-recovery-contract.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/test-phase7c-sideway-recovery-management-contract.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/test-phase7c-canonical-daily-recovery-executors-contract.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Structural and execution safety regressions
+        shell: pwsh
+        run: |
+          node --test scripts/test-phase7c-structural-sl-monotonicity.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/phase7c-fast-move-profit-lock.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/phase7c-fast-move-canonical-source-contract.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/phase7c-sideway-logic.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/phase7c-sideway-execution-guards.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/phase7c-execution-lock.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prebuild API for compiled Fixed TP contracts
+        run: pnpm --filter @xauusd/api... build
+      - name: Broker-native Fixed TP regressions
+        shell: pwsh
+        run: |
+          node --test scripts/phase7c-fixed-tp.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/phase7c-fixed-tp-runtime-wiring.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/phase7c-fixed-tp-trend-snapshot.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/phase7c-fixed-tp-trend-exit.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/phase7c-fixed-tp-sideway-snapshot.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/phase7c-fixed-tp-sideway-exit.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build API and Web dependency graphs
+        shell: pwsh
+        run: |
+          pnpm --filter @xauusd/api... build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @xauusd/web... build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Parse canonical trading controllers
+        shell: pwsh
+        run: |
+          node --check scripts/run-phase7c-trend-controller.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check scripts/run-phase7c-sideway-controller.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check scripts/run-phase7c-sideway-locked.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Diff hygiene
+        run: git diff --check
+
+  canonical-windows:
+    name: canonical-pr-windows
+    # Cross-shell source contracts need Windows, but not the local broker or administrator registry rights.
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Definition-only task repair contract
+        run: python tests/test_phase7c_definition_only_task_hash_repair_contract.py
+      - name: Definition-only task repair parse - PowerShell 7
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\repair-phase7c-scheduled-task-runner-hash-local.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if (@($errors).Count -ne 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+      - name: Definition-only task repair parse - Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\repair-phase7c-scheduled-task-runner-hash-local.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if (@($errors).Count -ne 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+      - name: Runtime source attestation contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-runtime-source-attestation-source.ps1
+      - name: Runtime source attestation contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-runtime-source-attestation-source.ps1
+      - name: Runtime source attestation API contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-runtime-source-attestation-api-source.ps1
+      - name: Runtime source attestation API contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-runtime-source-attestation-api-source.ps1
+      - name: Runtime source attestation Web contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-runtime-source-attestation-web-source.ps1
+      - name: Runtime source attestation Web contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-runtime-source-attestation-web-source.ps1
+      - name: Lifecycle broker source contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-system-lifecycle-broker-source.ps1
+      - name: Lifecycle broker source contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-system-lifecycle-broker-source.ps1
+      - name: Lifecycle broker protocol contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-system-lifecycle-broker-contract.ps1
+      - name: Lifecycle broker protocol contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-system-lifecycle-broker-contract.ps1
+      - name: Lifecycle broker ACL contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-lifecycle-broker-acl-source.ps1
+      - name: Lifecycle broker ACL contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-lifecycle-broker-acl-source.ps1
+      - name: Web LIVE ARM and DEMO AUTO contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-web-live-arm-demo-auto-source.ps1
+      - name: Web LIVE ARM and DEMO AUTO contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-web-live-arm-demo-auto-source.ps1
+      - name: LIVE ARM verifier contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-arm-verifier-source.ps1
+      - name: LIVE ARM verifier contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-live-arm-verifier-source.ps1
+      - name: Web MT5 account switch contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-web-mt5-account-switch-source.ps1
+      - name: Web MT5 account switch contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-web-mt5-account-switch-source.ps1
+      - name: Activation safety contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-activation-safety-source.ps1
+      - name: Activation safety contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-activation-safety-source.ps1
+      - name: LIVE risk fail-closed contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-risk-profile-source.ps1
+      - name: LIVE risk fail-closed contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-live-risk-profile-source.ps1
+      - name: Diff hygiene
+        shell: pwsh
+        run: git diff --check

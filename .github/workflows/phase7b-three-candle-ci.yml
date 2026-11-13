@@ -1,0 +1,112 @@
+name: Phase7B Three Candle Pattern CI
+
+on:
+  push:
+    branches:
+      - phase7c-sideway-supply-demand
+    paths:
+      - "scripts/apply-phase7b-three-candle-pattern-local.mjs"
+      - ".github/workflows/phase7b-three-candle-ci.yml"
+  pull_request:
+    paths:
+      - "scripts/apply-phase7b-three-candle-pattern-local.mjs"
+      - ".github/workflows/phase7b-three-candle-ci.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check migration without mutation
+        run: |
+          node --check scripts/apply-phase7b-three-candle-pattern-local.mjs
+          node scripts/apply-phase7b-three-candle-pattern-local.mjs | tee /tmp/three-candle-check.log
+          grep -q 'PHASE7B_THREE_CANDLE_CHECK=PASS' /tmp/three-candle-check.log
+          grep -q 'PHASE7B_THREE_CANDLE_ORIGINAL_MUTATION=False' /tmp/three-candle-check.log
+
+      - name: Apply migration in CI checkout
+        run: |
+          node scripts/apply-phase7b-three-candle-pattern-local.mjs --apply | tee /tmp/three-candle-apply.log
+          grep -q 'PHASE7B_THREE_CANDLE_APPLY=PASS' /tmp/three-candle-apply.log
+          grep -q 'THREE_CANDLE_BODY_DOMINANCE' packages/risk-engine/src/services/Phase7BDualPatternTrendRiderService.ts
+          grep -q 'THREE_CANDLE_BODY_DOMINANCE' scripts/run-phase7b-demo-controller.ts
+          grep -q 'THREE_CANDLE_BODY_DOMINANCE' apps/api/src/routes/phase7b-demo.route.ts
+          if grep -q 'THREE_CANDLE_BODY_DOMINANCE' apps/web/src/pages/Phase7BPatternCheckPage.tsx; then
+            echo 'PHASE7B_THREE_CANDLE_WEB=LEGACY_PATTERN_UI'
+          else
+            grep -q 'SEMANTIC UI v2' apps/web/src/pages/Phase7BPatternCheckPage.tsx
+            grep -q 'fetchPhase7CWebStatus' apps/web/src/pages/Phase7BPatternCheckPage.tsx
+            echo 'PHASE7B_THREE_CANDLE_WEB=SUPERSEDED_BY_SEMANTIC_UI_V2'
+          fi
+
+      - name: Build risk-engine dependency graph
+        run: pnpm --filter @xauusd/risk-engine... build
+
+      - name: Typecheck and test risk engine
+        run: |
+          pnpm --filter @xauusd/risk-engine typecheck
+          pnpm --filter @xauusd/risk-engine test
+
+      - name: Build API
+        run: pnpm --filter @xauusd/api... build
+
+      - name: Build Web
+        run: pnpm --filter @xauusd/web... build
+
+      - name: Validate Trend controller TypeScript transform
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const ts = require("typescript");
+          const source = fs.readFileSync("scripts/run-phase7b-demo-controller.ts", "utf8");
+          const transformed = ts.transpileModule(source, {
+            fileName: "run-phase7b-demo-controller.ts",
+            reportDiagnostics: true,
+            compilerOptions: {
+              target: ts.ScriptTarget.ES2022,
+              module: ts.ModuleKind.ESNext,
+              moduleResolution: ts.ModuleResolutionKind.Bundler,
+              verbatimModuleSyntax: false,
+            },
+          });
+          const errors = (transformed.diagnostics || []).filter(
+            (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+          );
+          if (errors.length) {
+            for (const diagnostic of errors) {
+              console.error(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "));
+            }
+            process.exit(1);
+          }
+          fs.writeFileSync(".phase7b-three-candle-trend-ci.mjs", transformed.outputText, "utf8");
+          NODE
+          node --check .phase7b-three-candle-trend-ci.mjs
+          rm -f .phase7b-three-candle-trend-ci.mjs
+
+      - name: Verify new rule and legacy rules coexist
+        run: |
+          grep -q 'pattern: "ENGULFING"' scripts/run-phase7b-demo-controller.ts
+          grep -q 'pattern: "TWO_CANDLE_BODY_DOMINANCE"' scripts/run-phase7b-demo-controller.ts
+          grep -q 'pattern: "THREE_CANDLE_BODY_DOMINANCE"' scripts/run-phase7b-demo-controller.ts
+          grep -q 'bcBodyTotal < anchorBody' scripts/run-phase7b-demo-controller.ts
+          grep -q 'bcdBodyTotal > anchorBody' scripts/run-phase7b-demo-controller.ts
+          grep -q 'Body(B)+Body(C)+Body(D)' packages/risk-engine/tests/Phase7BDualPatternTrendRiderService.test.ts

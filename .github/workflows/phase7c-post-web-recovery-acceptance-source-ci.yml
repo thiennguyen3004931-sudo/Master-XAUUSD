@@ -1,0 +1,43 @@
+name: Phase7C Post-Web Recovery Acceptance Source CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/phase7c-post-web-recovery-acceptance-once.yml'
+      - '.github/workflows/phase7c-post-web-recovery-acceptance-source-ci.yml'
+      - 'scripts/ops/accept-phase7c-recovered-web-readonly.ps1'
+      - 'scripts/test-phase7c-post-web-recovery-acceptance-source.ps1'
+
+permissions:
+  contents: read
+
+jobs:
+  static-and-synthetic:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source only, not production
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Strict source-only no-mutation contract
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-phase7c-post-web-recovery-acceptance-source.ps1
+
+      - name: Synthetic missing-production failure must block acceptance
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fake = Join-Path $env:RUNNER_TEMP ('does-not-exist-' + [guid]::NewGuid().ToString('N'))
+          $receipt = Join-Path $env:RUNNER_TEMP ('post-recovery-synthetic-' + [guid]::NewGuid().ToString('N') + '.json')
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/ops/accept-phase7c-recovered-web-readonly.ps1 -ProductionRoot $fake -ReceiptPath $receipt
+          if ($LASTEXITCODE -ne 0) { throw 'SYNTHETIC_READONLY_SCRIPT_UNEXPECTED_EXIT' }
+          $out = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+          if ($out.pass -ne $false -or $out.restartAuthorized -ne $false -or $out.liveTradingAuthorized -ne $false) { throw 'SYNTHETIC_READONLY_UNSAFE_PASS' }
+          if ('PRODUCTION_ROOT_MISSING' -notin @($out.blockerCodes)) { throw 'SYNTHETIC_READONLY_MISSING_FAIL_CLOSED_CODE' }
+          Write-Host 'PHASE7C_POST_RECOVERY_SYNTHETIC_FAIL_CLOSED=PASS'
+          Write-Host 'PRODUCTION_READS=NONE'
+          Write-Host 'PRODUCTION_MUTATIONS=NONE'

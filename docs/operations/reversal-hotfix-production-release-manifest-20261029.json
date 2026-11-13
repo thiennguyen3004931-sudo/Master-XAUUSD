@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "release": "XAUUSD_AUTO_REVERSAL_NEW_ENTRY_LOCK_2026_10_29",
+  "repository": "thiennguyen3004931-sudo/xauusd-ai-master-core",
+  "productionBaseline": "ff116b5e0c491163a11e33cb9e38fb6b503f0a1d",
+  "productionBaselineTree": "f37eb6ab89c3b90b318d881fa7b1f10397f57660",
+  "isolatedHotfix": "196a8420ff008548773f5d385cf5785a9f84e297",
+  "isolatedHotfixTree": "a946df14ceae4dc64de18706d1a0643ad78c6ccf",
+  "canonicalMainAncestryAnchor": "8932afb874b983d89585ce00de48b02e6f955b03",
+  "requiredChangedPaths": [
+    ".github/workflows/phase7c-prod-reversal-hard-lock-hotfix-ci.yml",
+    ".github/workflows/phase7c-prod-reversal-hotfix-readonly-preflight.yml",
+    "scripts/phase7c-auto-live-reversal-lock.mjs",
+    "scripts/phase7c-auto-live-reversal-lock.test.mjs",
+    "scripts/run-phase7c-trend-controller.mjs"
+  ],
+  "codeBlobs": {
+    "scripts/phase7c-auto-live-reversal-lock.mjs": "cfcbdcd331747540e2b49f4167f4f4a49a64a0c0",
+    "scripts/phase7c-auto-live-reversal-lock.test.mjs": "f9d5b6974daad0ffa997c87eaf4d4b186a0f9ae2",
+    "scripts/run-phase7c-trend-controller.mjs": "19a7556628fda5e8db1bc0f7912441f86d211b24"
+  },
+  "unchangedRolloutBlobs": {
+    "scripts/rollout-phase7c-production-source-transition-local.ps1": "d8fb26409df5ddecdf5353ab0fdf42cbd8d3500f",
+    "scripts/recover-phase7c-runtime-ready-stable-deploy-local.ps1": "03188557e857d8fed43b4af7882400f22011f5a5",
+    "scripts/run-phase7c-executor-task-runner-local.ps1": "e2a5c3e9b77d82fa45fde32f154f6fc0ac41d29b"
+  },
+  "testEvidence": [
+    {
+      "check": "Phase7C Production Baseline REVERSAL Hard Lock CI",
+      "commit": "196a8420ff008548773f5d385cf5785a9f84e297",
+      "runId": 40868084532,
+      "conclusion": "success"
+    },
+    {
+      "check": "Phase7C Reversal Entry Gate CI",
+      "commit": "196a8420ff008548773f5d385cf5785a9f84e297",
+      "runId": 40868084572,
+      "conclusion": "success"
+    }
+  ],
+  "constraints": {
+    "offlineExpected": true,
+    "liveValidationDeferred": true,
+    "requiresFreshOperatorOnlineConfirmation": true,
+    "productionCutoverAllowed": false,
+    "mutateBotMode": false,
+    "mutateArm": false,
+    "sendLiveOrders": false
+  },
+  "rollbackSource": {
+    "commit": "ff116b5e0c491163a11e33cb9e38fb6b503f0a1d",
+    "tree": "f37eb6ab89c3b90b318d881fa7b1f10397f57660",
+    "automaticRollback": false,
+    "requiresGuardedOperatorRecovery": true
+  }
+}

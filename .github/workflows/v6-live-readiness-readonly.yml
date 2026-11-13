@@ -1,0 +1,226 @@
+name: V6 LIVE Readiness Evidence (read-only; NOT authorization)
+
+# Operator-requested verification only. Does not deploy, trade, ARM, switch accounts,
+# read credentials, or claim that passing CI means LIVE trading is safe.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/v6-live-readiness-readonly.yml'
+      - 'scripts/test-v6-live-readiness-observer-source.mjs'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v6-live-readiness-readonly.yml'
+      - 'scripts/test-v6-live-readiness-observer-source.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-safety:
+    name: v6-readiness-source-contract
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout source on disposable hosted runner
+        uses: actions/checkout@v4
+      - name: Verify read-only observer and real-account fail-closed boundary
+        shell: pwsh
+        run: node scripts/test-v6-live-readiness-observer-source.mjs
+
+  windows-host-observation:
+    name: v6-local-host-readonly-observation-NOT-LIVE-APPROVAL
+    # Never run PR-supplied code or inspect a real account on an untrusted branch.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'thiennguyen3004931-sudo/Master-XAUUSD'
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 6
+    permissions:
+      contents: read
+    concurrency:
+      group: v6-readiness-host-readonly
+      cancel-in-progress: true
+    steps:
+      # Intentionally NO checkout: never clean an operating directory containing .runtime.
+      - name: Observe Windows host without opening account secrets or connecting MT5 Python
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host 'V6_READINESS_READ_ONLY=TRUE'
+          Write-Host 'V6_READINESS_REPOSITORY_MUTATION=NONE'
+          Write-Host 'V6_READINESS_BROKER_MUTATION=NONE'
+          Write-Host 'V6_READINESS_LIVE_AUTHORIZATION=FALSE'
+          Write-Host "V6_READINESS_RUNNER_OS=$env:RUNNER_OS"
+          Write-Host "V6_READINESS_RUNNER_NAME=$env:RUNNER_NAME"
+          Write-Host "V6_READINESS_SOURCE_SHA=$env:GITHUB_SHA"
+
+          function Test-LoopbackTcp {
+            param([int]$Port)
+            $client = New-Object System.Net.Sockets.TcpClient
+            try {
+              $pending = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
+              if (-not $pending.AsyncWaitHandle.WaitOne(1200)) { return $false }
+              $client.EndConnect($pending)
+              return $client.Connected
+            } catch {
+              return $false
+            } finally {
+              $client.Close()
+            }
+          }
+
+          $apiPort = Test-LoopbackTcp -Port 3711
+          $bridgePort = Test-LoopbackTcp -Port 8765
+          $webPort = Test-LoopbackTcp -Port 5717
+          Write-Host "V6_OBSERVED_LOCAL_API_PORT_3711=$apiPort"
+          Write-Host "V6_OBSERVED_LOCAL_BRIDGE_PORT_8765=$bridgePort"
+          Write-Host "V6_OBSERVED_LOCAL_WEB_PORT_5717=$webPort"
+
+          # Identify the process owning each loopback listening port. No command
+          # line, executable path, environment variable, PID or secret is logged.
+          function Get-V6ListenerPids {
+            param([int]$Port)
+            # The NetTCPIP cmdlet may be unavailable under a Windows runner
+            # service account. Fall back to the built-in, read-only netstat.
+            try {
+              $results = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop |
+                ForEach-Object { [int]$_.OwningProcess } |
+                Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+              return @{ OwnerIds = $results; Method = 'NETTCP'; Available = $true }
+            } catch {
+              # Do not print exception messages; they can expose local paths.
+            }
+            try {
+              $rows = @(& netstat.exe -ano -p tcp 2>$null)
+              if ($LASTEXITCODE -ne 0) {
+                return @{ OwnerIds = @(); Method = 'UNAVAILABLE'; Available = $false }
+              }
+              $found = @()
+              foreach ($row in $rows) {
+                $fields = @([regex]::Split([string]$row.Trim(), '\s+'))
+                if ($fields.Count -lt 5 -or $fields[0] -ne 'TCP' -or $fields[3] -ne 'LISTENING') { continue }
+                if (-not $fields[1].EndsWith(":$Port")) { continue }
+                $owner = 0
+                if ([int]::TryParse($fields[4], [ref]$owner) -and $owner -gt 0) {
+                  $found += $owner
+                }
+              }
+              return @{ OwnerIds = @($found | Sort-Object -Unique); Method = 'NETSTAT'; Available = $true }
+            } catch {
+              return @{ OwnerIds = @(); Method = 'UNAVAILABLE'; Available = $false }
+            }
+          }
+
+          function Get-V6PortOwnerSummary {
+            param([int]$Port)
+            $lookup = Get-V6ListenerPids -Port $Port
+            if (-not $lookup.Available) {
+              return @{ Class = 'UNAVAILABLE'; V6Script = 'UNKNOWN'; Method = 'UNAVAILABLE' }
+            }
+            $ownerIds = @($lookup.OwnerIds | Where-Object { $_ -gt 0 })
+            if ($ownerIds.Count -eq 0) {
+              return @{ Class = 'NONE'; V6Script = 'NO'; Method = $lookup.Method }
+            }
+            try {
+              $classes = @()
+              $nodeObserved = $false
+              $nodeLineReadable = $false
+              $v6Matched = $false
+              foreach ($ownerId in $ownerIds) {
+                $procInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $ownerId" -ErrorAction Stop
+                if ($null -eq $procInfo) { continue }
+                if ($procInfo.Name -eq 'node.exe') {
+                  $classes += 'NODE'
+                  $nodeObserved = $true
+                  if (-not [string]::IsNullOrWhiteSpace([string]$procInfo.CommandLine)) {
+                    $nodeLineReadable = $true
+                    if ([string]$procInfo.CommandLine -match 'xauusd-standalone-server[.]mjs') {
+                      $v6Matched = $true
+                    }
+                  }
+                } elseif ($procInfo.Name -in @('terminal64.exe', 'terminal.exe')) {
+                  $classes += 'MT5_TERMINAL'
+                } else {
+                  $classes += 'OTHER'
+                }
+              }
+              $uniqueClasses = @($classes | Sort-Object -Unique)
+              if ($uniqueClasses.Count -eq 0) {
+                return @{ Class = 'UNAVAILABLE'; V6Script = 'UNKNOWN'; Method = $lookup.Method }
+              }
+              $ownerClass = if ($uniqueClasses.Count -eq 1) { $uniqueClasses[0] } else { 'MULTIPLE' }
+              $v6Status = if ($v6Matched) {
+                'MATCHED'
+              } elseif ($nodeObserved -and $nodeLineReadable) {
+                'NOT_MATCHED'
+              } elseif ($nodeObserved) {
+                'UNKNOWN'
+              } else {
+                'NO_NODE'
+              }
+              return @{ Class = $ownerClass; V6Script = $v6Status; Method = $lookup.Method }
+            } catch {
+              return @{ Class = 'UNAVAILABLE'; V6Script = 'UNKNOWN'; Method = $lookup.Method }
+            }
+          }
+          foreach ($listener in @(
+            @{ Port = 3711; Tag = 'API_3711' },
+            @{ Port = 5717; Tag = 'WEB_5717' },
+            @{ Port = 8765; Tag = 'BRIDGE_8765' }
+          )) {
+            $summary = Get-V6PortOwnerSummary -Port $listener.Port
+            Write-Host ('V6_OBSERVED_' + $listener.Tag + '_OWNER_CLASS=' + $summary.Class)
+            Write-Host ('V6_OBSERVED_' + $listener.Tag + '_LOOKUP_METHOD=' + $summary.Method)
+            Write-Host ('V6_OBSERVED_' + $listener.Tag + '_OWNER_V6_SCRIPT=' + $summary.V6Script)
+          }
+
+
+          $processLookupOk = $false
+          $mt5Terminal = $false
+          $v6Server = $false
+          try {
+            # Process command lines are examined in memory ONLY and are never printed.
+            $proc = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+              Where-Object { $_.Name -in @('node.exe', 'terminal64.exe', 'terminal.exe') })
+            $mt5Terminal = (@($proc | Where-Object { $_.Name -in @('terminal64.exe', 'terminal.exe') })).Count -gt 0
+            $v6Server = (@($proc | Where-Object {
+              $_.Name -eq 'node.exe' -and
+              [string]$_.CommandLine -match 'xauusd-standalone-server[.]mjs'
+            })).Count -gt 0
+            $processLookupOk = $true
+          } catch {
+            Write-Host 'V6_OBSERVED_PROCESS_QUERY=UNAVAILABLE'
+          }
+          if ($processLookupOk) {
+            Write-Host 'V6_OBSERVED_PROCESS_QUERY=OK'
+            Write-Host "V6_OBSERVED_MT5_TERMINAL_PROCESS=$mt5Terminal"
+            Write-Host "V6_OBSERVED_V6_SERVER_PROCESS=$v6Server"
+          }
+
+          # This is the previously observed *legacy* production directory, not an
+          # attestation that the independently merged V6 is deployed there.
+          $legacyPath = 'F:\Project\XAUUSD_AI_MASTER\xauusd-ai-master'
+          $legacyExists = Test-Path -LiteralPath $legacyPath -PathType Container
+          Write-Host "V6_OBSERVED_LEGACY_PRODUCTION_PATH_EXISTS=$legacyExists"
+
+          Write-Host 'V6_VERIFIED_MT5_ACCOUNT_TYPE=NO'
+          Write-Host 'V6_VERIFIED_BROKER_ORDER_LIFECYCLE=NO'
+          Write-Host 'V6_VERIFIED_OPERATING_SOURCE_SHA=NO'
+          Write-Host 'V6_VERIFIED_DAILY_LOSS_KILL_SWITCH=NO'
+          Write-Host 'V6_VERIFIED_TELEGRAM_ROTATION=NO'
+          Write-Host 'V6_VERIFIED_EMERGENCY_STOP=NO'
+          Write-Host 'V6_LIVE_READINESS_RESULT=BLOCKED_NOT_AUTHORIZED'
+          # Successful observation of ports/processes is never LIVE sign-off.
+          # Fail closed so the job cannot become a misleading green "ready" check.
+          exit 2
+
+      - name: Preserve explicit read-only boundary even when readiness is blocked
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host 'V6_BROKER_ORDER_SEND=NONE'
+          Write-Host 'V6_POSITION_MODIFY=NONE'
+          Write-Host 'V6_ACCOUNT_SWITCH=NONE'
+          Write-Host 'V6_ARM_MUTATION=NONE'
+          Write-Host 'V6_LIVE_APPROVAL=NO'

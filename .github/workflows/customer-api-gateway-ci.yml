@@ -1,0 +1,120 @@
+name: Customer Authenticated API Gateway CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/customer-runtime-session/**"
+      - "packages/customer-runtime-gate/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-product-access/**"
+      - "packages/installation-proof/**"
+      - "packages/license-service/**"
+      - "scripts/test-customer-runtime-session-boundary.mjs"
+      - ".github/workflows/customer-api-gateway-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/customer-runtime-session/**"
+      - "packages/customer-runtime-gate/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-product-access/**"
+      - "packages/installation-proof/**"
+      - "packages/license-service/**"
+      - "scripts/test-customer-runtime-session-boundary.mjs"
+      - ".github/workflows/customer-api-gateway-ci.yml"
+
+concurrency:
+  group: customer-api-gateway-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  customer-api-gateway:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install locked dependencies with bounded retry
+        shell: powershell
+        run: |
+          $ok = $false
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            pnpm install --frozen-lockfile
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            if ($attempt -lt 4) {
+              Start-Sleep -Seconds 10
+            }
+          }
+          if (-not $ok) { throw "PNPM_INSTALL_FAILED_AFTER_RETRIES" }
+
+      - name: Build customer security dependency chain
+        shell: powershell
+        run: |
+          $packages = @(
+            "@xauusd/copy-protocol",
+            "@xauusd/license-service",
+            "@xauusd/installation-proof",
+            "@xauusd/customer-product-access",
+            "@xauusd/customer-grant-registry",
+            "@xauusd/customer-activation",
+            "@xauusd/customer-runtime-gate",
+            "@xauusd/customer-runtime-session"
+          )
+          foreach ($package in $packages) {
+            pnpm --filter $package build
+            if ($LASTEXITCODE -ne 0) { throw "BUILD_FAILED=$package" }
+          }
+
+      - name: Customer API gateway tests
+        run: pnpm --filter @xauusd/customer-runtime-session exec vitest run src/api-gateway.test.ts
+
+      - name: Customer runtime session regression
+        run: pnpm --filter @xauusd/customer-runtime-session test
+
+      - name: Typecheck
+        run: pnpm --filter @xauusd/customer-runtime-session typecheck
+
+      - name: Security boundary
+        run: node --test scripts/test-customer-runtime-session-boundary.mjs
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Gateway acceptance summary
+        shell: powershell
+        run: |
+          Write-Host 'CUSTOMER_API_GATEWAY=PASS'
+          Write-Host 'TRANSPORT=HTTPS'
+          Write-Host 'AUTHENTICATION=BEARER_SHA256_HASH'
+          Write-Host 'RATE_LIMIT=PASS'
+          Write-Host 'BODY_LIMIT=32768'
+          Write-Host 'EXACT_SCHEMA=PASS'
+          Write-Host 'SELF_MANAGED_ROUTE=PASS'
+          Write-Host 'COPY_FOLLOWER_ROUTE=PASS'
+          Write-Host 'TRADING_LOGIC_MUTATION=NONE'
+          Write-Host 'MT5_MUTATION=NONE'
+          Write-Host 'MODE_MUTATION=NONE'
+          Write-Host 'ARM_MUTATION=NONE'
+          Write-Host 'ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'
+          Write-Host 'LIVE_TEST_ORDER=NONE'

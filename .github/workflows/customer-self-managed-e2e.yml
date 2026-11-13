@@ -1,0 +1,106 @@
+name: Customer SELF_MANAGED E2E Read-Only
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/customer-agent/**"
+      - "packages/customer-runtime-session/**"
+      - "packages/customer-runtime-gate/**"
+      - "packages/customer-activation/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-product-access/**"
+      - "packages/installation-proof/**"
+      - "packages/license-service/**"
+      - "scripts/customer-handoff-self-managed-e2e.test.mjs"
+      - ".github/workflows/customer-self-managed-e2e.yml"
+      - ".github/workflows/customer-handoff-production-acceptance-readonly.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/customer-agent/**"
+      - "packages/customer-runtime-session/**"
+      - "packages/customer-runtime-gate/**"
+      - "packages/customer-activation/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-product-access/**"
+      - "packages/installation-proof/**"
+      - "packages/license-service/**"
+      - "scripts/customer-handoff-self-managed-e2e.test.mjs"
+      - ".github/workflows/customer-self-managed-e2e.yml"
+      - ".github/workflows/customer-handoff-production-acceptance-readonly.yml"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: customer-self-managed-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  self-managed-e2e:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build SELF_MANAGED E2E chain
+        shell: powershell
+        run: |
+          $packages = @(
+            "@xauusd/copy-protocol",
+            "@xauusd/license-service",
+            "@xauusd/installation-proof",
+            "@xauusd/customer-product-access",
+            "@xauusd/customer-grant-registry",
+            "@xauusd/customer-activation",
+            "@xauusd/customer-runtime-gate",
+            "@xauusd/customer-runtime-session",
+            "@xauusd/customer-agent"
+          )
+          foreach ($package in $packages) {
+            pnpm --filter $package build
+            if ($LASTEXITCODE -ne 0) { throw "BUILD_FAILED=$package" }
+          }
+
+      - name: SELF_MANAGED simulated E2E
+        run: node --test scripts/customer-handoff-self-managed-e2e.test.mjs
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: SELF_MANAGED E2E summary
+        shell: powershell
+        run: |
+          Write-Host 'SELF_MANAGED_E2E=PASS'
+          Write-Host 'PERSISTENCE_REOPEN=PASS'
+          Write-Host 'AUTHENTICATED_GATEWAY=PASS'
+          Write-Host 'CUSTOMER_AGENT=PASS'
+          Write-Host 'INSTALLATION_PROOF=PASS'
+          Write-Host 'REPLAY_REJECTION=PASS'
+          Write-Host 'REVOKED_AUTO_FAIL_CLOSED=PASS'
+          Write-Host 'SAFE_PAUSE_AFTER_REVOKE=PASS'
+          Write-Host 'MT5_MUTATION=NONE'
+          Write-Host 'ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'
+          Write-Host 'LIVE_TEST_ORDER=NONE'

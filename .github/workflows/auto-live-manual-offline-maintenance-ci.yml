@@ -1,0 +1,41 @@
+name: AUTO LIVE Manual Offline Maintenance Source CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/auto-live-manual-offline-maintenance.yml'
+      - '.github/workflows/auto-live-manual-offline-maintenance-ci.yml'
+      - 'scripts/test-auto-live-manual-offline-maintenance-source.ps1'
+      - 'scripts/ops/auto-live-offline-lease.ps1'
+      - 'scripts/ops/set-auto-live-monitor-offline-lease.ps1'
+      - 'scripts/test-auto-live-offline-lease.ps1'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-operator-only-safety:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify workflow is operator-only and does not touch MT5
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-auto-live-manual-offline-maintenance-source.ps1
+
+      - name: Regression test bounded offline lease and outage classification using temp files
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-auto-live-offline-lease.ps1
+
+      - name: No production mutation confirmation
+        shell: pwsh
+        run: |
+          Write-Host 'OPERATOR_OFFLINE_LEASE_CI=PASS'
+          Write-Host 'NO_LIVE_BRIDGE_PROBES=TRUE'
+          Write-Host 'PRODUCTION_MUTATION=NONE'

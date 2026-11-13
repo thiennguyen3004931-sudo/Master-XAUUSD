@@ -1,0 +1,120 @@
+name: Phase7C REVERSAL Hotfix LIVE Read-Only Preflight
+
+# Operator reports bot intentionally OFF; no automatic LIVE probes.
+# Run manually only after confirming bridge is intentionally online.
+on:
+  workflow_dispatch:
+    inputs:
+      operator_confirmed_online:
+        description: 'I confirm the bot and MT5 bridge are intentionally ONLINE for GET-only validation'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reversal-hotfix-readonly-preflight-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  observe-production:
+    if: ${{ inputs.operator_confirmed_online == true }}
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact proposed hotfix (no deployment)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Read-only LIVE preflight (strict no mutation)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+
+          # Read only: no git checkout/fetch/reset, no API POST/PATCH/DELETE,
+          # no task/lifecycle, mode, ARM, position or broker mutations.
+          $prod = 'F:\Project\XAUUSD_AI_MASTER\xauusd-ai-master'
+          $expected = 'ff116b5e0c491163a11e33cb9e38fb6b503f0a1d'
+          if (-not (Test-Path -LiteralPath $prod -PathType Container)) {
+            throw 'PRODUCTION_DIR_MISSING'
+          }
+          $head = (& git -C $prod rev-parse HEAD).Trim().ToLowerInvariant()
+          $branch = (& git -C $prod branch --show-current).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'PRODUCTION_GIT_READ_FAILED' }
+          $dirty = @(& git -C $prod status --porcelain --untracked-files=no)
+          Write-Host "LIVE_OBSERVED_SOURCE=$head"
+          Write-Host "LIVE_OBSERVED_BRANCH=$branch"
+          if ($head -ne $expected) { throw 'PRODUCTION_SOURCE_CHANGED_ABORT' }
+          if ($branch -ne 'main') { throw 'PRODUCTION_BRANCH_NOT_MAIN' }
+          if ($dirty.Count -ne 0) { throw 'PRODUCTION_TRACKED_WORKTREE_DIRTY' }
+
+          $configPath = Join-Path $prod '.runtime\phase7c-executor-task-config.json'
+          $cfg = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+          if ([int]$cfg.version -ne 2 -or [string]$cfg.accountMode -ne 'LIVE') {
+            throw 'PRODUCTION_TASK_CONFIG_NOT_LIVE_V2'
+          }
+          $api = ([string]$cfg.controlApiUrl).TrimEnd('/')
+          if ($api -notmatch '^https?://(127\.0\.0\.1|localhost|\[?::1\]?):\d+$') {
+            throw 'PRODUCTION_CONTROL_URL_NOT_LOOPBACK'
+          }
+          $envFile = [string]$cfg.envFile
+          if (-not [IO.Path]::IsPathRooted($envFile)) {
+            $envFile = Join-Path $prod $envFile
+          }
+          . (Join-Path $prod 'scripts\lib\phase7c-account-mode.ps1')
+          $info = Assert-Phase7CAccountEnv -EnvFile $envFile -AccountMode 'LIVE' -RequireTrading
+          $bridge = "http://$($info.bridgeHost):$($info.bridgePort)"
+          $headers = @{ 'x-mt5-api-key' = $info.apiKey }
+
+          function Read-OnlyApi([string]$path) {
+            return Invoke-RestMethod -Method Get -Uri "$api$path" -TimeoutSec 10
+          }
+          function Read-OnlyBroker([string]$path) {
+            return Invoke-RestMethod -Method Get -Uri "$bridge$path" -Headers $headers -TimeoutSec 10
+          }
+          function Read-OnlyBrokerCount([string]$path) {
+            $response = Invoke-WebRequest -Method Get -Uri "$bridge$path" -Headers $headers -UseBasicParsing -TimeoutSec 10
+            $raw = ([string]$response.Content).Trim()
+            if (-not $raw -or $raw -eq '[]') { return 0 }
+            $parsed = $raw | ConvertFrom-Json
+            if ($null -eq $parsed) { throw 'BROKER_LIST_INVALID' }
+            if ($parsed -isnot [array]) { throw 'BROKER_LIST_NOT_ARRAY' }
+            return @($parsed).Count
+          }
+          $mode = Read-OnlyApi '/api/v1/phase7c/bot-mode'
+          $life = Read-OnlyApi '/api/v1/phase7c/lifecycle'
+          $arm = Read-OnlyApi '/api/v1/phase7c-live-arm-control/capability'
+          $att = Read-OnlyApi '/api/v1/phase7c/runtime-source-attestation'
+          $health = Read-OnlyBroker '/health'
+
+          $actualMode = [string]$mode.state.mode
+          Write-Host "LIVE_PREFLIGHT_BOT_MODE=$actualMode"
+          Write-Host "LIVE_PREFLIGHT_ARM_STATUS=$($arm.liveArmStatus)"
+          Write-Host "LIVE_PREFLIGHT_RUNTIME_ATTESTATION=$($att.overall)"
+          Write-Host "LIVE_PREFLIGHT_BRIDGE_CONNECTED=$($health.connected)"
+          Write-Host "LIVE_PREFLIGHT_BRIDGE_STATUS=$($health.status)"
+          if ($actualMode -ne 'PAUSE') { throw 'PRODUCTION_NOT_PAUSED' }
+          if ([string]$arm.accountMode -ne 'LIVE' -or [string]$arm.liveArmStatus -ne 'ARMED') { throw 'PRODUCTION_ARM_OR_ACCOUNT_CHANGED' }
+          if (-not [bool]$life.running -or -not [bool]$life.ready) { throw 'PRODUCTION_LIFECYCLE_NOT_READY' }
+          if (-not [bool]$health.connected -or [string]$health.status -ne 'ok') { throw 'PRODUCTION_BRIDGE_UNHEALTHY' }
+          if ([string]$health.configuredAccountMode -ne 'LIVE' -or [string]$health.accountMode -ne 'real') { throw 'PRODUCTION_BROKER_NOT_REAL_LIVE' }
+          if ([string]$att.overall -ne 'EXACT_MATCH' -or [string]$att.deployment.sourceCommit -ne $expected) {
+            throw 'PRODUCTION_SOURCE_ATTESTATION_NOT_EXACT'
+          }
+          $positionCount = Read-OnlyBrokerCount '/v1/positions?symbol=XAUUSD'
+          $pendingCount = Read-OnlyBrokerCount '/v1/orders?symbol=XAUUSD'
+          Write-Host "LIVE_PREFLIGHT_POSITION_COUNT=$positionCount"
+          Write-Host "LIVE_PREFLIGHT_PENDING_COUNT=$pendingCount"
+          if ($positionCount -ne 0 -or $pendingCount -ne 0) { throw 'PRODUCTION_NOT_FLAT' }
+
+          Write-Host ('LIVE_PREFLIGHT_OBSERVED_AT_UTC=' + [DateTimeOffset]::UtcNow.ToString('o'))
+          Write-Host 'LIVE_HOTFIX_READ_ONLY_PREFLIGHT=PASS'
+          Write-Host 'MODE_MUTATION=NONE'
+          Write-Host 'ARM_MUTATION=NONE'
+          Write-Host 'ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'
+          Write-Host 'PRODUCTION_CODE_MUTATION=NONE'

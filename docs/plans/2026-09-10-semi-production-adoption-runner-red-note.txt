@@ -1,0 +1,1 @@
+RED checkpoint: production runtime modules are intentionally absent at this commit so the new clean-checkout CI contract must fail before implementation.

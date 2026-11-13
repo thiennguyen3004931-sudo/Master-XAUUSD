@@ -1,0 +1,31 @@
+name: Phase7C PR322 Production Acceptance Read-Only CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-pr322-production-acceptance-readonly
+    paths:
+      - "scripts/probe-phase7c-pr322-production-acceptance-readonly-local.ps1"
+      - "scripts/test-phase7c-pr322-production-acceptance-readonly.mjs"
+      - ".github/workflows/phase7c-pr322-production-acceptance-readonly-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/probe-phase7c-pr322-production-acceptance-readonly-local.ps1"
+      - "scripts/test-phase7c-pr322-production-acceptance-readonly.mjs"
+      - ".github/workflows/phase7c-pr322-production-acceptance-readonly-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  readonly-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: PR322 production acceptance read-only source contract
+        run: node scripts/test-phase7c-pr322-production-acceptance-readonly.mjs

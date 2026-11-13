@@ -1,0 +1,20 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { validateAuthorityTransition as check } from "./customer-restore-authority-transition.mjs";
+
+const previous = Object.freeze({ customerId:"a", installationId:"b", licenseId:"c", grantId:"d", bindingEpoch:"epoch-1", authorizationState:"ACTIVE", revocationGeneration:2, migrationGeneration:1, challengeConsumptionGeneration:3, auditHighWater:8, tokenGeneration:2 });
+const evaluate = (next, old=previous, expectedAuditHighWater=old.auditHighWater) => check({ previous:old, next, expectedAuditHighWater });
+const advance = (patch={}) => ({...previous, auditHighWater:9, ...patch});
+test("one atomic audit increment is permitted", () => assert.equal(evaluate(advance()).ok,true));
+test("revocation requires generation increase", () => assert.equal(evaluate(advance({authorizationState:"REVOKED"})).ok,false));
+test("revocation with increased generation passes", () => assert.equal(evaluate(advance({authorizationState:"REVOKED",revocationGeneration:3})).ok,true));
+test("expired transition requires generation increase", () => assert.equal(evaluate(advance({authorizationState:"EXPIRED"})).ok,false));
+test("revoked state cannot reactivate same epoch", () => { const old=advance({authorizationState:"REVOKED",revocationGeneration:3}); assert.equal(evaluate({...old,authorizationState:"ACTIVE",auditHighWater:10,revocationGeneration:4},old).ok,false); });
+test("compare-and-swap stale writer denied", () => assert.equal(evaluate(advance(),previous,7).reasonCode,"AUTHORITY_CAS_CONFLICT"));
+test("audit counter skipping denied", () => assert.equal(evaluate(advance({auditHighWater:10})).ok,false));
+test("audit counter rollback denied", () => assert.equal(evaluate(advance({auditHighWater:7})).ok,false));
+for (const key of ["customerId","installationId","licenseId","grantId","bindingEpoch"]) test("binding change denied: "+key,()=>assert.equal(evaluate(advance({[key]:"attacker"})).ok,false));
+for (const key of ["revocationGeneration","migrationGeneration","challengeConsumptionGeneration","tokenGeneration"]) test("counter rollback denied: "+key,()=>assert.equal(evaluate(advance({[key]:previous[key]-1})).ok,false));
+test("challenge consumption increment allowed", () => assert.equal(evaluate(advance({challengeConsumptionGeneration:4})).ok,true));
+test("missing previous state denied", () => assert.equal(check({previous:null,next:advance(),expectedAuditHighWater:8}).ok,false));
+test("missing next state denied", () => assert.equal(evaluate(null).ok,false));

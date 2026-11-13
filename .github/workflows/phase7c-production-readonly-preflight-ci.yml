@@ -1,0 +1,70 @@
+name: Phase7C Production Read-Only Preflight CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-production-readonly-preflight-v2
+      - fix/phase7c-production-readonly-route-contract
+    paths:
+      - 'scripts/preflight-phase7c-production-readonly-local.ps1'
+      - 'scripts/test-phase7c-production-readonly-preflight-v2-source.ps1'
+      - 'scripts/test-phase7c-production-readonly-preflight-route-contract.ps1'
+      - '.github/workflows/phase7c-production-readonly-preflight-ci.yml'
+  pull_request:
+    paths:
+      - 'scripts/preflight-phase7c-production-readonly-local.ps1'
+      - 'scripts/test-phase7c-production-readonly-preflight-v2-source.ps1'
+      - 'scripts/test-phase7c-production-readonly-preflight-route-contract.ps1'
+      - '.github/workflows/phase7c-production-readonly-preflight-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Strict production read-only preflight contract - PowerShell 7
+        shell: pwsh
+        run: ./scripts/test-phase7c-production-readonly-preflight-v2-source.ps1
+
+      - name: Strict production read-only preflight contract - Windows PowerShell 5.1
+        shell: powershell
+        run: ./scripts/test-phase7c-production-readonly-preflight-v2-source.ps1
+
+      - name: Mounted account-switch route contract - PowerShell 7
+        shell: pwsh
+        run: ./scripts/test-phase7c-production-readonly-preflight-route-contract.ps1
+
+      - name: Mounted account-switch route contract - Windows PowerShell 5.1
+        shell: powershell
+        run: ./scripts/test-phase7c-production-readonly-preflight-route-contract.ps1
+
+      - name: Parse strict production read-only preflight - PowerShell 7
+        shell: pwsh
+        run: |
+          if (-not (Test-Path './scripts/preflight-phase7c-production-readonly-local.ps1')) { exit 1 }
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path './scripts/preflight-phase7c-production-readonly-local.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -ne 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+
+      - name: Parse strict production read-only preflight - Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          if (-not (Test-Path './scripts/preflight-phase7c-production-readonly-local.ps1')) { exit 1 }
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path './scripts/preflight-phase7c-production-readonly-local.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -ne 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }

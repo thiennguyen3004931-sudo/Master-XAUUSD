@@ -1,0 +1,98 @@
+name: Customer Agent CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/customer-agent/**"
+      - "packages/installation-proof/**"
+      - "packages/copy-protocol/**"
+      - "scripts/test-customer-agent-boundary.mjs"
+      - ".github/workflows/customer-agent-ci.yml"
+      - ".github/workflows/customer-handoff-production-acceptance-readonly.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/customer-agent/**"
+      - "packages/installation-proof/**"
+      - "packages/copy-protocol/**"
+      - "scripts/test-customer-agent-boundary.mjs"
+      - ".github/workflows/customer-agent-ci.yml"
+      - ".github/workflows/customer-handoff-production-acceptance-readonly.yml"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: customer-agent-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  customer-agent:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install locked dependencies with bounded retry
+        shell: powershell
+        run: |
+          $ok = $false
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            pnpm install --frozen-lockfile
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            if ($attempt -lt 4) { Start-Sleep -Seconds 10 }
+          }
+          if (-not $ok) { throw "PNPM_INSTALL_FAILED_AFTER_RETRIES" }
+
+      - name: Build proof dependency
+        run: |
+          pnpm --filter @xauusd/copy-protocol build
+          pnpm --filter @xauusd/installation-proof build
+
+      - name: Customer agent tests
+        run: pnpm --filter @xauusd/customer-agent test
+
+      - name: Customer agent typecheck
+        run: pnpm --filter @xauusd/customer-agent typecheck
+
+      - name: Customer agent build
+        run: pnpm --filter @xauusd/customer-agent build
+
+      - name: Customer agent boundary
+        run: node --test scripts/test-customer-agent-boundary.mjs
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Customer agent acceptance summary
+        shell: powershell
+        run: |
+          Write-Host 'CUSTOMER_AGENT=PASS'
+          Write-Host 'TRANSPORT=HTTPS_ONLY'
+          Write-Host 'SIGNED_INSTALLATION_PROOF=PASS'
+          Write-Host 'BOUNDED_RETRY=PASS'
+          Write-Host 'SELF_MANAGED_CLIENT=PASS'
+          Write-Host 'COPY_FOLLOWER_CLIENT=PASS'
+          Write-Host 'MASTER_SOURCE_ACCESS=NONE'
+          Write-Host 'MT5_DIRECT_ACCESS=NONE'
+          Write-Host 'ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'
+          Write-Host 'LIVE_TEST_ORDER=NONE'

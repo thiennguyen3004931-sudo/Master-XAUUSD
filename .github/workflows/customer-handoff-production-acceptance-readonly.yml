@@ -1,0 +1,198 @@
+name: Customer Handoff Production Acceptance Read-Only
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/copy-protocol/**"
+      - "packages/license-service/**"
+      - "packages/installation-proof/**"
+      - "packages/customer-product-access/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-grant-admin-service/**"
+      - "packages/customer-activation/**"
+      - "packages/customer-runtime-gate/**"
+      - "packages/customer-runtime-session/**"
+      - "packages/customer-agent/**"
+      - "scripts/test-customer-runtime-session-boundary.mjs"
+      - "scripts/test-customer-agent-boundary.mjs"
+      - "scripts/customer-handoff-self-managed-e2e.test.mjs"
+      - "scripts/customer-handoff-copy-follower-e2e.test.mjs"
+      - "scripts/customer-handoff-installation-migration-e2e.test.mjs"
+      - "scripts/customer-handoff-installation-migration-e2e.test.mjs"
+      - "scripts/customer-handoff-copy-follower-e2e.test.mjs"
+      - "scripts/customer-handoff-self-managed-e2e.test.mjs"
+      - ".github/workflows/customer-handoff-production-acceptance-readonly.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/copy-protocol/**"
+      - "packages/license-service/**"
+      - "packages/installation-proof/**"
+      - "packages/customer-product-access/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-grant-admin-service/**"
+      - "packages/customer-activation/**"
+      - "packages/customer-runtime-gate/**"
+      - "packages/customer-runtime-session/**"
+      - "packages/customer-agent/**"
+      - "scripts/test-customer-runtime-session-boundary.mjs"
+      - "scripts/test-customer-agent-boundary.mjs"
+      - ".github/workflows/customer-handoff-production-acceptance-readonly.yml"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: customer-handoff-production-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  customer-handoff-production-acceptance:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install locked dependencies with bounded retry
+        shell: powershell
+        run: |
+          $ok = $false
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            pnpm install --frozen-lockfile
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            if ($attempt -lt 4) {
+              Write-Warning "pnpm install attempt $attempt failed; retrying"
+              Start-Sleep -Seconds 10
+            }
+          }
+          if (-not $ok) { throw "PNPM_INSTALL_FAILED_AFTER_RETRIES" }
+
+      - name: Build customer handoff dependency chain
+        shell: powershell
+        run: |
+          $packages = @(
+            "@xauusd/copy-protocol",
+            "@xauusd/license-service",
+            "@xauusd/installation-proof",
+            "@xauusd/customer-product-access",
+            "@xauusd/customer-grant-registry",
+            "@xauusd/customer-grant-admin-service",
+            "@xauusd/customer-activation",
+            "@xauusd/customer-runtime-gate",
+            "@xauusd/customer-runtime-session",
+            "@xauusd/customer-agent"
+          )
+          foreach ($package in $packages) {
+            pnpm --filter $package build
+            if ($LASTEXITCODE -ne 0) { throw "BUILD_FAILED=$package" }
+          }
+
+      - name: Test customer handoff dependency chain
+        shell: powershell
+        run: |
+          $packages = @(
+            "@xauusd/copy-protocol",
+            "@xauusd/license-service",
+            "@xauusd/installation-proof",
+            "@xauusd/customer-product-access",
+            "@xauusd/customer-grant-registry",
+            "@xauusd/customer-grant-admin-service",
+            "@xauusd/customer-activation",
+            "@xauusd/customer-runtime-gate",
+            "@xauusd/customer-runtime-session",
+            "@xauusd/customer-agent"
+          )
+          foreach ($package in $packages) {
+            pnpm --filter $package test
+            if ($LASTEXITCODE -ne 0) { throw "TEST_FAILED=$package" }
+          }
+
+      - name: Typecheck customer handoff dependency chain
+        shell: powershell
+        run: |
+          $packages = @(
+            "@xauusd/copy-protocol",
+            "@xauusd/license-service",
+            "@xauusd/installation-proof",
+            "@xauusd/customer-product-access",
+            "@xauusd/customer-grant-registry",
+            "@xauusd/customer-grant-admin-service",
+            "@xauusd/customer-activation",
+            "@xauusd/customer-runtime-gate",
+            "@xauusd/customer-runtime-session",
+            "@xauusd/customer-agent"
+          )
+          foreach ($package in $packages) {
+            pnpm --filter $package typecheck
+            if ($LASTEXITCODE -ne 0) { throw "TYPECHECK_FAILED=$package" }
+          }
+
+      - name: Runtime session security boundary
+        run: node --test scripts/test-customer-runtime-session-boundary.mjs
+
+      - name: Customer agent distribution boundary
+        run: node --test scripts/test-customer-agent-boundary.mjs
+
+      - name: SELF_MANAGED simulated E2E
+        run: node --test scripts/customer-handoff-self-managed-e2e.test.mjs
+
+      - name: COPY_FOLLOWER simulated E2E
+        run: node --test scripts/customer-handoff-copy-follower-e2e.test.mjs
+
+      - name: Revoke new-PC recovery simulated E2E
+        run: node --test scripts/customer-handoff-installation-migration-e2e.test.mjs
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Production acceptance summary
+        shell: powershell
+        run: |
+          Write-Host 'CUSTOMER_HANDOFF_PRODUCTION_ACCEPTANCE=PASS'
+          Write-Host 'SELF_MANAGED_ACCEPTANCE=PASS'
+          Write-Host 'COPY_FOLLOWER_ACCEPTANCE=PASS'
+          Write-Host 'LICENSE_GATE=PASS'
+          Write-Host 'GRANT_GATE=PASS'
+          Write-Host 'INSTALLATION_PROOF=PASS'
+          Write-Host 'RUNTIME_GATE=PASS'
+          Write-Host 'RUNTIME_SESSION=PASS'
+          Write-Host 'CUSTOMER_API_GATEWAY=PASS'
+          Write-Host 'CUSTOMER_API_AUTHENTICATION=PASS'
+          Write-Host 'CUSTOMER_API_RATE_LIMIT=PASS'
+          Write-Host 'CUSTOMER_AGENT=PASS'
+          Write-Host 'CUSTOMER_AGENT_MASTER_SOURCE_ACCESS=NONE'
+          Write-Host 'SELF_MANAGED_E2E=PASS'
+          Write-Host 'COPY_FOLLOWER_E2E=PASS'
+          Write-Host 'SIGNED_COPY_COMMAND=PASS'
+          Write-Host 'REVOKE_NEW_PC_RECOVERY_E2E=PASS'
+          Write-Host 'MIGRATION_AUDIT=PASS'
+          Write-Host 'SQLITE_DURABILITY=PASS'
+          Write-Host 'REPLAY_PROTECTION=PASS'
+          Write-Host 'PRODUCTION_MUTATION=NONE'
+          Write-Host 'NETWORK_SCOPE=CUSTOMER_HTTPS_ONLY'
+          Write-Host 'API_ROUTE_SCOPE=CUSTOMER_RUNTIME_ONLY'
+          Write-Host 'MODE_MUTATION=NONE'
+          Write-Host 'ARM_MUTATION=NONE'
+          Write-Host 'ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'
+          Write-Host 'LIVE_TEST_ORDER=NONE'

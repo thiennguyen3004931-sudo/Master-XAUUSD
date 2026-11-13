@@ -1,0 +1,36 @@
+name: Phase7C Manual Web Task Recovery Source CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/phase7c-manual-guarded-web-task-recovery-ci.yml'
+      - '.github/workflows/phase7c-manual-guarded-web-task-recovery.yml'
+      - 'scripts/ops/recover-phase7c-web-task-guarded-local.ps1'
+      - 'scripts/test-phase7c-manual-web-task-recovery-source.ps1'
+
+permissions:
+  contents: read
+
+jobs:
+  static-manual-safety:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout proposed workflow only
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Assert one-task-only and no-trading static contract
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-phase7c-manual-web-task-recovery-source.ps1
+
+      - name: Confirm CI does not touch LIVE
+        shell: powershell
+        run: |
+          Write-Host 'GUARDED_WEB_TASK_RECOVERY_CI=SOURCE_ONLY'
+          Write-Host 'LIVE_GETS=NONE'
+          Write-Host 'WEB_TASK_STARTS=NONE'
+          Write-Host 'ARM_MODE_ORDER_MUTATION=NONE'

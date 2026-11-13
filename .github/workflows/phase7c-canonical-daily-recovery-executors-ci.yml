@@ -1,0 +1,45 @@
+name: Phase7C Canonical Daily Recovery Executors CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-canonical-daily-recovery-executors
+    paths:
+      - "scripts/run-phase7c-trend-controller.mjs"
+      - "scripts/run-phase7c-sideway-locked.mjs"
+      - "scripts/run-phase7c-sideway-account-mode.mjs"
+      - "scripts/phase7c-canonical-daily-recovery-executor.mjs"
+      - "scripts/phase7c-canonical-daily-recovery-source-adapter.mjs"
+      - "scripts/test-phase7c-canonical-daily-recovery-executors-contract.mjs"
+      - ".github/workflows/phase7c-canonical-daily-recovery-executors-ci.yml"
+  pull_request:
+    paths:
+      - "scripts/run-phase7c-trend-controller.mjs"
+      - "scripts/run-phase7c-sideway-locked.mjs"
+      - "scripts/run-phase7c-sideway-account-mode.mjs"
+      - "scripts/phase7c-canonical-daily-recovery-executor.mjs"
+      - "scripts/phase7c-canonical-daily-recovery-source-adapter.mjs"
+      - "scripts/test-phase7c-canonical-daily-recovery-executors-contract.mjs"
+      - ".github/workflows/phase7c-canonical-daily-recovery-executors-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  canonical-daily-recovery-executors-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Canonical Daily Recovery executor source contract
+        run: node scripts/test-phase7c-canonical-daily-recovery-executors-contract.mjs
+      - name: Parse touched JavaScript controllers
+        run: |
+          node --check scripts/run-phase7c-trend-controller.mjs
+          node --check scripts/run-phase7c-sideway-locked.mjs
+          node --check scripts/run-phase7c-sideway-account-mode.mjs

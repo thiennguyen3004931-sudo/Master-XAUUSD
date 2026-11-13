@@ -1,0 +1,78 @@
+name: Phase7B Pattern UI Clock CI
+
+on:
+  push:
+    branches:
+      - phase7c-sideway-supply-demand
+    paths:
+      - "scripts/apply-phase7b-pattern-ui-clock-local.mjs"
+      - ".github/workflows/phase7b-pattern-ui-clock-ci.yml"
+  pull_request:
+    paths:
+      - "scripts/apply-phase7b-pattern-ui-clock-local.mjs"
+      - ".github/workflows/phase7b-pattern-ui-clock-ci.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply three-candle prerequisite in CI checkout
+        run: |
+          node scripts/apply-phase7b-three-candle-pattern-local.mjs --apply | tee /tmp/three-candle.log
+          grep -q 'PHASE7B_THREE_CANDLE_APPLY=PASS' /tmp/three-candle.log
+
+      - name: Check UI clock migration without mutation
+        run: |
+          node --check scripts/apply-phase7b-pattern-ui-clock-local.mjs
+          node scripts/apply-phase7b-pattern-ui-clock-local.mjs | tee /tmp/ui-clock-check.log
+          grep -q 'PHASE7B_PATTERN_UI_CLOCK_CHECK=PASS' /tmp/ui-clock-check.log
+          grep -q 'PHASE7B_PATTERN_UI_CLOCK_ORIGINAL_MUTATION=False' /tmp/ui-clock-check.log
+          grep -q 'PHASE7B_PATTERN_UI_CLOCK_SCOPE=DISPLAY_ONLY_NO_EXECUTION_LOGIC' /tmp/ui-clock-check.log
+
+      - name: Apply UI clock migration in CI checkout
+        run: |
+          node scripts/apply-phase7b-pattern-ui-clock-local.mjs --apply | tee /tmp/ui-clock-apply.log
+          grep -q 'PHASE7B_PATTERN_UI_CLOCK_APPLY=PASS' /tmp/ui-clock-apply.log
+          grep -q 'PHASE7B_PATTERN_UI_CLOCK_EXECUTION_MUTATION=False' /tmp/ui-clock-apply.log
+
+      - name: Build API
+        run: pnpm --filter @xauusd/api... build
+
+      - name: Build Web
+        run: pnpm --filter @xauusd/web... build
+
+      - name: Verify clock normalization and three-pattern UI
+        run: |
+          grep -q 'inferBrokerClockOffset' apps/api/src/routes/phase7b-demo.route.ts
+          grep -q 'normalizeBrokerTimestamp(current.closeTime, brokerClockOffsetMs)' apps/api/src/routes/phase7b-demo.route.ts
+          grep -q 'telemetry.quote?.timestamp' apps/api/src/routes/phase7b-demo.route.ts
+          grep -q 'telemetry.health?.timestamp' apps/api/src/routes/phase7b-demo.route.ts
+          grep -q 'THREE_CANDLE_BODY_DOMINANCE' apps/api/src/routes/phase7b-demo.route.ts
+          if grep -q 'SEMANTIC UI v2' apps/web/src/pages/Phase7BPatternCheckPage.tsx; then
+            grep -q 'fetchPhase7CWebStatus' apps/web/src/pages/Phase7BPatternCheckPage.tsx
+            echo 'PHASE7B_PATTERN_UI_CLOCK_WEB=SUPERSEDED_BY_SEMANTIC_UI_V2'
+          else
+            grep -q 'timeZone: "Asia/Ho_Chi_Minh"' apps/web/src/pages/Phase7BPatternCheckPage.tsx
+            grep -q 'Math.min(15 \* 60_000, rawRemainingMs)' apps/web/src/pages/Phase7BPatternCheckPage.tsx
+            grep -q 'Ba nến B+C+D > A' apps/web/src/pages/Phase7BPatternCheckPage.tsx
+            echo 'PHASE7B_PATTERN_UI_CLOCK_WEB=LEGACY_CLOCK_UI'
+          fi

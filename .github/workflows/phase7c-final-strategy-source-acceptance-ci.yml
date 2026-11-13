@@ -1,0 +1,97 @@
+name: Phase7C Final Strategy Source Acceptance (No MT5)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/phase7c-final-strategy-acceptance.test.mjs'
+      - 'docs/operations/phase7c-final-strategy-acceptance-20261104.md'
+      - '.github/workflows/phase7c-final-strategy-source-acceptance-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  strategy-source-negative-regressions:
+    name: TREND + SIDEWAY entry SL TP trailing source acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NODE_ENV: test
+      STRATEGY_SOURCE_ONLY: 'true'
+      MT5_ORDER_PERMISSION: NONE
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Pin exact checked-out source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "STRATEGY_ACCEPTANCE_SOURCE_SHA=$(git rev-parse HEAD)"
+          echo "MT5_ORDER_PERMISSION=NONE"
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Controller and source acceptance syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/run-phase7c-trend-controller.mjs
+          node --check scripts/run-phase7c-sideway-controller.mjs
+          node --check scripts/phase7c-final-strategy-acceptance.test.mjs
+      - name: Cross-strategy acceptance and LIVE no-order regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test \
+            scripts/phase7c-final-strategy-acceptance.test.mjs \
+            scripts/phase7c-auto-live-reversal-lock.test.mjs \
+            scripts/phase7c-trend-mode-gate.test.mjs \
+            scripts/phase7c-daily-recovery-pause.test.mjs \
+            scripts/phase7c-execution-lock.test.mjs \
+            2>&1 | tee acceptance-cross-strategy.tap
+      - name: SIDEWAY entry, post-fill broker policy and stop regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test \
+            scripts/phase7c-sideway-logic.test.mjs \
+            scripts/phase7c-sideway-execution-guards.test.mjs \
+            scripts/phase7c-sideway-broker-tp-sl-trail-only.test.mjs \
+            scripts/phase7c-fixed-tp-sideway-exit.test.mjs \
+            2>&1 | tee acceptance-sideway.tap
+      - name: TREND M5 runtime wiring and single-owner management
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test \
+            scripts/phase7c-trend-m5-runtime-wiring.test.mjs \
+            scripts/phase7c-trend-m5-single-owner.test.mjs \
+            scripts/phase7c-fast-move-profit-lock.test.mjs \
+            2>&1 | tee acceptance-trend.tap
+      - name: Canonical strategy condition and monotonic SL contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-phase7c-strategy-entry-conditions-core-contract.mjs
+          node scripts/test-phase7c-m5-structural-trailing-contract.mjs
+          node scripts/test-phase7c-stop-monotonicity.mjs
+          node scripts/test-phase7c-canonical-daily-recovery-executors-contract.mjs
+      - name: Evidence is not operational sign-off
+        shell: bash
+        run: |
+          echo 'SOURCE_ACCEPTANCE_TESTS=COMPLETE'
+          echo 'REAL_MT5_DEMO_ACCEPTANCE=NOT_PERFORMED'
+          echo 'LIVE_AUTHORIZATION=NONE'
+          echo 'CUSTOMER_RELEASE_AUTHORIZATION=NONE'
+      - name: Upload source-only TAP evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-strategy-source-acceptance-${{ github.run_id }}
+          path: acceptance-*.tap
+          if-no-files-found: warn
