@@ -3465,7 +3465,7 @@ def _build_portfolio_scenario_comparison(
                 cur_streak = 0
 
         unrealized_end_usd = round(sum(p["unrealizedPnlUsd"] for p in open_end_positions), 2)
-        if m5_marks and timeline_snapshots:
+        if last_mark_time is not None and timeline_snapshots:
             # End-of-test floating and equity must agree with the same market-price
             # snapshots used for the drawdown path, not stale trade-level estimates.
             unrealized_end_usd = timeline_snapshots[-1]["floatingPnlUsd"]
@@ -3507,7 +3507,7 @@ def _build_portfolio_scenario_comparison(
             "dcaRejectedCounts": dca_rej_totals,
             "positions": positions,
             "timelineSnapshots": timeline_snapshots,
-            "equityMarkingResolution": "CLOSED_M5" if m5_marks else "POSITION_EVENTS_PROXY",
+            "equityMarkingResolution": "CLOSED_M5" if last_mark_time is not None else "POSITION_EVENTS_PROXY",
             "m5FreshPriceCoveragePct": pricing_coverage,
             "m5StalePriceSnapshots": stale_m5_snapshots,
             "marginEventsAreObservationsOnly": True,
