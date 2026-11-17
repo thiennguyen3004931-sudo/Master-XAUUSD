@@ -826,9 +826,11 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
             "side": "BUY", "volume": 0.01, "slDistance": 6.8, "tpDistance": 16.0,
             "maxDailyLossPercent": 3.0,
         })
-        self.assertTrue(res1["ok"])
-        self.assertTrue(any("WARNING_DAILY_LOSS" in w for w in res1.get("riskWarnings", [])))
-        self.assertEqual(res1["riskMetrics"]["dailyRiskState"]["dailyRealizedLossUsd"], 124.0)
+        self.assertFalse(res1["ok"])
+        self.assertEqual(res1.get("status"), "BLOCKED_DAILY_LOSS_LIMIT")
+        self.assertEqual(mt5.sent, [])
+        self.assertFalse(res1.get("submitted"))
+        self.assertEqual(res1["dailyRiskState"]["dailyRealizedLossUsd"], 124.0)
 
         # Simulate a restart where broker deal history temporarily returns empty list:
         # Persisted daily state in .runtime/v6-daily-risk-state.json must still remember the breach warning!
@@ -839,9 +841,11 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
             "side": "BUY", "volume": 0.01, "slDistance": 6.8, "tpDistance": 16.0,
             "maxDailyLossPercent": 3.0,
         })
-        self.assertTrue(res2["ok"])
-        self.assertTrue(any("WARNING_DAILY_LOSS" in w for w in res2.get("riskWarnings", [])))
-        self.assertTrue(res2["riskMetrics"]["dailyRiskState"]["dailyLimitBreached"])
+        self.assertFalse(res2["ok"])
+        self.assertEqual(res2.get("status"), "BLOCKED_DAILY_LOSS_LIMIT")
+        self.assertEqual(mt5_after_restart.sent, [])
+        self.assertFalse(res2.get("submitted"))
+        self.assertTrue(res2["dailyRiskState"]["dailyLimitBreached"])
 
     def test_T25_quote_movement_pushing_sl_above_8_usd_blocks_at_execute_order(self):
         """T25 (Section 1.4 & 5): Quote thay đổi ngay trước order_send làm SL vượt 8 giá thì bị chặn (WAIT_PULLBACK)."""
