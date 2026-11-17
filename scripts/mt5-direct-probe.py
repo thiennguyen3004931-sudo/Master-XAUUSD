@@ -1999,7 +1999,9 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
             f"WARNING_PORTFOLIO_RISK: Tổng rủi ro danh mục ${total_portfolio_risk_usd:.2f} ({total_portfolio_risk_pct:.2f}% Equity) vượt ngưỡng cảnh báo {warn_total_pct:.2f}%"
         )
 
-    # Daily loss monitoring from MT5 deal history (warning & statistics only; never auto-blocks Fixed Lot)
+    # P0: New-order daily risk gate. Never submit an order if the daily
+    # broker history is unverified or the latched/projected loss cap is hit.
+    # This does not affect management of existing positions or their SL/TP.
     daily_check = compute_and_persist_daily_loss_state(
         mt5,
         account,
@@ -2010,11 +2012,17 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
         new_order_risk_usd=new_risk,
     )
     if not daily_check.get("ok"):
-        risk_warnings.append(f"WARNING_DAILY_HISTORY_UNAVAILABLE: {daily_check.get('reason')}")
-    elif daily_check.get("dailyLimitBreached") or daily_check.get("wouldExceedWithNewOrder"):
-        risk_warnings.append(
-            f"WARNING_DAILY_LOSS: Lỗ ngày (${daily_check.get('currentDailyLossUsd', 0):.2f} / dự kiến ${daily_check.get('projectedWorstCaseDailyLossUsd', 0):.2f}) vượt ngưỡng cảnh báo {daily_check.get('maxDailyLossPercent', 3.0):.2f}%"
-        )
+        return {
+            "ok": False, "submitted": False, "status": "BLOCKED_DAILY_HISTORY_UNVERIFIED",
+            "message": str(daily_check.get("reason") or "Daily loss state unavailable"),
+            "dailyRiskState": daily_check,
+        }
+    if daily_check.get("dailyLimitBreached") or daily_check.get("wouldExceedWithNewOrder"):
+        return {
+            "ok": False, "submitted": False, "status": "BLOCKED_DAILY_LOSS_LIMIT",
+            "message": "Daily loss limit breached or projected risk exceeds remaining budget",
+            "dailyRiskState": daily_check,
+        }
 
     risk_metrics = {
         "sizingMode": "FIXED_LOT",
