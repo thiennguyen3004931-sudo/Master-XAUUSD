@@ -21,7 +21,7 @@ def main():
             "demoVerified": False,
             "liveReady": False,
             "message": "Môi trường hiện tại không có thư viện/phần mềm Windows MetaTrader 5 Terminal. Không sử dụng kết quả SafeMockBroker để tuyên bố đã kiểm thử MT5 DEMO thật.",
-        }, ensure_ascii=False))
+        }, ensure_ascii=True))
         return 0
 
     if not mt5.initialize():
@@ -32,7 +32,7 @@ def main():
             "demoVerified": False,
             "liveReady": False,
             "message": "Không kết nối được MetaTrader 5 Terminal trên máy hiện tại.",
-        }, ensure_ascii=False))
+        }, ensure_ascii=True))
         return 0
 
     acct = mt5.account_info()
@@ -44,7 +44,7 @@ def main():
             "status": "MT5_ACCOUNT_INFO_UNAVAILABLE",
             "demoVerified": False,
             "liveReady": False,
-        }, ensure_ascii=False))
+        }, ensure_ascii=True))
         return 0
 
     real_const = int(getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2))
@@ -59,7 +59,7 @@ def main():
             "demoVerified": False,
             "liveReady": False,
             "message": "PHÁT HIỆN TÀI KHOẢN REAL — Ngừng ngay bộ kiểm thử tích hợp DEMO để bảo đảm an toàn tuyệt đối (không gửi lệnh thật).",
-        }, ensure_ascii=False))
+        }, ensure_ascii=True))
         return 0
 
     is_demo = int(getattr(acct, "trade_mode", -1)) == demo_const
@@ -71,7 +71,7 @@ def main():
         "server": str(acct.server),
         "demoVerified": is_demo,
         "liveReady": False,
-    }, ensure_ascii=False))
+    }, ensure_ascii=True))
     return 0
 
 if __name__ == "__main__":
