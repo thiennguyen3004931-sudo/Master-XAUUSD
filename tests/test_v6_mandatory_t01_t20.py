@@ -2312,6 +2312,33 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertEqual(sc["timelineSnapshots"][-1]["ts"], ts0 + 900_000)
         self.assertFalse(any(s["ts"] > ts0 + 900_000 for s in sc["timelineSnapshots"]))
 
+    def test_T65_future_only_m5_cannot_override_open_position_ending_equity(self):
+        """T65: Future-only M5 data is not a confirmed mark at the test end."""
+        ts0 = 1800300000000
+        open_trade = {
+            "ticket": 503001, "tsMs": ts0, "exitTsMs": ts0 + 600_000,
+            "entry": 4000.0, "exit": 4004.0, "sl": 3993.0, "tp": 4030.0,
+            "initialR": 7.0, "finalSl": 3993.0, "beReachedTs": 0,
+            "exitType": "OPEN_AT_END", "pts": 4.0, "netPts": 4.0,
+            "rMultiple": 4.0 / 7.0, "volume": 0.05, "marginUsd": 200.0,
+            "side": "BUY", "spreadPts": 0.0, "commissionPts": 0.0,
+            "slippagePts": 0.0, "isOpenAtEnd": True,
+        }
+        # Only a future candle, whose close occurs AFTER the dataset end.
+        # Its price must not be used for the reported floating P/L.
+        future_only_bars = [[4004.0, 6001.0, 4003.0, 6000.0, ts0 + 600_000]]
+        sc = engine._build_portfolio_scenario_comparison(
+            [], [open_trade], 0.05, 5000.0, 100.0,
+            market_m5_bars=future_only_bars, market_spread_pts=0.2,
+        )["scenarioWithoutDca"]
+        self.assertEqual(sc["equityMarkingResolution"], "POSITION_EVENTS_PROXY")
+        self.assertEqual(sc["m5FreshPriceCoveragePct"], 0.0)
+        self.assertEqual(sc["endingBalanceUsd"], 5000.0)
+        self.assertAlmostEqual(sc["unrealizedPnlUsd"], 20.0, places=2)
+        self.assertAlmostEqual(sc["endingEquityUsd"], 5020.0, places=2)
+        self.assertAlmostEqual(sc["timelineSnapshots"][-1]["equityUsd"], 5020.0, places=2)
+        self.assertEqual(sc["timelineSnapshots"][-1]["priceSource"], "POSITION_EVENT_PRICE_PROXY_UNVERIFIED")
+
     def test_T64_margin_breach_events_count_transitions_not_each_m5(self):
         """T64: A continuous multi-bar margin breach is ONE event, with separate breach snapshots."""
         ts0 = 1800200000000
