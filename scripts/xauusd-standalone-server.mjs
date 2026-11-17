@@ -304,11 +304,21 @@ export function getCanonicalLiveArmState(probeSnapshot = lastDirectProbeSnapshot
     };
   }
 
-  if (probeSnapshot && probeSnapshot.connected) {
+  // An ARM session is never sufficient without a currently connected,
+  // identity-verified broker snapshot. Missing/disconnected/stale probe data
+  // must fail closed instead of retaining LIVE authorization.
+  if (!probeSnapshot || probeSnapshot.connected !== true) {
+    disarmLiveSession("Mất hoặc thiếu xác nhận kết nối MT5 — tự động hủy quyền ARM");
+    return getCanonicalLiveArmState(null);
+  }
+  {
     const actualLogin = String(probeSnapshot.accountLogin || "").trim();
     const actualServer = String(probeSnapshot.server || "").trim();
+    const actualMode = String(probeSnapshot.accountMode || "").trim().toUpperCase().replace("REAL", "LIVE");
+    const configuredMode = String(currentAccountConfig.accountMode || "").trim().toUpperCase().replace("REAL", "LIVE");
     const sameActualServer = Boolean(actualServer) && serversMatch(actualServer, liveArmSessionState.server);
-    if ((actualLogin && actualLogin !== liveArmSessionState.accountLogin) || !sameActualServer) {
+    if (!actualLogin || actualLogin !== liveArmSessionState.accountLogin || !sameActualServer ||
+        !actualMode || (configuredMode && actualMode !== configuredMode)) {
       disarmLiveSession(`Tài khoản MT5 thực tế (#${actualLogin}) khác với tài khoản đã ARM (#${liveArmSessionState.accountLogin})`);
       return {
         liveArmed: false,
