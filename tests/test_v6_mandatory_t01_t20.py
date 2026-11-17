@@ -1891,15 +1891,27 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
 
         # Case C: DCA layer hits its own SL while base trade continues to TP
         m5_dca_sl, m15_dca_sl, h1_dca_sl, h4_dca_sl = _make_base_dataset()
-        # Base trade entered at 4009.38, reaches BE at bar 130 (SL moves to ~4012.63).
-        # Form a 3-bar M5 swing low at bar 133 with low=4015.0 so at bar 135 (close=4021.5, ask=4021.66),
-        # dca_sl = 4015.0 - 0.35 = 4014.65 (distance 7.01 in [6.0, 8.0]).
-        m5_dca_sl[132][2] = 4016.0; m5_dca_sl[132][3] = 4016.5
+        # Ensure all EIGHT confirmed M5 candles preceding the entry have a valid
+        # nearby structural low. The former fixture only raised bars 132-134;
+        # bars 127-131 still had lows near 4012 and correctly triggered WAIT_PULLBACK.
+        for idx in range(127, 138):
+            m5_dca_sl[idx][0] = 4017.0
+            m5_dca_sl[idx][1] = 4019.0
+            m5_dca_sl[idx][2] = 4016.0
+            m5_dca_sl[idx][3] = 4018.0
+        # Keep the one-R move, a confirmed swing low at 133, and valid OHLC
+        # throughout the setup. DCA at 135 has structural SL near 4014.65.
+        m5_dca_sl[130][1] = 4020.0; m5_dca_sl[130][3] = 4019.5
         m5_dca_sl[133][2] = 4015.0; m5_dca_sl[133][3] = 4016.2
-        m5_dca_sl[134][2] = 4016.0; m5_dca_sl[134][3] = 4018.0
+        m5_dca_sl[135][0] = 4020.0; m5_dca_sl[135][1] = 4022.0
+        m5_dca_sl[135][2] = 4019.0; m5_dca_sl[135][3] = 4021.5
+        m5_dca_sl[136][0] = 4021.0; m5_dca_sl[136][1] = 4022.0
+        m5_dca_sl[136][2] = 4019.0; m5_dca_sl[136][3] = 4020.0
+        m5_dca_sl[137][0] = 4020.0; m5_dca_sl[137][1] = 4021.0
+        m5_dca_sl[137][2] = 4018.0; m5_dca_sl[137][3] = 4019.0
         # Raise H1 swing high so TP is at 4042.0 (giving DCA at 4021.66 plenty of R:R >= 1.6)
         h1_dca_sl[-5][1] = 4042.0
-        # At bar 138, price dips to 4014.0 (hitting DCA SL 4014.65, while staying ABOVE base SL 4012.63!), then bar 150 hits TP!
+        # At bar 138, price dips to 4011.5, hitting the DCA SL; base SL remains nearer its original BE.
         m5_dca_sl[138][2] = 4011.50; m5_dca_sl[138][3] = 4016.0
         m5_dca_sl[150][1] = 4045.0; m5_dca_sl[150][3] = 4043.0
         bt_dca_sl = engine.run_historical_backtest_on_mt5(SafeMockBroker(trade_mode=0, equity=5000.0), "XAUUSD.G", {
