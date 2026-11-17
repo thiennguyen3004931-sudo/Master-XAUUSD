@@ -767,7 +767,7 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
           armed: true,
           confirmLive: true
         });
-        const armedBefore = getCanonicalLiveArmState().liveArmed;
+        const armedBefore = getCanonicalLiveArmState({ connected: true, accountLogin: 5201362, server: 'DBGMarkets-Live', accountMode: 'LIVE' }).liveArmed;
 
         // 2. If MT5 terminal switches to another account (#8888888), ARM is automatically revoked
         const armedAfterTerminalAccountSwitch = getCanonicalLiveArmState({
@@ -1322,7 +1322,7 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
           return { status: st, data: JSON.parse(out || '{}') };
         }
         await callApi('/api/v1/mt5/arm-live', { armed: true, confirmLive: true });
-        const armedBefore = getCanonicalLiveArmState().liveArmed;
+        const armedBefore = getCanonicalLiveArmState({ connected: true, accountLogin: 5201362, server: 'DBGMarkets-Live', accountMode: 'LIVE' }).liveArmed;
         const emRes = await callApi('/api/v1/mt5/emergency-stop', { sourceDevice: 'WEB' });
         const armedAfter = getCanonicalLiveArmState().liveArmed;
         console.log(JSON.stringify({ armedBefore, armedAfter, emStatus: emRes.status, paused: emRes.data.emergencyStop?.paused, mgmt: emRes.data.emergencyStop?.protectiveManagementActive }));
