@@ -1763,6 +1763,12 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         for req_k in ("triggerCondition", "entryTs", "entryPrice", "fixedDcaLot", "sl", "tp", "spreadPts", "commissionPts", "slippagePts", "marginUsd", "exitTs", "exitPrice", "netPnlUsd", "reconciledSimulated"):
             self.assertIn(req_k, dca_layers[0])
         self.assertEqual(dca_layers[0]["fixedDcaLot"], 0.02)
+        # M5 close confirms the DCA setup: the fill cannot be dated at that candle's open.
+        for layer in dca_layers:
+            self.assertEqual(layer["decisionM5CloseTs"], layer["decisionM5OpenTs"] + 300_000)
+            self.assertEqual(layer["entryTs"], layer["decisionM5CloseTs"])
+            self.assertGreater(layer["entryTs"], bt_dca["trades"][0]["beReachedTs"])
+            self.assertLessEqual(layer["closedM15Time"], layer["entryTs"])
         expected_with_dca = round(bt_dca["dcaComparison"]["withoutDcaNetPnlUsd"] + sum(t["dcaPnlUsd"] for t in bt_dca["trades"]), 2)
         self.assertAlmostEqual(bt_dca["dcaComparison"]["withPositiveDcaNetPnlUsd"], expected_with_dca, places=2)
 
@@ -1832,7 +1838,9 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertGreaterEqual(t_sell["dcaRejectedCounts"]["beforeBe"], 1)
         self.assertGreaterEqual(len(t_sell["dcaLayersSimulated"]), 1)
         for d_layer in t_sell["dcaLayersSimulated"]:
-            self.assertGreaterEqual(d_layer["entryTs"], t_sell["beReachedTs"] - 300000)
+            self.assertGreater(d_layer["entryTs"], t_sell["beReachedTs"])
+            self.assertEqual(d_layer["entryTs"], d_layer["decisionM5CloseTs"])
+            self.assertEqual(d_layer["decisionM5CloseTs"] - d_layer["decisionM5OpenTs"], 300_000)
             self.assertGreaterEqual(d_layer["initialR"], 6.0)
             self.assertLessEqual(d_layer["initialR"], 8.0)
             self.assertGreaterEqual(d_layer["netRewardRiskAtEntry"], 1.6)
