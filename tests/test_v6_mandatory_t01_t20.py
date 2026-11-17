@@ -2279,6 +2279,39 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertAlmostEqual(sell_dip["floatingPnlUsd"], -101.0, places=2)
         self.assertAlmostEqual(sell_dip["equityUsd"], 4899.0, places=2)
 
+    def test_T63_open_at_end_equity_uses_last_confirmed_m5_not_simulated_future(self):
+        """T63: Open positions remain unrealized at dataset end, with no future M5 leakage."""
+        ts0 = 1800100000000
+        open_trade = {
+            "ticket": 501001, "tsMs": ts0, "exitTsMs": ts0 + 900_000,
+            "entry": 4000.0, "exit": 4999.0, "sl": 3993.0, "tp": 4030.0,
+            "initialR": 7.0, "finalSl": 3993.0, "beReachedTs": 0,
+            "exitType": "OPEN_AT_END", "pts": 99.0, "netPts": 99.0,
+            "rMultiple": 14.0, "volume": 0.05, "marginUsd": 200.0,
+            "side": "BUY", "spreadPts": 0.0, "commissionPts": 0.0,
+            "slippagePts": 0.0, "isOpenAtEnd": True,
+        }
+        historical_bars = [
+            [4000.0, 4001.0, 3999.0, 4000.0, ts0 - 300_000],
+            [4000.0, 4000.5, 3989.5, 3990.0, ts0],
+            [3990.0, 4003.0, 3989.0, 4002.0, ts0 + 300_000],
+            [4002.0, 4005.0, 4001.0, 4004.0, ts0 + 600_000],
+            # This candle closes AFTER dataset end; it must not affect equity.
+            [4004.0, 6001.0, 4003.0, 6000.0, ts0 + 900_000],
+        ]
+        sc = engine._build_portfolio_scenario_comparison(
+            [], [open_trade], 0.05, 5000.0, 100.0,
+            market_m5_bars=historical_bars, market_spread_pts=0.2,
+        )["scenarioWithoutDca"]
+        self.assertEqual(sc["settledPositions"], 0)
+        self.assertEqual(sc["openAtEndPositions"], 1)
+        self.assertEqual(sc["endingBalanceUsd"], 5000.0)
+        self.assertAlmostEqual(sc["unrealizedPnlUsd"], 20.0, places=2)
+        self.assertAlmostEqual(sc["endingEquityUsd"], 5020.0, places=2)
+        self.assertEqual(sc["timelineSnapshots"][-1]["markBid"], 4004.0)
+        self.assertEqual(sc["timelineSnapshots"][-1]["ts"], ts0 + 900_000)
+        self.assertFalse(any(s["ts"] > ts0 + 900_000 for s in sc["timelineSnapshots"]))
+
     def test_T60_corrupted_config_on_startup_never_defaults_to_002_and_blocks_new_orders(self):
         """T60 (Section VI, Task 8 & Task 9): Simulated power-loss / corrupted config file marks config unverified, returns fixedLot=null (not 0.02), and blocks /api/v1/mt5/order until repaired."""
         node_verify = r"""
