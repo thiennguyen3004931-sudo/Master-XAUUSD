@@ -3199,6 +3199,8 @@ def _build_portfolio_scenario_comparison(
     usd_per_price_per_lot,
     margin_call_level_pct=100.0,
     stop_out_level_pct=50.0,
+    market_m5_bars=None,
+    market_spread_pts=0.16,
 ):
     """Section V (Task 6): Build chronological multi-position portfolio timelines for:
     - Scenario A (without DCA): Base positions only.
@@ -3305,7 +3307,32 @@ def _build_portfolio_scenario_comparison(
             event_price_map[p["entryTs"]] = p["entryPrice"]
             event_price_map[p["exitTs"]] = p["exitPrice"]
 
-        event_times = sorted({ts for p in positions for ts in (p["entryTs"], p["exitTs"])})
+        # Historical M5 OHLC rows are stamped at BAR OPEN. A closing Bid only becomes
+        # available at open_ts + 300_000; never use a future bar to value an earlier event.
+        # Optional input preserves the older event-proxy diagnostic for isolated tests.
+        m5_marks = []
+        for bar in (market_m5_bars or []):
+            try:
+                close_time = int(bar[4]) + 300_000
+                bid_close = float(bar[3])
+                if close_time > 0 and isfinite(bid_close) and bid_close > 0:
+                    m5_marks.append((close_time, bid_close))
+            except (IndexError, TypeError, ValueError):
+                continue
+        m5_marks.sort(key=lambda row: row[0])
+        trade_event_times = {ts for p in positions for ts in (p["entryTs"], p["exitTs"])}
+        if trade_event_times:
+            first_event, last_event = min(trade_event_times), max(trade_event_times)
+            m5_event_times = {ts for ts, _ in m5_marks if first_event <= ts <= last_event}
+        else:
+            m5_event_times = set()
+        event_times = sorted(trade_event_times | m5_event_times)
+        mark_index = 0
+        last_mark_time = None
+        last_mark_bid = None
+        fresh_m5_snapshots = 0
+        stale_m5_snapshots = 0
+        spread_for_marks = max(0.0, float(market_spread_pts or 0.0))
         balance = float(starting_balance)
         peak_balance = balance
         max_bal_dd_usd = 0.0
@@ -3319,6 +3346,9 @@ def _build_portfolio_scenario_comparison(
         timeline_snapshots = []
 
         for t_ev in event_times:
+            while mark_index < len(m5_marks) and m5_marks[mark_index][0] <= t_ev:
+                last_mark_time, last_mark_bid = m5_marks[mark_index]
+                mark_index += 1
             # 1) Settle positions closing at t_ev (only settled positions update Balance; open-at-end positions stay in unrealized/floating)
             for p in positions:
                 if p["exitTs"] == t_ev and not p.get("isOpenAtEnd", False):
@@ -3336,16 +3366,37 @@ def _build_portfolio_scenario_comparison(
             total_vol = round(sum(p["volume"] for p in open_now), 4)
             total_risk_usd = round(sum(p["initialR"] * p["volume"] * float(usd_per_price_per_lot) for p in open_now), 2)
 
-            # Mark-to-market Floating P/L at t_ev using the event price at t_ev
-            ref_px = event_price_map.get(t_ev)
+            # Revalue every still-open position on EVERY CLOSED M5 bar, not only
+            # at entry/exit. Use a common Bid (and Ask for SELL) across the portfolio.
+            # M5 closing prices cannot capture intrabar peaks; label this explicitly.
             floating_pnl = 0.0
-            if ref_px is not None:
+            mark_bid = last_mark_bid
+            mark_ask = (mark_bid + spread_for_marks) if mark_bid is not None else None
+            mark_age_ms = (t_ev - last_mark_time) if last_mark_time is not None else None
+            if mark_bid is not None:
+                if mark_age_ms is not None and mark_age_ms <= 900_000:
+                    price_source = "CLOSED_M5_BID_ASK"
+                    fresh_m5_snapshots += 1
+                else:
+                    price_source = "STALE_M5_BID_ASK_UNVERIFIED"
+                    stale_m5_snapshots += 1
                 for p_open in open_now:
-                    if p_open.get("isOpenAtEnd", False) and p_open["exitTs"] == t_ev:
-                        floating_pnl += p_open["unrealizedPnlUsd"]
-                    elif p_open["entryTs"] < t_ev:
-                        pts_f = (ref_px - p_open["entryPrice"]) if p_open["side"] == "BUY" else (p_open["entryPrice"] - ref_px)
-                        floating_pnl += pts_f * p_open["volume"] * float(usd_per_price_per_lot)
+                    close_px = mark_bid if p_open["side"] == "BUY" else mark_ask
+                    pts_f = (close_px - p_open["entryPrice"]) if p_open["side"] == "BUY" else (p_open["entryPrice"] - close_px)
+                    # Entry spread is represented by Bid/Ask; charge estimated
+                    # round-trip commission and slippage once, not the spread twice.
+                    pending_cost_usd = p_open["commissionUsd"] + p_open["slippageUsd"]
+                    floating_pnl += pts_f * p_open["volume"] * float(usd_per_price_per_lot) - pending_cost_usd
+            else:
+                price_source = "POSITION_EVENT_PRICE_PROXY_UNVERIFIED"
+                ref_px = event_price_map.get(t_ev)
+                if ref_px is not None:
+                    for p_open in open_now:
+                        if p_open.get("isOpenAtEnd", False) and p_open["exitTs"] == t_ev:
+                            floating_pnl += p_open["unrealizedPnlUsd"]
+                        elif p_open["entryTs"] < t_ev:
+                            pts_f = (ref_px - p_open["entryPrice"]) if p_open["side"] == "BUY" else (p_open["entryPrice"] - ref_px)
+                            floating_pnl += pts_f * p_open["volume"] * float(usd_per_price_per_lot)
             floating_pnl = round(floating_pnl, 2)
             equity = round(balance + floating_pnl, 2)
             free_margin = round(equity - used_margin, 2)
@@ -3372,6 +3423,10 @@ def _build_portfolio_scenario_comparison(
                 "openVolume": total_vol,
                 "openRiskUsd": total_risk_usd,
                 "openCount": len(open_now),
+                "priceSource": price_source,
+                "markBid": round(mark_bid, 5) if mark_bid is not None else None,
+                "markAsk": round(mark_ask, 5) if mark_ask is not None else None,
+                "markAgeMs": mark_age_ms,
             })
 
         settled_positions = [p for p in positions if not p.get("isOpenAtEnd", False)]
@@ -3394,6 +3449,14 @@ def _build_portfolio_scenario_comparison(
                 cur_streak = 0
 
         unrealized_end_usd = round(sum(p["unrealizedPnlUsd"] for p in open_end_positions), 2)
+        if m5_marks and timeline_snapshots:
+            # End-of-test floating and equity must agree with the same market-price
+            # snapshots used for the drawdown path, not stale trade-level estimates.
+            unrealized_end_usd = timeline_snapshots[-1]["floatingPnlUsd"]
+            ending_equity_usd = timeline_snapshots[-1]["equityUsd"]
+        else:
+            ending_equity_usd = round(balance + unrealized_end_usd, 2)
+        pricing_coverage = round(100.0 * fresh_m5_snapshots / len(timeline_snapshots), 2) if timeline_snapshots else 0.0
         return {
             "totalPositions": len(positions),
             "settledPositions": n_pos,
@@ -3412,7 +3475,7 @@ def _build_portfolio_scenario_comparison(
             "unrealizedPnlUsd": unrealized_end_usd,
             "netPnlUsd": round(balance - float(starting_balance), 2),
             "endingBalanceUsd": round(balance, 2),
-            "endingEquityUsd": round(balance + unrealized_end_usd, 2),
+            "endingEquityUsd": ending_equity_usd,
             "maxDrawdownUsd": max_bal_dd_usd,
             "maxDrawdownPct": round((max_bal_dd_usd / max(1.0, float(starting_balance))) * 100.0, 2),
             "maxEquityDrawdownUsd": max_eq_dd_usd,
@@ -3426,6 +3489,11 @@ def _build_portfolio_scenario_comparison(
             "dcaRejectedCounts": dca_rej_totals,
             "positions": positions,
             "timelineSnapshots": timeline_snapshots,
+            "equityMarkingResolution": "CLOSED_M5" if m5_marks else "POSITION_EVENTS_PROXY",
+            "m5FreshPriceCoveragePct": pricing_coverage,
+            "m5StalePriceSnapshots": stale_m5_snapshots,
+            "marginEventsAreObservationsOnly": True,
+            "stopOutLiquidationSimulated": False,
         }
 
     scen_a = _run_timeline(include_dca=False)
@@ -4096,7 +4164,10 @@ def run_historical_backtest_on_mt5(mt5, active_symbol, cfg):
         "requestedMode": eval_mode,
         "dcaEvaluationStatus": ("DCA_SIMULATED_WITH_FIXED_LOT" if bool(cfg_b.get("enablePositiveDca", False)) else "DCA_NOT_EVALUATED"),
         "dcaComparison": {
-            **_build_portfolio_scenario_comparison(closed_trades_out, open_positions_at_end, base_lot, starting_balance, usd_per_price_per_lot),
+            **_build_portfolio_scenario_comparison(
+                closed_trades_out, open_positions_at_end, base_lot, starting_balance,
+                usd_per_price_per_lot, market_m5_bars=m5_all, market_spread_pts=spread_pts,
+            ),
             "status": ("DCA_SIMULATED_WITH_FIXED_LOT" if bool(cfg_b.get("enablePositiveDca", False)) else "DCA_NOT_EVALUATED"),
         },
         "barsScanned": {"m5": len(m5_all), "m15": len(m15_all), "h1": len(h1_all), "h4": len(h4_all)},
