@@ -2222,6 +2222,63 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertAlmostEqual(snap_5000["balanceUsd"], 335.0, places=2)
         self.assertGreater(sc_b["maxEquityDrawdownUsd"], 0.0)
 
+    def test_T62_closed_m5_portfolio_equity_marks_intratrade_dip_and_bid_ask(self):
+        """T62: Drawdown must include CLOSED M5 market repricing between entry and exit, no event-price proxy."""
+        ts0 = 1800000000000
+        base = {
+            "ticket": 500001, "tsMs": ts0, "exitTsMs": ts0 + 900_000,
+            "entry": 4000.0, "exit": 4010.0, "sl": 3993.0, "tp": 4010.0,
+            "initialR": 7.0, "finalSl": 3993.0, "beReachedTs": 0,
+            "exitType": "TP_HIT", "pts": 10.0, "netPts": 10.0,
+            "rMultiple": 10.0 / 7.0, "volume": 0.05, "marginUsd": 200.0,
+            "side": "BUY", "spreadPts": 0.0, "commissionPts": 0.0, "slippagePts": 0.0,
+        }
+        # Candle timestamps are OPENS. The dip at ts0+300000 is only known
+        # once that candle closes; later recovery is not visible at this event.
+        bars = [
+            [4000.0, 4000.5, 3999.5, 4000.0, ts0 - 300_000],
+            [4000.0, 4001.0, 3974.0, 3975.0, ts0],
+            [3975.0, 4001.0, 3974.0, 4000.0, ts0 + 300_000],
+            [4000.0, 4011.0, 3999.0, 4010.0, ts0 + 600_000],
+        ]
+        event_only = engine._build_portfolio_scenario_comparison(
+            [base], [], 0.05, 5000.0, 100.0
+        )["scenarioWithoutDca"]
+        marked = engine._build_portfolio_scenario_comparison(
+            [base], [], 0.05, 5000.0, 100.0,
+            market_m5_bars=bars, market_spread_pts=0.20,
+        )["scenarioWithoutDca"]
+        dip = next(p for p in marked["timelineSnapshots"] if p["ts"] == ts0 + 300_000)
+        self.assertEqual(dip["priceSource"], "CLOSED_M5_BID_ASK")
+        self.assertEqual(dip["markBid"], 3975.0)
+        self.assertAlmostEqual(dip["floatingPnlUsd"], -125.0, places=2)
+        self.assertAlmostEqual(dip["equityUsd"], 4875.0, places=2)
+        self.assertEqual(marked["equityMarkingResolution"], "CLOSED_M5")
+        self.assertEqual(marked["m5FreshPriceCoveragePct"], 100.0)
+        self.assertGreaterEqual(marked["maxEquityDrawdownUsd"], 125.0)
+        self.assertGreater(marked["maxEquityDrawdownUsd"], event_only["maxEquityDrawdownUsd"])
+        self.assertEqual(marked["endingBalanceUsd"], 5050.0)
+        self.assertEqual(marked["endingEquityUsd"], 5050.0)
+        self.assertFalse(marked["stopOutLiquidationSimulated"])
+
+        # A SELL must mark to the contemporaneous ASK, not to the Bid or a
+        # different position's entry/exit price. A future bar may not leak back.
+        sell = {**base, "ticket": 500002, "side": "SELL", "exit": 3990.0,
+                "exitTsMs": ts0 + 600_000, "tp": 3990.0, "sl": 4007.0}
+        sell_bars = [
+            [4000.0, 4000.5, 3999.5, 4000.0, ts0 - 300_000],
+            [4000.0, 4021.0, 3999.8, 4020.0, ts0],
+            [4020.0, 4021.0, 3989.0, 3990.0, ts0 + 300_000],
+        ]
+        sell_marked = engine._build_portfolio_scenario_comparison(
+            [sell], [], 0.05, 5000.0, 100.0,
+            market_m5_bars=sell_bars, market_spread_pts=0.20,
+        )["scenarioWithoutDca"]
+        sell_dip = next(p for p in sell_marked["timelineSnapshots"] if p["ts"] == ts0 + 300_000)
+        self.assertAlmostEqual(sell_dip["markAsk"], 4020.20, places=2)
+        self.assertAlmostEqual(sell_dip["floatingPnlUsd"], -101.0, places=2)
+        self.assertAlmostEqual(sell_dip["equityUsd"], 4899.0, places=2)
+
     def test_T60_corrupted_config_on_startup_never_defaults_to_002_and_blocks_new_orders(self):
         """T60 (Section VI, Task 8 & Task 9): Simulated power-loss / corrupted config file marks config unverified, returns fixedLot=null (not 0.02), and blocks /api/v1/mt5/order until repaired."""
         node_verify = r"""
