@@ -1912,7 +1912,7 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertTrue(bt_dca_sl["ok"])
         t0 = bt_dca_sl["trades"][0]
         self.assertIn("TP", t0["exitType"])
-        self.assertEqual(len(t0["dcaLayersSimulated"]), 1)
+        self.assertEqual(len(t0["dcaLayersSimulated"]), 1, msg=f"DCA rejection evidence: {t0.get('dcaRejectedCounts')}; BE={t0.get('beReachedTs')}; exit={t0.get('exitTsMs')}")
         self.assertIn("SL", t0["dcaLayersSimulated"][0]["exitType"])
         self.assertLess(t0["dcaLayersSimulated"][0]["netPnlUsd"], 0.0)
         self.assertLess(t0["dcaLayersSimulated"][0]["exitTs"], t0["exitTsMs"])
