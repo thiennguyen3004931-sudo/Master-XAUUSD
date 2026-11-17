@@ -3343,6 +3343,10 @@ def _build_portfolio_scenario_comparison(
         min_margin_level_pct = 0.0
         margin_call_count = 0
         stop_out_count = 0
+        margin_call_breach_snapshots = 0
+        stop_out_breach_snapshots = 0
+        margin_call_active = False
+        stop_out_active = False
         timeline_snapshots = []
 
         for t_ev in event_times:
@@ -3403,10 +3407,22 @@ def _build_portfolio_scenario_comparison(
             margin_level = round((equity / used_margin) * 100.0, 2) if used_margin > 0 else 0.0
             if used_margin > 0:
                 min_margin_level_pct = margin_level if min_margin_level_pct == 0.0 else min(min_margin_level_pct, margin_level)
-                if margin_level <= float(margin_call_level_pct):
-                    margin_call_count += 1
-                if margin_level <= float(stop_out_level_pct):
-                    stop_out_count += 1
+                call_breached = margin_level <= float(margin_call_level_pct)
+                stop_breached = margin_level <= float(stop_out_level_pct)
+                if call_breached:
+                    margin_call_breach_snapshots += 1
+                    if not margin_call_active:
+                        margin_call_count += 1
+                if stop_breached:
+                    stop_out_breach_snapshots += 1
+                    if not stop_out_active:
+                        stop_out_count += 1
+                margin_call_active = call_breached
+                stop_out_active = stop_breached
+            else:
+                # A fully flat account ends any previous breach interval.
+                margin_call_active = False
+                stop_out_active = False
             max_used_margin = max(max_used_margin, used_margin)
             min_free_margin = min(min_free_margin, free_margin)
             peak_equity = max(peak_equity, equity)
@@ -3485,6 +3501,8 @@ def _build_portfolio_scenario_comparison(
             "minMarginLevelPct": min_margin_level_pct,
             "marginCallEvents": margin_call_count,
             "stopOutEvents": stop_out_count,
+            "marginCallBreachedSnapshots": margin_call_breach_snapshots,
+            "stopOutBreachedSnapshots": stop_out_breach_snapshots,
             "maxConsecutiveLosses": max_streak,
             "dcaRejectedCounts": dca_rej_totals,
             "positions": positions,
