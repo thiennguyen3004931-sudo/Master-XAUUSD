@@ -13,8 +13,8 @@ on:
       - "tests/test_v6_*.py"
       - "tests/test_v6_server_source.mjs"
       - ".github/workflows/v6-audit-regression-ci.yml"
+  # Run the full V6 gate on stacked feature branches too, not just PRs into main.
   pull_request:
-    branches: ["main"]
     paths:
       - "scripts/xauusd_v6_trade_rules.py"
       - "scripts/mt5-direct-probe.py"
