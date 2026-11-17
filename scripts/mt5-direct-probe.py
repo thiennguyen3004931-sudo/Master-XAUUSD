@@ -3810,16 +3810,16 @@ def run_historical_backtest_on_mt5(mt5, active_symbol, cfg):
             for fb_i, fb_bar in enumerate(sim_bars):
                 fb_open_ts = int(fb_bar[4])
                 fb_close_ts = fb_open_ts + 300_000
-                if fb_open_ts >= int(sim["exitTs"]):
+                if fb_close_ts >= int(sim["exitTs"]):
                     break
-                if fb_close_ts < be_reached_ts:
+                if fb_close_ts <= be_reached_ts:
                     dca_rej["beforeBe"] += 1
                     continue
-                open_dca_now = [l for l in dca_layers_out if int(l["exitTs"]) > fb_open_ts]
+                open_dca_now = [l for l in dca_layers_out if int(l["exitTs"]) > fb_close_ts]
                 if len(dca_layers_out) >= max_dca_layers_bt:
                     break
                 # Task 2.11 & Task 4.8: Every currently open prior DCA layer must also have reached BE before adding another layer!
-                if any(int(ol.get("beReachedTs") or 0) <= 0 or fb_close_ts < int(ol["beReachedTs"]) for ol in open_dca_now):
+                if any(int(ol.get("beReachedTs") or 0) <= 0 or fb_close_ts <= int(ol["beReachedTs"]) for ol in open_dca_now):
                     dca_rej["priorLayerNotAtBe"] += 1
                     continue
 
@@ -3917,7 +3917,7 @@ def run_historical_backtest_on_mt5(mt5, active_symbol, cfg):
                 if dca_margin is None:
                     dca_margin = (contract_size_bt * bt_dca_lot * cur_px_b) / float(bt_leverage) if bt_leverage > 0 else (needed_margin_bt * (bt_dca_lot / base_lot))
 
-                closed_dca_pnl_now = sum(float(l["netPnlUsd"]) for l in dca_layers_out if int(l["exitTs"]) <= fb_open_ts and not l.get("isOpenAtEnd", False))
+                closed_dca_pnl_now = sum(float(l["netPnlUsd"]) for l in dca_layers_out if int(l["exitTs"]) <= fb_close_ts and not l.get("isOpenAtEnd", False))
                 used_margin_now = needed_margin_bt + sum(float(l["marginUsd"]) for l in open_dca_now)
                 base_float_pts = (bid_b - float(sim["entry"])) if side == "BUY" else (float(sim["entry"]) - ask_b)
                 floating_usd_now = base_float_pts * base_lot * usd_per_price_per_lot
@@ -3939,7 +3939,7 @@ def run_historical_backtest_on_mt5(mt5, active_symbol, cfg):
                     "initialR": dca_initial_r,
                     "strategyMode": strat_used,
                     "setupScore": setup_score,
-                    "closedM15Time": fb_open_ts,
+                    "closedM15Time": fb_close_ts,
                 }
                 dca_sim = simulate_position_lifecycle(
                     dca_plan,
@@ -3969,7 +3969,9 @@ def run_historical_backtest_on_mt5(mt5, active_symbol, cfg):
                     "side": side,
                     "triggerCondition": f"Base at BE ({be_reached_ts}) & M15 ({cur_m15_dca_close_ts}) & +{fav_move:.2f} >= +{dca_step_bt:.2f} & M5 SL {dca_initial_r:.2f}",
                     "closedM15Time": cur_m15_dca_close_ts,
-                    "entryTs": fb_open_ts,
+                    "entryTs": fb_close_ts,
+                    "decisionM5OpenTs": fb_open_ts,
+                    "decisionM5CloseTs": fb_close_ts,
                     "entryPrice": round(cur_px_b, 2),
                     "fixedDcaLot": bt_dca_lot,
                     "initialSl": dca_sim["initialSl"],
