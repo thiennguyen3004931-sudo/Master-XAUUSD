@@ -109,3 +109,16 @@ test("runtime account and credential files must never be tracked in Git", () => 
 function requireGuardedGit() {
   return { execFileSync: gitExecFileSync };
 }
+
+test("P0 LIVE ARM is revoked when MT5 probe is missing, disconnected or identity incomplete", () => {
+  const gate = server.slice(
+    server.indexOf("export function getCanonicalLiveArmState("),
+    server.indexOf("const IS_MAIN_SERVER_PROCESS"),
+  );
+  assert.ok(gate.length > 0);
+  assert.match(gate, /!probeSnapshot \|\| probeSnapshot\.connected !== true/);
+  assert.match(gate, /disarmLiveSession\("Mất hoặc thiếu xác nhận kết nối MT5/);
+  assert.match(gate, /!actualLogin \|\| actualLogin !== liveArmSessionState\.accountLogin/);
+  assert.match(gate, /!actualMode \|\| \(configuredMode && actualMode !== configuredMode\)/);
+  assert.match(gate, /return getCanonicalLiveArmState\(null\)/);
+});
