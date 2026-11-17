@@ -1,0 +1,114 @@
+name: Customer Grant Admin Service CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/customer-grant-admin-service/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-product-access/**"
+      - "scripts/test-customer-grant-admin-service-boundary.mjs"
+      - ".github/workflows/customer-grant-admin-service-ci.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/customer-grant-admin-service/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-product-access/**"
+      - "scripts/test-customer-grant-admin-service-boundary.mjs"
+      - ".github/workflows/customer-grant-admin-service-ci.yml"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: customer-grant-admin-service-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  customer-grant-admin-service:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install locked dependencies with bounded retry
+        shell: powershell
+        run: |
+          $installOk = $false
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            pnpm install --frozen-lockfile
+            if ($LASTEXITCODE -eq 0) {
+              $installOk = $true
+              break
+            }
+            if ($attempt -lt 4) {
+              Write-Warning "pnpm install attempt $attempt failed; retrying"
+              Start-Sleep -Seconds 10
+            }
+          }
+          if (-not $installOk) {
+            throw "PNPM_INSTALL_FAILED_AFTER_RETRIES"
+          }
+
+      - name: Build copy protocol dependency
+        run: pnpm --filter @xauusd/copy-protocol build
+
+      - name: Build license service dependency
+        run: pnpm --filter @xauusd/license-service build
+
+      - name: Build customer product access dependency
+        run: pnpm --filter @xauusd/customer-product-access build
+
+      - name: Build customer grant registry dependency
+        run: pnpm --filter @xauusd/customer-grant-registry build
+
+      - name: Customer grant admin service tests
+        run: pnpm --filter @xauusd/customer-grant-admin-service test
+
+      - name: Customer grant admin service typecheck
+        run: pnpm --filter @xauusd/customer-grant-admin-service typecheck
+
+      - name: Customer grant admin service build
+        run: pnpm --filter @xauusd/customer-grant-admin-service build
+
+      - name: Persistent admin boundary contract
+        run: node --test scripts/test-customer-grant-admin-service-boundary.mjs
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Safety summary
+        shell: powershell
+        run: |
+          Write-Host 'CUSTOMER_GRANT_ADMIN_SERVICE=PASS'
+          Write-Host 'PUBLIC_CONTRACT_MUTATION=NONE'
+          Write-Host 'TRADING_LOGIC_MUTATION=NONE'
+          Write-Host 'PRODUCTION_MUTATION=NONE'
+          Write-Host 'BOT_RUNTIME_MUTATION=NONE'
+          Write-Host 'MODE_MUTATION=NONE'
+          Write-Host 'ARM_MUTATION=NONE'
+          Write-Host 'ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'
+          Write-Host 'LIVE_TEST_ORDER=NONE'
+          Write-Host 'PERSISTENCE_IMPLEMENTATION=PRIVATE_SOURCE_ONLY'
+          Write-Host 'PRODUCTION_PERSISTENCE_MUTATION=NONE'
+          Write-Host 'NETWORK_MUTATION=NONE'
+          Write-Host 'API_ROUTE_MUTATION=NONE'

@@ -1,0 +1,53 @@
+name: V6 Audit & Regression CI
+
+on:
+  push:
+    branches: ["main", "fix/v6-audit-remediation"]
+    paths:
+      - "scripts/xauusd_v6_trade_rules.py"
+      - "scripts/mt5-direct-probe.py"
+      - "scripts/xauusd-standalone-server.mjs"
+      - "scripts/test-v6-live-readiness-observer-source.mjs"
+      - "MO_WEB_TRUC_TIEP_KHONG_CAN_SERVER.html"
+      - "apps/web/public/standalone-ui.html"
+      - "tests/test_v6_*.py"
+      - "tests/test_v6_server_source.mjs"
+      - ".github/workflows/v6-audit-regression-ci.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "scripts/xauusd_v6_trade_rules.py"
+      - "scripts/mt5-direct-probe.py"
+      - "scripts/xauusd-standalone-server.mjs"
+      - "scripts/test-v6-live-readiness-observer-source.mjs"
+      - "MO_WEB_TRUC_TIEP_KHONG_CAN_SERVER.html"
+      - "apps/web/public/standalone-ui.html"
+      - "tests/test_v6_*.py"
+      - "tests/test_v6_server_source.mjs"
+      - ".github/workflows/v6-audit-regression-ci.yml"
+
+jobs:
+  v6-python-and-node-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run V6 Python Regression Suites (Rules, Execution & T01-T31+)
+        run: python3 -m unittest discover -s tests -p "test_v6_*.py" -v
+
+      - name: Run V6 Standalone Server & Auth/ARM Source Tests
+        run: node --test tests/test_v6_server_source.mjs
+
+      - name: Run V6 Live Readiness Safety Contract Check
+        run: node scripts/test-v6-live-readiness-observer-source.mjs

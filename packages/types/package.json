@@ -1,0 +1,31 @@
+{
+    "name":  "@xauusd/types",
+    "version":  "1.0.0",
+    "private":  true,
+    "type":  "module",
+    "main":  "./dist/index.cjs",
+    "types":  "./dist/index.d.ts",
+    "files":  [
+                  "dist"
+              ],
+    "exports":  {
+                    ".":  {
+                              "types":  "./dist/index.d.ts",
+                              "import":  "./dist/index.js",
+                              "require":  "./dist/index.cjs",
+                              "default":  "./dist/index.js"
+                          }
+                },
+    "scripts":  {
+                    "build":  "tsup src/index.ts --format cjs,esm --dts",
+                    "dev":  "tsup src/index.ts --format cjs,esm --dts --watch",
+                    "test":  "vitest run",
+                    "typecheck":  "tsc -p tsconfig.json --noEmit"
+                },
+    "devDependencies":  {
+                            "typescript":  "^5.9.3",
+                            "vitest":  "^2.1.9",
+                            "tsup":  "^8.5.1"
+                        },
+    "module":  "./dist/index.js"
+}

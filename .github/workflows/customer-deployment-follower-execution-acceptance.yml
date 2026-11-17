@@ -1,0 +1,281 @@
+name: Customer Deployment + Follower Execution Acceptance Read-Only
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/customer-agent/**"
+      - "packages/customer-follower-state/**"
+      - "packages/customer-mt5-broker-port-adapter/**"
+      - "packages/customer-follower-runtime/**"
+      - "packages/customer-mt5-binding-contract/**"
+      - "packages/copy-protocol/**"
+      - "packages/installation-proof/**"
+      - "customer-release/**"
+      - "scripts/customer-follower-execution-e2e.test.mjs"
+      - "scripts/customer-installation-identity-cli.test.mjs"
+      - "scripts/customer-mt5-follower-production-wiring-acceptance.test.mjs"
+      - "scripts/test-customer-deployment-follower-execution-boundary.mjs"
+      - "scripts/test-customer-mt5-broker-port-adapter-boundary.mjs"
+      - "scripts/test-customer-follower-runtime-boundary.mjs"
+      - "scripts/test-customer-mt5-binding-contract-boundary.mjs"
+      - "scripts/package-customer-agent-release.ps1"
+      - ".github/workflows/customer-deployment-follower-execution-acceptance.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/customer-agent/**"
+      - "packages/customer-follower-state/**"
+      - "packages/customer-mt5-broker-port-adapter/**"
+      - "packages/customer-follower-runtime/**"
+      - "packages/customer-mt5-binding-contract/**"
+      - "packages/copy-protocol/**"
+      - "packages/installation-proof/**"
+      - "customer-release/**"
+      - "scripts/customer-follower-execution-e2e.test.mjs"
+      - "scripts/customer-installation-identity-cli.test.mjs"
+      - "scripts/customer-mt5-follower-production-wiring-acceptance.test.mjs"
+      - "scripts/test-customer-deployment-follower-execution-boundary.mjs"
+      - "scripts/test-customer-mt5-broker-port-adapter-boundary.mjs"
+      - "scripts/test-customer-follower-runtime-boundary.mjs"
+      - "scripts/test-customer-mt5-binding-contract-boundary.mjs"
+      - "scripts/package-customer-agent-release.ps1"
+      - ".github/workflows/customer-deployment-follower-execution-acceptance.yml"
+      - "pnpm-lock.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: customer-deployment-follower-execution-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: core.longpaths
+  GIT_CONFIG_VALUE_0: "true"
+
+jobs:
+  customer-deployment-follower-execution:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install locked dependencies with bounded retry
+        shell: powershell
+        run: |
+          $ok = $false
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            pnpm install --frozen-lockfile --prefer-offline --network-concurrency=4 --fetch-retries=4 --fetch-retry-maxtimeout=30000
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            if ($attempt -lt 4) { Start-Sleep -Seconds 10 }
+          }
+          if (-not $ok) { throw "PNPM_INSTALL_FAILED_AFTER_RETRIES" }
+
+      - name: Build customer distribution dependencies
+        shell: powershell
+        run: |
+          pnpm --filter @xauusd/copy-protocol build
+          if ($LASTEXITCODE -ne 0) { throw "COPY_PROTOCOL_BUILD_FAILED" }
+          pnpm --filter @xauusd/installation-proof build
+          if ($LASTEXITCODE -ne 0) { throw "INSTALLATION_PROOF_BUILD_FAILED" }
+          pnpm --filter @xauusd/customer-agent build
+          if ($LASTEXITCODE -ne 0) { throw "CUSTOMER_AGENT_BUILD_FAILED" }
+          pnpm --filter @xauusd/customer-follower-state build
+          if ($LASTEXITCODE -ne 0) { throw "CUSTOMER_FOLLOWER_STATE_BUILD_FAILED" }
+          pnpm --filter @xauusd/mt5-broker... build
+          if ($LASTEXITCODE -ne 0) { throw "MT5_BROKER_DEPENDENCY_GRAPH_BUILD_FAILED" }
+          pnpm --filter @xauusd/customer-mt5-broker-port-adapter build
+          if ($LASTEXITCODE -ne 0) { throw "CUSTOMER_MT5_BROKER_PORT_ADAPTER_BUILD_FAILED" }
+          pnpm --filter @xauusd/customer-follower-runtime build
+          if ($LASTEXITCODE -ne 0) { throw "CUSTOMER_FOLLOWER_RUNTIME_BUILD_FAILED" }
+          pnpm --filter @xauusd/customer-mt5-binding-contract build
+          if ($LASTEXITCODE -ne 0) { throw "CUSTOMER_MT5_BINDING_CONTRACT_BUILD_FAILED" }
+
+      - name: Customer release Ed25519 attestation tamper regression
+        run: node --test scripts/security/customer-release-attestation.test.mjs
+
+      - name: Windows CurrentUser DPAPI foundation regression (synthetic memory only)
+        run: node --test scripts/customer-windows-dpapi-foundation.test.mjs
+
+      - name: Synthetic legacy PEM migration preservation and DPAPI verification (Windows only)
+        run: node --test scripts/customer-legacy-pem-migration.test.mjs
+
+      - name: Offline customer installation readiness fail-closed regression
+        run: node --test scripts/customer-offline-installation-readiness.test.mjs
+
+      - name: Offline customer readiness Windows positive and broad ACL synthetic regression
+        run: node --test scripts/customer-offline-readiness-positive-windows.test.mjs
+
+      - name: Windows customer key NTFS ACL conservative policy (synthetic SIDs only)
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-customer-key-ntfs-acl.ps1
+
+      - name: Customer agent unit tests
+        run: pnpm --filter @xauusd/customer-agent test
+
+      - name: Installation identity CLI preserves enrolled and partial identities
+        run: node --test scripts/customer-installation-identity-cli.test.mjs
+
+      - name: Customer agent typecheck
+        run: pnpm --filter @xauusd/customer-agent typecheck
+
+      - name: Customer follower state tests
+        run: pnpm --filter @xauusd/customer-follower-state test
+
+      - name: Customer follower state typecheck
+        run: pnpm --filter @xauusd/customer-follower-state typecheck
+
+      - name: Customer MT5 broker port adapter tests
+        run: pnpm --filter @xauusd/customer-mt5-broker-port-adapter test
+
+      - name: Customer MT5 broker port adapter typecheck
+        run: pnpm --filter @xauusd/customer-mt5-broker-port-adapter typecheck
+
+      - name: Customer MT5 broker port adapter boundary
+        run: node --test scripts/test-customer-mt5-broker-port-adapter-boundary.mjs
+
+      - name: Customer follower runtime tests
+        run: pnpm --filter @xauusd/customer-follower-runtime test
+
+      - name: Customer follower runtime typecheck
+        run: pnpm --filter @xauusd/customer-follower-runtime typecheck
+
+      - name: Customer follower runtime boundary
+        run: node --test scripts/test-customer-follower-runtime-boundary.mjs
+
+      - name: Customer MT5 binding contract tests
+        run: pnpm --filter @xauusd/customer-mt5-binding-contract test
+
+      - name: Customer MT5 binding contract typecheck
+        run: pnpm --filter @xauusd/customer-mt5-binding-contract typecheck
+
+      - name: Customer MT5 binding contract boundary
+        run: node --test scripts/test-customer-mt5-binding-contract-boundary.mjs
+
+      - name: Simulated follower execution E2E
+        run: node --test scripts/customer-follower-execution-e2e.test.mjs
+
+      - name: Distribution and execution boundary
+        run: node --test scripts/test-customer-deployment-follower-execution-boundary.mjs
+
+      - name: MT5 follower production wiring acceptance - simulated only
+        run: node --test scripts/customer-mt5-follower-production-wiring-acceptance.test.mjs
+
+      - name: Build customer release package
+        shell: powershell
+        run: .\scripts\package-customer-agent-release.ps1 -SkipBuild
+
+      - name: Verify packaged customer release
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = "artifacts/customer-agent-release/customer-agent-v1.zip"
+          if (-not (Test-Path $zip)) { throw "CUSTOMER_RELEASE_ZIP_MISSING" }
+          $verify = Join-Path $env:RUNNER_TEMP "customer-release-verify"
+          if (Test-Path $verify) { Remove-Item -Recurse -Force $verify }
+          Expand-Archive -Path $zip -DestinationPath $verify -Force
+          if (-not (Test-Path (Join-Path $verify "release-manifest.sha256"))) {
+            throw "CUSTOMER_RELEASE_MANIFEST_MISSING"
+          }
+          foreach ($required in @("README.md", "acceptance-record.template.md")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $verify $required) -PathType Leaf)) {
+              throw "CUSTOMER_RELEASE_REQUIRED_DOCUMENT_MISSING=$required"
+            }
+          }
+
+          $listed = @{}
+          foreach ($line in Get-Content -LiteralPath (Join-Path $verify "release-manifest.sha256") -Encoding UTF8) {
+            if ($line -notmatch '^([0-9a-f]{64})  ([^\\:\r\n]+)$') {
+              throw "CUSTOMER_RELEASE_MANIFEST_INVALID"
+            }
+            $expectedHash = $Matches[1]
+            $relative = $Matches[2]
+            if ($relative.StartsWith('/') -or $relative -match '(^|/)\.\.?(/|$)' -or $relative -eq 'release-manifest.sha256') {
+              throw "CUSTOMER_RELEASE_MANIFEST_PATH_INVALID=$relative"
+            }
+            if ($listed.ContainsKey($relative)) { throw "CUSTOMER_RELEASE_MANIFEST_DUPLICATE=$relative" }
+            $filePath = Join-Path $verify $relative
+            if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+              throw "CUSTOMER_RELEASE_MANIFEST_FILE_MISSING=$relative"
+            }
+            $actualHash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -ne $expectedHash) { throw "CUSTOMER_RELEASE_CHECKSUM_MISMATCH=$relative" }
+            $listed[$relative] = $true
+          }
+          if ($listed.Count -eq 0) { throw "CUSTOMER_RELEASE_MANIFEST_EMPTY" }
+          foreach ($file in Get-ChildItem -LiteralPath $verify -Recurse -File) {
+            $relative = $file.FullName.Substring($verify.Length).TrimStart([char[]]"\/").Replace("\", "/")
+            if ($relative -ne 'release-manifest.sha256' -and -not $listed.ContainsKey($relative)) {
+              throw "CUSTOMER_RELEASE_UNLISTED_FILE=$relative"
+            }
+          }
+          Write-Host "CUSTOMER_RELEASE_VERIFIED_MANIFEST_ENTRIES=$($listed.Count)"
+
+          $forbidden = Get-ChildItem -Path $verify -Recurse -File | Where-Object {
+            $_.FullName -match "[\\/]src[\\/]" -or
+            $_.Name -match "\.pem$|\.key$|^\.env"
+          }
+          if ($forbidden) {
+            throw "CUSTOMER_RELEASE_FORBIDDEN_FILE=" + ($forbidden.FullName -join ",")
+          }
+          Push-Location $verify
+          node -e "import('@xauusd/customer-agent').then(m=>{if(!m.CustomerAgent||!m.CustomerFollowerExecutionAdapter)process.exit(2)})"
+          if ($LASTEXITCODE -ne 0) { throw "CUSTOMER_RELEASE_IMPORT_FAILED" }
+          Pop-Location
+
+      - name: Upload customer release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xauusd-customer-agent-v1
+          path: artifacts/customer-agent-release/customer-agent-v1.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Acceptance summary
+        shell: powershell
+        run: |
+          Write-Host 'CUSTOMER_DEPLOYMENT_PACKAGE=PASS'
+          Write-Host 'CUSTOMER_HANDOFF_TEMPLATE=PASS'
+          Write-Host 'CUSTOMER_RELEASE_CHECKSUMS=PASS'
+          Write-Host 'FOLLOWER_EXECUTION_BOUNDARY=PASS'
+          Write-Host 'SIGNED_COPY_COMMAND_TO_EXECUTOR_E2E=PASS'
+          Write-Host 'MT5_FOLLOWER_PRODUCTION_WIRING_SIMULATED=PASS'
+          Write-Host 'FOLLOWER_DURABLE_OWNERSHIP_RESTART=PASS'
+          Write-Host 'CUSTOMER_MT5_BROKER_PORT_ADAPTER_SIMULATED=PASS'
+          Write-Host 'CUSTOMER_FOLLOWER_RUNTIME_COMPOSITION_SIMULATED=PASS'
+          Write-Host 'CUSTOMER_MT5_BINDING_CONTRACT=PASS'
+          Write-Host 'REAL_CUSTOMER_MT5_BRIDGE_BINDING=NONE'
+          Write-Host 'STRICT_EXECUTION_PAYLOAD=PASS'
+          Write-Host 'MASTER_SOURCE_INCLUDED=NO'
+          Write-Host 'PRIVATE_KEY_INCLUDED=NO'
+          Write-Host 'API_TOKEN_INCLUDED=NO'
+          Write-Host 'MT5_BRIDGE_INCLUDED=NO'
+          Write-Host 'MT5_LIVE_EXECUTION=NONE'
+          Write-Host 'ARM_MUTATION=NONE'
+          Write-Host 'ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'

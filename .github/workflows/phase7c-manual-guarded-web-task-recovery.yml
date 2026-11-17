@@ -1,0 +1,54 @@
+name: Phase7C Manual Guarded Web Task Recovery
+
+# Explicitly operator-triggered ONLY. Changes Web Scheduled Task state once.
+on:
+  workflow_dispatch:
+    inputs:
+      operator_approved_web_task_start:
+        description: 'I authorize START of canonical Web Task only, while PAUSE/DISARMED/flat'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase7c-manual-web-task-recovery
+  cancel-in-progress: false
+
+jobs:
+  restart-canonical-web-task:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.operator_approved_web_task_start == true }}
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 8
+    steps:
+      - name: Checkout source only, no production Git change
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Assert guarded recovery static safety contract
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-phase7c-manual-web-task-recovery-source.ps1
+
+      - name: Operator-approved, fresh fail-closed precheck then one Web Task start
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/ops/recover-phase7c-web-task-guarded-local.ps1 -ExpectedSource '196a8420ff008548773f5d385cf5785a9f84e297' -OperatorConfirmation 'START_WEB_TASK_ONLY_PAUSE_DISARMED' -TimeoutSeconds 120
+          if ($LASTEXITCODE -ne 0) { throw 'GUARDED_WEB_RECOVERY_NOT_ACCEPTED' }
+
+      - name: Declare no trading or ARM mutations
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host 'WEB_RECOVERY_CHANGE=CANONICAL_WEB_TASK_START_ONLY'
+          Write-Host 'BOT_MODE_MUTATION=NONE'
+          Write-Host 'ARM_MUTATION=NONE'
+          Write-Host 'BROKER_HTTP_MUTATION=NONE'
+          Write-Host 'MT5_ORDER_MUTATION=NONE'
+          Write-Host 'PRODUCTION_GIT_MUTATION=NONE'
+          Write-Host 'AUTO_REENABLE=NONE'

@@ -1,0 +1,118 @@
+name: Phase7C SEMI Auto Trend Management CI
+
+on:
+  push:
+    branches:
+      - feat/semi-auto-trend-management-20260909
+      - fix/phase7b-api-runtime-dependency-build-20260910
+      - fix/semi-production-adoption-runner-20260910
+    paths:
+      - "packages/strategy-engine/src/models/BotMode.ts"
+      - "packages/execution-engine/src/**"
+      - "apps/api/src/services/phase7c-bot-mode.service.ts"
+      - "apps/api/src/services/phase7c-bot-mode.semi.test.ts"
+      - "apps/api/src/services/phase7c-semi-*.ts"
+      - "apps/api/src/services/trend-management-*.ts"
+      - "apps/api/src/services/sqlite-management-state.repository.ts"
+      - "apps/api/src/services/controlled-management-executor.service.ts"
+      - "apps/api/src/services/phase7c-strategy-entry-conditions.service.ts"
+      - "apps/api/src/services/phase7c-decision-monitor.service.ts"
+      - "apps/api/src/services/phase7c-ui-contract.service.ts"
+      - "apps/web/src/**"
+      - "scripts/phase7c-semi-*.mjs"
+      - "scripts/phase7c-decision-monitor.test.mjs"
+      - "scripts/run-phase7b-api-runtime-local.ps1"
+      - "scripts/test-phase7b-api-runtime-dependency-build-source.mjs"
+      - "scripts/run-phase7c-trend-controller.mjs"
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - ".github/workflows/phase7c-semi-auto-trend-management-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/strategy-engine/src/models/BotMode.ts"
+      - "packages/execution-engine/src/**"
+      - "apps/api/src/services/phase7c-bot-mode.service.ts"
+      - "apps/api/src/services/phase7c-bot-mode.semi.test.ts"
+      - "apps/api/src/services/phase7c-semi-*.ts"
+      - "apps/api/src/services/trend-management-*.ts"
+      - "apps/api/src/services/sqlite-management-state.repository.ts"
+      - "apps/api/src/services/controlled-management-executor.service.ts"
+      - "apps/api/src/services/phase7c-strategy-entry-conditions.service.ts"
+      - "apps/api/src/services/phase7c-decision-monitor.service.ts"
+      - "apps/api/src/services/phase7c-ui-contract.service.ts"
+      - "apps/web/src/**"
+      - "scripts/phase7c-semi-*.mjs"
+      - "scripts/phase7c-decision-monitor.test.mjs"
+      - "scripts/run-phase7b-api-runtime-local.ps1"
+      - "scripts/test-phase7b-api-runtime-dependency-build-source.mjs"
+      - "scripts/run-phase7c-trend-controller.mjs"
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - ".github/workflows/phase7c-semi-auto-trend-management-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  semi-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Phase7B API runtime dependency build source contract
+        run: node scripts/test-phase7b-api-runtime-dependency-build-source.mjs
+
+      - name: SEMI bot-mode contract
+        run: pnpm --filter @xauusd/api exec tsx src/services/phase7c-bot-mode.semi.test.ts
+
+      - name: SEMI manual adoption contract
+        run: pnpm --filter @xauusd/api exec tsx src/services/phase7c-semi-manual-adoption.test.ts
+
+      - name: SEMI durable adoption ledger contract
+        run: pnpm --filter @xauusd/api exec tsx src/services/phase7c-semi-adoption-state.test.ts
+
+      - name: SEMI broker protection executor contract
+        run: pnpm --filter @xauusd/api exec tsx src/services/phase7c-semi-protection-executor.test.ts
+
+      - name: SEMI Trend management-only plan contract
+        run: pnpm --filter @xauusd/api exec tsx src/services/phase7c-semi-trend-management-plan.test.ts
+
+      - name: Build API and dependencies for runtime integration tests
+        run: pnpm build --filter=@xauusd/api...
+
+      - name: SEMI production adoption and Trend handoff wiring
+        run: node --test scripts/phase7c-semi-trend-production-wiring.test.mjs
+
+      - name: SEMI post-entry Trend management regression contract
+        run: node --test scripts/phase7c-semi-post-entry-contract.test.mjs
+
+      - name: SEMI entry boundary and decision semantics
+        run: pnpm --filter @xauusd/api exec tsx --test ../../scripts/phase7c-semi-entry-boundary-decision.test.mjs
+
+      - name: Decision Monitor regression
+        run: pnpm --filter @xauusd/api exec tsx --test ../../scripts/phase7c-decision-monitor.test.mjs
+
+      - name: SEMI Trend runtime ownership handoff contract
+        run: pnpm --filter @xauusd/api exec tsx src/services/trend-management-runtime.semi.test.ts
+
+      - name: SEMI management-only execution-engine typecheck
+        run: pnpm --filter @xauusd/execution-engine typecheck
+
+      - name: Build Web and dependencies
+        run: pnpm build --filter=@xauusd/web...

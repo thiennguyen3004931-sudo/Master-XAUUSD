@@ -1,0 +1,107 @@
+name: Phase7C Runtime Source Generation Reconciliation CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-runtime-source-generation-reconciliation
+      - fix/phase7c-generation-reconciliation-failclosed-resume
+      - fix/phase7c-resume-reuse-exact-broker
+      - feat/phase7c-production-source-transition-rollout
+      - fix/phase7c-stop-before-disarm
+    paths:
+      - 'scripts/reconcile-phase7c-runtime-source-generation-local.ps1'
+      - 'scripts/resume-phase7c-runtime-source-generation-reconciliation-local.ps1'
+      - 'scripts/continue-phase7c-runtime-source-generation-reconciliation-exact-broker-local.ps1'
+      - 'scripts/rollout-phase7c-production-source-transition-local.ps1'
+      - 'scripts/test-phase7c-runtime-source-generation-reconciliation-source.ps1'
+      - 'scripts/test-phase7c-production-source-transition-rollout-source.ps1'
+      - 'scripts/test-phase7c-stop-before-disarm-source.ps1'
+      - '.github/workflows/phase7c-runtime-source-generation-reconciliation-ci.yml'
+  pull_request:
+    paths:
+      - 'scripts/reconcile-phase7c-runtime-source-generation-local.ps1'
+      - 'scripts/resume-phase7c-runtime-source-generation-reconciliation-local.ps1'
+      - 'scripts/continue-phase7c-runtime-source-generation-reconciliation-exact-broker-local.ps1'
+      - 'scripts/rollout-phase7c-production-source-transition-local.ps1'
+      - 'scripts/test-phase7c-runtime-source-generation-reconciliation-source.ps1'
+      - 'scripts/test-phase7c-production-source-transition-rollout-source.ps1'
+      - 'scripts/test-phase7c-stop-before-disarm-source.ps1'
+      - '.github/workflows/phase7c-runtime-source-generation-reconciliation-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Runtime generation reconciliation contract - PowerShell 7
+        shell: pwsh
+        run: ./scripts/test-phase7c-runtime-source-generation-reconciliation-source.ps1
+
+      - name: Runtime generation reconciliation contract - Windows PowerShell 5.1
+        shell: powershell
+        run: ./scripts/test-phase7c-runtime-source-generation-reconciliation-source.ps1
+
+      - name: Production source transition rollout contract - PowerShell 7
+        shell: pwsh
+        run: ./scripts/test-phase7c-production-source-transition-rollout-source.ps1
+
+      - name: Production source transition rollout contract - Windows PowerShell 5.1
+        shell: powershell
+        run: ./scripts/test-phase7c-production-source-transition-rollout-source.ps1
+
+      - name: STOP before DISARM contract - PowerShell 7
+        shell: pwsh
+        run: ./scripts/test-phase7c-stop-before-disarm-source.ps1
+
+      - name: STOP before DISARM contract - Windows PowerShell 5.1
+        shell: powershell
+        run: ./scripts/test-phase7c-stop-before-disarm-source.ps1
+
+      - name: Parse helpers - PowerShell 7
+        shell: pwsh
+        run: |
+          $files = @(
+            './scripts/reconcile-phase7c-runtime-source-generation-local.ps1',
+            './scripts/resume-phase7c-runtime-source-generation-reconciliation-local.ps1',
+            './scripts/continue-phase7c-runtime-source-generation-reconciliation-exact-broker-local.ps1'
+          )
+          if (Test-Path './scripts/rollout-phase7c-production-source-transition-local.ps1') {
+            $files += './scripts/rollout-phase7c-production-source-transition-local.ps1'
+          }
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -ne 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+          }
+
+      - name: Parse helpers - Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $files = @(
+            './scripts/reconcile-phase7c-runtime-source-generation-local.ps1',
+            './scripts/resume-phase7c-runtime-source-generation-reconciliation-local.ps1',
+            './scripts/continue-phase7c-runtime-source-generation-reconciliation-exact-broker-local.ps1'
+          )
+          if (Test-Path './scripts/rollout-phase7c-production-source-transition-local.ps1') {
+            $files += './scripts/rollout-phase7c-production-source-transition-local.ps1'
+          }
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -ne 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+          }

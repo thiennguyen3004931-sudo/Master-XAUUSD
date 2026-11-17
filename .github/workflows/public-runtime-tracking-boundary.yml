@@ -1,0 +1,32 @@
+name: Public Runtime Tracking Boundary
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  no-tracked-runtime:
+    name: no-tracked-local-runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Reject tracked local runtime and missing ignore rule
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git check-ignore -q .runtime/telegram-config.json; then
+            echo "::error::Runtime directory is not ignored"
+            exit 1
+          fi
+          if [ -n "$(git ls-files -- .runtime)" ]; then
+            echo "::error::Local runtime files are tracked by Git; remove them before merging"
+            exit 1
+          fi
+          git diff --check
+          echo "PUBLIC_RUNTIME_TRACKING_BOUNDARY=PASS"

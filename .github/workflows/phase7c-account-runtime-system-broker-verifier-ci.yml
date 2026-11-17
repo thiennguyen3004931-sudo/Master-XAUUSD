@@ -1,0 +1,35 @@
+name: Phase7C Account Runtime System Broker Verifier CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-account-runtime-verifier-system-broker
+    paths:
+      - "scripts/verify-phase7c-account-runtime-local.ps1"
+      - "scripts/test-phase7c-account-runtime-system-broker-verifier-local.ps1"
+      - ".github/workflows/phase7c-account-runtime-system-broker-verifier-ci.yml"
+      - "docs/superpowers/plans/2026-08-28-phase7c-account-runtime-system-broker-verifier.md"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/verify-phase7c-account-runtime-local.ps1"
+      - "scripts/test-phase7c-account-runtime-system-broker-verifier-local.ps1"
+      - ".github/workflows/phase7c-account-runtime-system-broker-verifier-ci.yml"
+      - "docs/superpowers/plans/2026-08-28-phase7c-account-runtime-system-broker-verifier.md"
+
+permissions:
+  contents: read
+
+jobs:
+  verifier-contract-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: System broker verifier contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-account-runtime-system-broker-verifier-local.ps1
+      - name: System broker verifier contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-account-runtime-system-broker-verifier-local.ps1

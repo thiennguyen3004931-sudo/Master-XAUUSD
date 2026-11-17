@@ -1,0 +1,105 @@
+name: Phase7C LIVE Runtime Inspector Full CI
+# Scope-full source verification only. Never connects to a real MT5 runtime.
+
+on:
+  push:
+    branches:
+      - feat/phase7c-live-runtime-inspector
+    paths:
+      - "scripts/inspect-phase7c-live-runtime-local.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-source.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-synthetic.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-mock.py"
+      - ".github/workflows/phase7c-live-runtime-inspector-ci.yml"
+      - ".github/workflows/phase7c-live-runtime-inspector-full-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/inspect-phase7c-live-runtime-local.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-source.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-synthetic.ps1"
+      - "scripts/test-phase7c-live-runtime-inspector-mock.py"
+      - ".github/workflows/phase7c-live-runtime-inspector-ci.yml"
+      - ".github/workflows/phase7c-live-runtime-inspector-full-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-source-safety:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: New inspector source contract on PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-runtime-inspector-source.ps1
+
+      - name: New inspector source contract on Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-live-runtime-inspector-source.ps1
+
+      - name: New inspector synthetic observation-only contract
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-runtime-inspector-synthetic.ps1
+
+      - name: Legacy read-only probe source regression on PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-live-readonly-probe-source.ps1
+
+      - name: Legacy read-only probe source regression on Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-live-readonly-probe-source.ps1
+
+      - name: Diff hygiene
+        shell: bash
+        run: git diff --check HEAD^
+
+  dependency-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Bridge Python test dependencies
+        run: grep -v '^MetaTrader5==' packages/mt5-broker/bridge/requirements.txt | python -m pip install -r /dev/stdin
+
+      - name: MT5 broker build typecheck and tests
+        env:
+          PYTHONPATH: bridge
+        run: |
+          pnpm --filter @xauusd/mt5-broker... build
+          pnpm --filter @xauusd/mt5-broker typecheck
+          pnpm --filter @xauusd/mt5-broker test
+          pnpm --filter @xauusd/mt5-broker bridge:compile
+          pnpm --filter @xauusd/mt5-broker bridge:test
+
+      - name: API dependency graph build
+        run: pnpm --filter @xauusd/api... build
+
+      - name: Python mock syntax
+        run: python -m py_compile scripts/test-phase7c-live-runtime-inspector-mock.py
+
+      - name: Diff hygiene
+        run: git diff --check

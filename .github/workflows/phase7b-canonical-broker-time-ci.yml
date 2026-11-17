@@ -1,0 +1,50 @@
+name: Phase7B Canonical Broker Time CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/api/src/routes/phase7b-demo.route.ts"
+      - "packages/mt5-broker/bridge/mt5_bridge/broker_time.py"
+      - "packages/mt5-broker/bridge/mt5_bridge/app.py"
+      - "packages/mt5-broker/bridge/mt5_bridge/historical_candles.py"
+      - "packages/mt5-broker/bridge/tests/test_historical_candle_time.py"
+      - "packages/mt5-broker/bridge/.env.phase7b-live.example"
+      - "scripts/phase7b-canonical-broker-time.test.mjs"
+      - ".github/workflows/phase7b-canonical-broker-time-ci.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify canonical broker-time contract
+        run: node scripts/phase7b-canonical-broker-time.test.mjs
+
+      - name: Verify historical candle broker-time range contract
+        run: python -m unittest packages/mt5-broker/bridge/tests/test_historical_candle_time.py
+
+      - name: Build API
+        run: pnpm --filter @xauusd/api... build

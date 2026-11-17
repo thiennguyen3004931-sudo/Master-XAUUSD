@@ -1,0 +1,106 @@
+name: Customer Revoke New-PC Recovery E2E Read-Only
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/customer-runtime-session/**"
+      - "packages/customer-agent/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-product-access/**"
+      - "packages/installation-proof/**"
+      - "packages/license-service/**"
+      - "scripts/customer-handoff-installation-migration-e2e.test.mjs"
+      - ".github/workflows/customer-installation-migration-e2e.yml"
+      - ".github/workflows/customer-handoff-production-acceptance-readonly.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/customer-runtime-session/**"
+      - "packages/customer-agent/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-product-access/**"
+      - "packages/installation-proof/**"
+      - "packages/license-service/**"
+      - "scripts/customer-handoff-installation-migration-e2e.test.mjs"
+      - ".github/workflows/customer-installation-migration-e2e.yml"
+      - ".github/workflows/customer-handoff-production-acceptance-readonly.yml"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: customer-installation-migration-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  installation-migration-e2e:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build migration E2E chain
+        shell: powershell
+        run: |
+          $packages = @(
+            "@xauusd/copy-protocol",
+            "@xauusd/license-service",
+            "@xauusd/installation-proof",
+            "@xauusd/customer-product-access",
+            "@xauusd/customer-grant-registry",
+            "@xauusd/customer-activation",
+            "@xauusd/customer-runtime-gate",
+            "@xauusd/customer-runtime-session",
+            "@xauusd/customer-agent"
+          )
+          foreach ($package in $packages) {
+            pnpm --filter $package build
+            if ($LASTEXITCODE -ne 0) { throw "BUILD_FAILED=$package" }
+          }
+
+      - name: Runtime migration regression
+        run: pnpm --filter @xauusd/customer-runtime-session test
+
+      - name: Revoke new-PC recovery simulated E2E
+        run: node --test scripts/customer-handoff-installation-migration-e2e.test.mjs
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Migration acceptance summary
+        shell: powershell
+        run: |
+          Write-Host 'CUSTOMER_INSTALLATION_MIGRATION_E2E=PASS'
+          Write-Host 'OLD_LICENSE_REVOKED=PASS'
+          Write-Host 'OLD_GRANT_REVOKED=PASS'
+          Write-Host 'OLD_CHALLENGE_INVALIDATED=PASS'
+          Write-Host 'NEW_INSTALLATION_ACTIVATION=PASS'
+          Write-Host 'OLD_INSTALLATION_AUTO_FAIL_CLOSED=PASS'
+          Write-Host 'RESTART_RECOVERY=PASS'
+          Write-Host 'MIGRATION_AUDIT=PASS'
+          Write-Host 'TRANSACTIONAL_ROLLBACK=PASS'
+          Write-Host 'MT5_MUTATION=NONE'
+          Write-Host 'ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'
+          Write-Host 'LIVE_TEST_ORDER=NONE'

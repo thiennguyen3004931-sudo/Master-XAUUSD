@@ -1,0 +1,76 @@
+name: Phase7C HOLD M15 Dedupe CI
+# Source-only regression: no runtime, ARM, mode, bridge, executor, or order mutation.
+
+on:
+  push:
+    branches:
+      - feat/phase7c-hold-m15-dedupe
+      - fix/phase7c-telegram-compact-hold-m5-structure-sl
+    paths:
+      - scripts/test-phase7c-hold-m15-dedupe-contract.mjs
+      - scripts/test-phase7c-hold-telegram-dedupe-contract.mjs
+      - scripts/test-phase7c-hold-journal-canonical-contract.mjs
+      - scripts/test-phase7c-telegram-compact-hold-m5-structure-sl-contract.mjs
+      - scripts/test-phase7c-m5-structural-trailing-contract.mjs
+      - scripts/phase7c-trade-notifier-synthetic.test.mjs
+      - scripts/phase7c-sideway-production-telegram-sample.test.mjs
+      - scripts/run-phase7b-telegram-notifier.mjs
+      - scripts/phase7c-m5-structural-trailing-source-adapter.mjs
+      - scripts/run-phase7b-demo-controller.ts
+      - scripts/run-phase7c-sideway-controller.mjs
+      - scripts/phase7c-hold-observability.mjs
+      - .github/workflows/phase7c-hold-m15-dedupe-ci.yml
+  pull_request:
+    paths:
+      - scripts/test-phase7c-hold-m15-dedupe-contract.mjs
+      - scripts/test-phase7c-hold-telegram-dedupe-contract.mjs
+      - scripts/test-phase7c-hold-journal-canonical-contract.mjs
+      - scripts/test-phase7c-telegram-compact-hold-m5-structure-sl-contract.mjs
+      - scripts/test-phase7c-m5-structural-trailing-contract.mjs
+      - scripts/phase7c-trade-notifier-synthetic.test.mjs
+      - scripts/phase7c-sideway-production-telegram-sample.test.mjs
+      - scripts/run-phase7b-telegram-notifier.mjs
+      - scripts/phase7c-m5-structural-trailing-source-adapter.mjs
+      - scripts/run-phase7b-demo-controller.ts
+      - scripts/run-phase7c-sideway-controller.mjs
+      - scripts/phase7c-hold-observability.mjs
+      - .github/workflows/phase7c-hold-m15-dedupe-ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: hold-m15-dedupe-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax checks
+        run: |
+          node --check ./scripts/run-phase7b-telegram-notifier.mjs
+          node --check ./scripts/run-phase7c-sideway-controller.mjs
+          node --check ./scripts/phase7c-m5-structural-trailing-source-adapter.mjs
+
+      - name: HOLD and M5 structure contracts
+        run: |
+          node --test ./scripts/test-phase7c-hold-m15-dedupe-contract.mjs
+          node --test ./scripts/test-phase7c-hold-telegram-dedupe-contract.mjs
+          node --test ./scripts/test-phase7c-hold-journal-canonical-contract.mjs
+          node --test ./scripts/test-phase7c-telegram-compact-hold-m5-structure-sl-contract.mjs
+          node ./scripts/test-phase7c-m5-structural-trailing-contract.mjs
+
+      - name: Notifier lifecycle regressions
+        run: |
+          node --test ./scripts/phase7c-trade-notifier-synthetic.test.mjs
+          node --test ./scripts/phase7c-sideway-production-telegram-sample.test.mjs
+
+      - name: Diff hygiene
+        run: git diff --check

@@ -1,0 +1,160 @@
+name: Phase7C Strategy Entry Conditions CI
+
+on:
+  push:
+    branches:
+      - feat/phase7c-strategy-entry-conditions
+      - fix/phase7c-strategy-entry-conditions-ci-complete
+    paths:
+      - "apps/api/src/routes/phase7c.route.ts"
+      - "apps/api/src/services/phase7c-strategy-entry-conditions.service.ts"
+      - "apps/api/src/services/phase7c-decision-monitor.service.ts"
+      - "apps/web/src/pages/Phase7CAccountRiskPage.tsx"
+      - "apps/web/src/ui/Phase7CStrategyEntryConditionsCard.tsx"
+      - "scripts/phase7c-strategy-entry-conditions.mjs"
+      - "scripts/phase7c-strategy-entry-conditions.d.mts"
+      - "scripts/phase7c-decision-audit.mjs"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - "scripts/test-phase7c-strategy-entry-conditions-*.mjs"
+      - "scripts/test-phase7c-trend-strategy-entry-conditions-contract.mjs"
+      - "scripts/test-phase7c-sideway-strategy-entry-conditions-contract.mjs"
+      - "scripts/test-phase7c-trend-entry-recovery-contract.mjs"
+      - "scripts/test-phase7c-sideway-recovery-management-contract.mjs"
+      - ".github/workflows/phase7c-strategy-entry-conditions-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/api/src/routes/phase7c.route.ts"
+      - "apps/api/src/services/phase7c-strategy-entry-conditions.service.ts"
+      - "apps/api/src/services/phase7c-decision-monitor.service.ts"
+      - "apps/web/src/pages/Phase7CAccountRiskPage.tsx"
+      - "apps/web/src/ui/Phase7CStrategyEntryConditionsCard.tsx"
+      - "scripts/phase7c-strategy-entry-conditions.mjs"
+      - "scripts/phase7c-strategy-entry-conditions.d.mts"
+      - "scripts/phase7c-decision-audit.mjs"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - "scripts/test-phase7c-strategy-entry-conditions-*.mjs"
+      - "scripts/test-phase7c-trend-strategy-entry-conditions-contract.mjs"
+      - "scripts/test-phase7c-sideway-strategy-entry-conditions-contract.mjs"
+      - "scripts/test-phase7c-trend-entry-recovery-contract.mjs"
+      - "scripts/test-phase7c-sideway-recovery-management-contract.mjs"
+      - ".github/workflows/phase7c-strategy-entry-conditions-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-full-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Prebuild API dependency graph for compiled contract imports
+        run: pnpm --filter @xauusd/api... build
+      - name: Core strategy entry condition contract
+        run: node scripts/test-phase7c-strategy-entry-conditions-core-contract.mjs
+      - name: Strategy entry condition API persistence and route contract
+        run: node scripts/test-phase7c-strategy-entry-conditions-api-contract.mjs
+      - name: Strategy entry condition audit and monitor contract
+        run: node scripts/test-phase7c-strategy-entry-conditions-audit-contract.mjs
+      - name: Trend strategy entry condition contract
+        run: node scripts/test-phase7c-trend-strategy-entry-conditions-contract.mjs
+      - name: Sideway strategy entry condition contract
+        run: node scripts/test-phase7c-sideway-strategy-entry-conditions-contract.mjs
+      - name: Web strategy entry condition contract
+        run: node scripts/test-phase7c-strategy-entry-conditions-web-contract.mjs
+      - name: Trend entry recovery contract
+        run: node scripts/test-phase7c-trend-entry-recovery-contract.mjs
+      - name: Sideway recovery management contract
+        run: node scripts/test-phase7c-sideway-recovery-management-contract.mjs
+      - name: Build risk-engine dependency graph
+        run: pnpm --filter @xauusd/risk-engine... build
+      - name: Typecheck risk-engine
+        run: pnpm --filter @xauusd/risk-engine typecheck
+      - name: Test risk-engine
+        run: pnpm --filter @xauusd/risk-engine test
+      - name: Build strategy-engine dependency graph
+        run: pnpm --filter @xauusd/strategy-engine... build
+      - name: Typecheck strategy-engine
+        run: pnpm --filter @xauusd/strategy-engine typecheck
+      - name: Test strategy-engine
+        run: pnpm --filter @xauusd/strategy-engine test
+      - name: Sideway logic regression
+        run: node --test scripts/phase7c-sideway-logic.test.mjs
+      - name: Sideway execution guard regression
+        run: node --test scripts/phase7c-sideway-execution-guards.test.mjs
+      - name: Execution lock regression
+        run: node --test scripts/phase7c-execution-lock.test.mjs
+      - name: Forward report regression
+        run: node --test scripts/phase7c-forward-report.test.mjs
+      - name: Lot settings regression
+        run: node --test scripts/phase7c-lot-settings.test.mjs
+      - name: Lot range 1.20 regression
+        run: node --test scripts/phase7c-lot-range-120.test.mjs
+      - name: Decision audit regression
+        run: node --test scripts/phase7c-decision-audit.test.mjs
+      - name: LIVE entry diagnostics regression
+        run: pnpm --dir apps/api exec tsx ../../scripts/phase7b-live-entry-diagnostics.test.mjs
+      - name: Decision monitor regression
+        run: pnpm --dir apps/api exec tsx ../../scripts/phase7c-decision-monitor.test.mjs
+      - name: Trend mode gate regression
+        run: node --test scripts/phase7c-trend-mode-gate.test.mjs
+      - name: Trend entry block classification regression
+        run: node --test scripts/phase7c-trend-entry-block-classification.test.mjs
+      - name: Web autostart contract
+        run: node --test scripts/phase7c-web-autostart-contract.test.mjs
+      - name: Web mutation single transport regression
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/test-phase7c-web-mutation-single-transport.ts
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+      - name: Production Node API runtime contract
+        run: node scripts/test-phase7b-api-node-production-runtime.mjs
+      - name: Build Web Control Center
+        run: pnpm --filter @xauusd/web... build
+
+  windows-source-safety:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Lifecycle broker source contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-system-lifecycle-broker-source.ps1
+      - name: Lifecycle broker source contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-system-lifecycle-broker-source.ps1
+      - name: Lifecycle broker protocol and safety contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-system-lifecycle-broker-contract.ps1
+      - name: Lifecycle broker protocol and safety contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-system-lifecycle-broker-contract.ps1
+      - name: Lifecycle broker ACL source contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-lifecycle-broker-acl-source.ps1
+      - name: Lifecycle broker ACL source contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-lifecycle-broker-acl-source.ps1
+      - name: Web LIVE ARM and DEMO AUTO source contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-web-live-arm-demo-auto-source.ps1
+      - name: Web LIVE ARM and DEMO AUTO source contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-web-live-arm-demo-auto-source.ps1

@@ -1,0 +1,59 @@
+name: Customer Operator Token Ledger Fast CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/customer-runtime-session/src/operator-token-ledger.ts"
+      - "packages/customer-runtime-session/src/operator-token-ledger.test.ts"
+      - "packages/customer-runtime-session/src/operator-ledger-gateway-e2e.test.ts"
+      - "packages/customer-runtime-session/src/api-token-lifecycle.ts"
+      - "packages/customer-runtime-session/src/index.ts"
+      - "scripts/test-customer-runtime-session-boundary.mjs"
+      - ".github/workflows/customer-operator-token-ledger-fast-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/customer-runtime-session/src/operator-token-ledger.ts"
+      - "packages/customer-runtime-session/src/operator-token-ledger.test.ts"
+      - "scripts/test-customer-runtime-session-boundary.mjs"
+      - ".github/workflows/customer-operator-token-ledger-fast-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: customer-operator-token-ledger-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-operator-token-tests:
+    name: Synthetic token ledger / rotation / typecheck (not release approval)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build upstream security packages
+        run: |
+          set -e
+          for pkg in @xauusd/copy-protocol @xauusd/license-service @xauusd/installation-proof @xauusd/customer-product-access @xauusd/customer-grant-registry @xauusd/customer-activation @xauusd/customer-runtime-gate @xauusd/customer-runtime-session; do
+            pnpm --filter "$pkg" build
+          done
+      - name: Test isolated ledger and dynamic token authenticator
+        run: pnpm --filter @xauusd/customer-runtime-session exec vitest run src/operator-token-ledger.test.ts src/operator-ledger-gateway-e2e.test.ts src/api-token-lifecycle.test.ts src/api-gateway.test.ts
+      - name: Typecheck
+        run: pnpm --filter @xauusd/customer-runtime-session typecheck
+      - name: Verify strict runtime security boundary
+        run: node --test scripts/test-customer-runtime-session-boundary.mjs
+      - name: Diff hygiene
+        run: git diff --check

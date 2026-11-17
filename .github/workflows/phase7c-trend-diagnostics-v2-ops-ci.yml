@@ -1,0 +1,44 @@
+name: Phase7C Trend Diagnostics V2 Ops CI
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/get-phase7c-trend-diagnostics-v2.mjs'
+      - 'scripts/restore-phase7c-executor-task-local.ps1'
+      - 'scripts/test-phase7c-telegram-notifications-local.ps1'
+      - 'scripts/test-phase7c-trend-diagnostics-v2-ops-source.ps1'
+      - 'scripts/register-phase7c-executor-task-local.ps1'
+      - 'scripts/run-phase7b-demo-controller.ts'
+      - '.github/workflows/phase7c-trend-diagnostics-v2-ops-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  source-safety-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Parse diagnostics JavaScript
+        shell: pwsh
+        run: node --check .\scripts\get-phase7c-trend-diagnostics-v2.mjs
+      - name: Parse PowerShell scripts - PowerShell 7
+        shell: pwsh
+        run: |
+          $files = @(
+            '.\scripts\restore-phase7c-executor-task-local.ps1',
+            '.\scripts\test-phase7c-telegram-notifications-local.ps1',
+            '.\scripts\test-phase7c-trend-diagnostics-v2-ops-source.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error; exit 1 }
+          }
+      - name: Source safety assertions - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-trend-diagnostics-v2-ops-source.ps1
+      - name: Source safety assertions - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-trend-diagnostics-v2-ops-source.ps1

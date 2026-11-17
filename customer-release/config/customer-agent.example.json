@@ -1,0 +1,12 @@
+{
+  "apiBaseUrl": "https://YOUR-GATEWAY-HOST",
+  "productMode": "SELF_MANAGED",
+  "grantId": "REPLACE_WITH_GRANT_ID",
+  "mt5Login": 12345678,
+  "brokerServer": "Broker-Real",
+  "installationIdFile": "keys/installation-id.txt",
+  "installationPublicKeyFile": "keys/installation-public.txt",
+  "installationPrivateKeyFile": "keys/installation-private.dpapi",
+  "requestedBotMode": "PAUSE",
+  "requestedSizingMode": "EQUITY_RATIO"
+}

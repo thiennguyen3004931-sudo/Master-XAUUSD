@@ -1,0 +1,48 @@
+name: Phase7C Task Repair Readiness Preflight CI
+
+on:
+  pull_request:
+    paths:
+      - "scripts/preflight-phase7c-task-repair-readiness-local.ps1"
+      - "tests/test_phase7c_task_repair_readiness_preflight_contract.py"
+      - ".github/workflows/phase7c-task-repair-readiness-preflight-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/preflight-phase7c-task-repair-readiness-local.ps1"
+      - "tests/test_phase7c_task_repair_readiness_preflight_contract.py"
+      - ".github/workflows/phase7c-task-repair-readiness-preflight-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  task-repair-readiness-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Read-only readiness contract
+        run: python tests/test_phase7c_task_repair_readiness_preflight_contract.py
+      - name: Parse readiness probe - PowerShell 7
+        if: ${{ hashFiles('scripts/preflight-phase7c-task-repair-readiness-local.ps1') != '' }}
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\preflight-phase7c-task-repair-readiness-local.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if (@($errors).Count -ne 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+      - name: Parse readiness probe - Windows PowerShell 5.1
+        if: ${{ hashFiles('scripts/preflight-phase7c-task-repair-readiness-local.ps1') != '' }}
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\preflight-phase7c-task-repair-readiness-local.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if (@($errors).Count -ne 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }

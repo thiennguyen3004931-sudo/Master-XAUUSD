@@ -1,0 +1,34 @@
+{
+    "name":  "@xauusd/api",
+    "version":  "1.0.0",
+    "private":  true,
+    "type":  "module",
+    "scripts":  {
+                    "dev":  "tsx watch src/index.ts",
+                    "build":  "tsc && node scripts/rewrite-relative-esm-imports.mjs",
+                    "start":  "node dist/index.js"
+                },
+    "dependencies":  {
+                         "@xauusd/ai-engine":  "workspace:*",
+                         "@xauusd/analysis-engine":  "workspace:*",
+                         "@xauusd/backtest-engine":  "workspace:*",
+                         "@xauusd/indicators":  "workspace:*",
+                         "@xauusd/market-data":  "workspace:*",
+                         "@xauusd/risk-engine":  "workspace:*",
+                         "@xauusd/signal-engine":  "workspace:*",
+                         "@xauusd/strategy-engine":  "workspace:*",
+                         "@xauusd/types":  "workspace:*",
+                         "cors":  "^2.8.5",
+                         "dotenv":  "^17.2.1",
+                         "express":  "^4.21.2",
+                         "@xauusd/mt5-broker":  "workspace:*",
+                         "@xauusd/execution-engine":  "workspace:*"
+                     },
+    "devDependencies":  {
+                            "@types/cors":  "^2.8.19",
+                            "@types/express":  "^5.0.3",
+                            "@types/node":  "^24.3.0",
+                            "tsx":  "^4.20.5",
+                            "typescript":  "^5.9.2"
+                        }
+}

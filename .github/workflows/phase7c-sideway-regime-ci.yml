@@ -1,0 +1,291 @@
+name: Phase7C Sideway Regime CI
+
+on:
+  push:
+    branches:
+      - phase7c-sideway-supply-demand
+    paths:
+      - "packages/strategy-engine/**"
+      - "apps/api/src/routes/phase7c.route.ts"
+      - "apps/api/src/services/phase7c-*.ts"
+      - "apps/web/src/api.ts"
+      - "apps/web/src/phase7c-types.ts"
+      - "apps/web/src/pages/Phase7CControlCenterPage.tsx"
+      - "apps/web/src/ui/DashboardLayout.tsx"
+      - "packages/mt5-broker/**"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/run-phase7c-*.mjs"
+      - "scripts/run-phase7c-*.ps1"
+      - "scripts/report-phase7c-*.mjs"
+      - "scripts/report-phase7c-*.ps1"
+      - "scripts/phase7c-sideway-*.mjs"
+      - "scripts/phase7c-lot-settings.test.mjs"
+      - "scripts/phase7c-decision-audit*.mjs"
+      - "scripts/phase7c-decision-monitor.test.mjs"
+      - "scripts/phase7c-web-autostart-contract.test.mjs"
+      - "scripts/install-phase7c-mt5-decision-panel-local.ps1"
+      - "scripts/install-phase7c-desktop-control-local.ps1"
+      - "scripts/open-phase7c-control-center-local.ps1"
+      - "mt5/**"
+      - "scripts/run-phase7b-web-autostart.ps1"
+      - "scripts/run-phase7b-demo-web-local.ps1"
+      - "scripts/phase7c-execution-lock*.mjs"
+      - "scripts/phase7c-forward-report*.mjs"
+      - "scripts/apply-phase7c-broker-clock-fix-local.mjs"
+      - "scripts/verify-phase7c-broker-clock-local.mjs"
+      - "scripts/activate-phase7c-local.ps1"
+      - "scripts/stop-phase7c-executors-local.ps1"
+      - "scripts/upgrade-phase7c-executor-task-local.ps1"
+      - "scripts/upgrade-phase7c-executor-task-startup-local.ps1"
+      - "scripts/verify-phase7c-executors-local.ps1"
+      - "scripts/verify-phase7c-executor-startup-task-local.ps1"
+      - "scripts/install-phase7c-forward-dashboard-task-local.ps1"
+      - "scripts/verify-phase7c-forward-dashboard-task-local.ps1"
+      - ".github/workflows/phase7c-sideway-regime-ci.yml"
+  pull_request:
+    paths:
+      - "packages/strategy-engine/**"
+      - "apps/api/src/routes/phase7c.route.ts"
+      - "apps/api/src/services/phase7c-*.ts"
+      - "apps/web/src/api.ts"
+      - "apps/web/src/phase7c-types.ts"
+      - "apps/web/src/pages/Phase7CControlCenterPage.tsx"
+      - "apps/web/src/ui/DashboardLayout.tsx"
+      - "packages/mt5-broker/**"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/run-phase7c-*.mjs"
+      - "scripts/run-phase7c-*.ps1"
+      - "scripts/report-phase7c-*.mjs"
+      - "scripts/report-phase7c-*.ps1"
+      - "scripts/phase7c-sideway-*.mjs"
+      - "scripts/phase7c-lot-settings.test.mjs"
+      - "scripts/phase7c-decision-audit*.mjs"
+      - "scripts/phase7c-decision-monitor.test.mjs"
+      - "scripts/phase7c-web-autostart-contract.test.mjs"
+      - "scripts/install-phase7c-mt5-decision-panel-local.ps1"
+      - "scripts/install-phase7c-desktop-control-local.ps1"
+      - "scripts/open-phase7c-control-center-local.ps1"
+      - "mt5/**"
+      - "scripts/run-phase7b-web-autostart.ps1"
+      - "scripts/run-phase7b-demo-web-local.ps1"
+      - "scripts/phase7c-execution-lock*.mjs"
+      - "scripts/phase7c-forward-report*.mjs"
+      - "scripts/apply-phase7c-broker-clock-fix-local.mjs"
+      - "scripts/verify-phase7c-broker-clock-local.mjs"
+      - "scripts/activate-phase7c-local.ps1"
+      - "scripts/stop-phase7c-executors-local.ps1"
+      - "scripts/upgrade-phase7c-executor-task-local.ps1"
+      - "scripts/upgrade-phase7c-executor-task-startup-local.ps1"
+      - "scripts/verify-phase7c-executors-local.ps1"
+      - "scripts/verify-phase7c-executor-startup-task-local.ps1"
+      - "scripts/install-phase7c-forward-dashboard-task-local.ps1"
+      - "scripts/verify-phase7c-forward-dashboard-task-local.ps1"
+      - ".github/workflows/phase7c-sideway-regime-ci.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test MT5 Bridge reconnect safety
+        working-directory: packages/mt5-broker/bridge
+        run: |
+          python -m pip install "pydantic>=2.12,<3"
+          python -m compileall -q mt5_bridge tests
+          python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Build strategy-engine dependency graph
+        run: pnpm --filter @xauusd/strategy-engine... build
+
+      - name: Typecheck strategy-engine
+        run: pnpm --filter @xauusd/strategy-engine typecheck
+
+      - name: Test strategy-engine
+        run: pnpm --filter @xauusd/strategy-engine test
+
+      - name: Test Phase7C execution logic
+        run: |
+          node --test scripts/phase7c-sideway-logic.test.mjs
+          node --test scripts/phase7c-sideway-execution-guards.test.mjs
+          node --test scripts/phase7c-execution-lock.test.mjs
+          node --test scripts/phase7c-forward-report.test.mjs
+
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+
+      - name: Test Phase7C lot settings
+        run: |
+          node --test scripts/phase7c-lot-settings.test.mjs
+          node --test scripts/phase7c-decision-audit.test.mjs
+          node --import ./apps/api/node_modules/tsx/dist/loader.mjs --test scripts/phase7c-decision-monitor.test.mjs
+          node --test scripts/phase7c-web-autostart-contract.test.mjs
+
+      - name: Build Phase7C web
+        run: pnpm --filter @xauusd/web... build
+
+      - name: Validate legacy Trend ESM transform
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const ts = require("typescript");
+          const source = fs.readFileSync("scripts/run-phase7b-demo-controller.ts", "utf8");
+          const transformed = ts.transpileModule(source, {
+            fileName: "run-phase7b-demo-controller.ts",
+            reportDiagnostics: true,
+            compilerOptions: {
+              target: ts.ScriptTarget.ES2022,
+              module: ts.ModuleKind.ESNext,
+              moduleResolution: ts.ModuleResolutionKind.Bundler,
+              verbatimModuleSyntax: false,
+            },
+          });
+          const errors = (transformed.diagnostics || []).filter(
+            (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+          );
+          if (errors.length) {
+            for (const diagnostic of errors) {
+              console.error(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "));
+            }
+            process.exit(1);
+          }
+          fs.writeFileSync(".phase7c-trend-legacy-ci.mjs", transformed.outputText, "utf8");
+          NODE
+          node --check .phase7c-trend-legacy-ci.mjs
+          rm -f .phase7c-trend-legacy-ci.mjs
+
+      - name: Parse Phase7C Node controllers
+        shell: bash
+        run: |
+          node --check scripts/run-phase7c-telegram-mode-controller.mjs
+          node --check scripts/run-phase7c-regime-notifier.mjs
+          node --check scripts/run-phase7c-auto-journal.mjs
+          node --check scripts/run-phase7c-forward-dashboard.mjs
+          node --check scripts/run-phase7c-trend-controller.mjs
+          node --check scripts/phase7c-sideway-logic.mjs
+          node --check scripts/phase7c-sideway-execution-guards.mjs
+          node --check scripts/phase7c-execution-lock.mjs
+          node --check scripts/phase7c-forward-report-utils.mjs
+          node --check scripts/phase7c-decision-audit.mjs
+          node --check scripts/report-phase7c-forward.mjs
+          node --check scripts/run-phase7c-sideway-controller.mjs
+          node --check scripts/run-phase7c-sideway-locked.mjs
+          node --check scripts/apply-phase7c-broker-clock-fix-local.mjs
+          node --check scripts/verify-phase7c-broker-clock-local.mjs
+
+      - name: Dry-run broker clock controller patch
+        shell: bash
+        run: |
+          node scripts/apply-phase7c-broker-clock-fix-local.mjs
+          rm -rf .phase7c-broker-clock-ci
+          mkdir -p .phase7c-broker-clock-ci/scripts
+          cp scripts/run-phase7b-demo-controller.ts .phase7c-broker-clock-ci/scripts/
+          cp scripts/run-phase7c-sideway-controller.mjs .phase7c-broker-clock-ci/scripts/
+          PHASE7C_BROKER_CLOCK_PATCH_ROOT="$PWD/.phase7c-broker-clock-ci" \
+            node scripts/apply-phase7c-broker-clock-fix-local.mjs --apply
+          node --check .phase7c-broker-clock-ci/scripts/run-phase7c-sideway-controller.mjs
+          grep -q 'const now = Number(quote.timestamp);' .phase7c-broker-clock-ci/scripts/run-phase7b-demo-controller.ts
+          grep -q 'managed.partialActivatedAt = Number(quote.timestamp);' .phase7c-broker-clock-ci/scripts/run-phase7b-demo-controller.ts
+          grep -q 'brokerClockOffsetMs' .phase7c-broker-clock-ci/scripts/run-phase7c-sideway-controller.mjs
+          rm -rf .phase7c-broker-clock-ci
+
+      - name: Parse Phase7C PowerShell launchers
+        shell: pwsh
+        run: |
+          $files = @(
+            "scripts/run-phase7c-telegram-mode-controller-local.ps1",
+            "scripts/run-phase7c-regime-notifier-local.ps1",
+            "scripts/run-phase7c-auto-journal-local.ps1",
+            "scripts/run-phase7c-forward-dashboard-local.ps1",
+            "scripts/run-phase7c-forward-dashboard-task-runner-local.ps1",
+            "scripts/run-phase7c-forward-report-refresh-local.ps1",
+            "scripts/run-phase7c-executor-task-runner-local.ps1",
+            "scripts/report-phase7c-forward-local.ps1",
+            "scripts/run-phase7c-trend-controller-local.ps1",
+            "scripts/run-phase7c-sideway-controller-local.ps1",
+            "scripts/run-phase7b-api-runtime-local.ps1",
+            "scripts/run-phase7b-web-autostart.ps1",
+            "scripts/run-phase7b-demo-web-local.ps1",
+            "scripts/run-phase7c-executors-local.ps1",
+            "scripts/stop-phase7c-executors-local.ps1",
+            "scripts/activate-phase7c-local.ps1",
+            "scripts/upgrade-phase7c-executor-task-local.ps1",
+            "scripts/upgrade-phase7c-executor-task-startup-local.ps1",
+            "scripts/verify-phase7c-executors-local.ps1",
+            "scripts/verify-phase7c-executor-startup-task-local.ps1",
+            "scripts/install-phase7c-forward-dashboard-task-local.ps1",
+            "scripts/verify-phase7c-forward-dashboard-task-local.ps1",
+            "scripts/install-phase7c-mt5-decision-panel-local.ps1",
+            "scripts/open-phase7c-control-center-local.ps1",
+            "scripts/install-phase7c-desktop-control-local.ps1"
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file :: $($_.Message)" }
+              exit 1
+            }
+            Write-Host "PHASE7C_POWERSHELL_PARSE_PASS=$file"
+          }
+
+      - name: Verify MT5 panel is read-only
+        shell: bash
+        run: |
+          grep -q 'WebRequest("GET"' mt5/XAUUSD_AI_Master_Decision_Panel.mq5
+          grep -q 'ORDER PERMISSION = ' mt5/XAUUSD_AI_Master_Decision_Panel.mq5
+          ! grep -Eq 'OrderSend|CTrade|PositionClose|PositionModify' mt5/XAUUSD_AI_Master_Decision_Panel.mq5
+
+      - name: Validate unarmed activation contract
+        shell: bash
+        run: |
+          grep -q '\$preflightArgs += "-Once"' scripts/activate-phase7c-local.ps1
+          grep -q 'PHASE7C_EXECUTORS_SHADOW=PASS' scripts/activate-phase7c-local.ps1
+          grep -q 'PHASE7C_EXECUTOR_SUPERVISOR_MODE=TELEGRAM_ONLY' scripts/activate-phase7c-local.ps1
+          grep -q "pnpm --filter '@xauusd/api...' build" scripts/activate-phase7c-local.ps1
+          grep -q "pnpm --filter '@xauusd/web...' build" scripts/activate-phase7c-local.ps1
+          grep -q 'PHASE7C_ACTIVATE_LOT_ACTIVE=PASS' scripts/activate-phase7c-local.ps1
+          grep -q '\$expectedActiveArmed = \$ArmExecutors.IsPresent' scripts/activate-phase7c-local.ps1
+          grep -q '\$activeProbe.restartRequired -eq \$false' scripts/activate-phase7c-local.ps1
+          grep -q '\$activeProbe.restartRequired -eq \$true' scripts/activate-phase7c-local.ps1
+          grep -q 'SHADOW_BOUND_UNARMED' scripts/activate-phase7c-local.ps1
+          grep -q 'PHASE7C_ACTIVATE_ENTRY_FREEZE_MODE=PERSISTENT_BOT_MODE_PRESERVED' scripts/activate-phase7c-local.ps1
+          grep -q 'PHASE7C_ACTIVATE_BOT_STALE_RECOVERY=SAFE_COLD_START_PENDING_LOCAL_AND_BROKER_CHECKS' scripts/activate-phase7c-local.ps1
+          grep -q 'PHASE7C_ACTIVATE_MT5_OFFLINE_RECOVERY=SAFE_RESTART_PENDING_LOCAL_AND_BROKER_CHECKS' scripts/activate-phase7c-local.ps1
+          grep -q 'MT5_OFFLINE_PLUS_LOCAL_STATE_PLUS_BRIDGE' scripts/activate-phase7c-local.ps1
+          grep -q 'PHASE7C_ACTIVATE_CORE_PORTS_CLEAN=PASS' scripts/activate-phase7c-local.ps1
+          grep -q 'Stop-ProjectCoreProcesses' scripts/activate-phase7c-local.ps1
+          grep -Fq 'phase7b-(api|web)-background-v\d+' scripts/activate-phase7c-local.ps1
+          grep -q 'PHASE7C_ACTIVATE_LOT_ACTIVE_DETAIL' scripts/activate-phase7c-local.ps1
+          grep -q 'PHASE7C_EXECUTOR_STOP=FAIL|REMAINING=' scripts/stop-phase7c-executors-local.ps1
+          grep -q 'PHASE7C_LOT_SETTINGS_FILE' scripts/run-phase7b-api-runtime-local.ps1
+          grep -q 'PHASE7C_ACTIVE_LOT_SETTINGS_FILE' scripts/run-phase7b-api-runtime-local.ps1
+          grep -q 'PHASE7C_RUNTIME_ROOT' scripts/run-phase7b-api-runtime-local.ps1

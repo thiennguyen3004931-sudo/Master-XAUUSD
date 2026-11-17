@@ -1,0 +1,31 @@
+export interface PerformanceMetrics {
+  initialBalance: number;
+  finalBalance: number;
+  netProfit: number;
+  netReturnPercent: number;
+  grossProfit: number;
+  grossLoss: number;
+  totalCommission: number;
+  totalTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  breakevenTrades: number;
+  winRatePercent: number;
+  profitFactor: number;
+  expectancy: number;
+  averageWin: number;
+  averageLoss: number;
+  payoffRatio: number;
+  averageRMultiple: number;
+  medianRMultiple: number;
+  maxDrawdownAmount: number;
+  maxDrawdownPercent: number;
+  maxConsecutiveWins: number;
+  maxConsecutiveLosses: number;
+  averageHoldingMinutes: number;
+  exposurePercent: number;
+  sharpeRatio: number;
+  sortinoRatio: number;
+  cagrPercent: number;
+  calmarRatio: number;
+}

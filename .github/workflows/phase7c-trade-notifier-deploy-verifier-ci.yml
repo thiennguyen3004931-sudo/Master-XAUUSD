@@ -1,0 +1,83 @@
+name: Phase7C Trade Notifier Deploy Verifier CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-trade-notifier-*
+      - fix/phase7c-verifier-strictmode-count
+    paths:
+      - scripts/verify-phase7c-executors-local.ps1
+      - scripts/deploy-phase7c-trade-notifier-local.ps1
+      - scripts/run-phase7b-telegram-notifier-local.ps1
+      - scripts/test-phase7c-trade-notifier-wrapper-child-ownership.ps1
+      - scripts/test-phase7c-trade-notifier-deploy-verifier-source.ps1
+      - scripts/test-phase7c-trade-notifier-safe-deploy-source.ps1
+      - scripts/test-phase7c-trade-notifier-degraded-runtime-recovery-source.ps1
+      - scripts/test-phase7c-verifier-strictmode-array.ps1
+      - .github/workflows/phase7c-trade-notifier-deploy-verifier-ci.yml
+  pull_request:
+    branches:
+      - main
+      - fix/phase7c-legacy-background-cleanup
+    paths:
+      - scripts/verify-phase7c-executors-local.ps1
+      - scripts/deploy-phase7c-trade-notifier-local.ps1
+      - scripts/run-phase7b-telegram-notifier-local.ps1
+      - scripts/test-phase7c-trade-notifier-wrapper-child-ownership.ps1
+      - scripts/test-phase7c-trade-notifier-deploy-verifier-source.ps1
+      - scripts/test-phase7c-trade-notifier-safe-deploy-source.ps1
+      - scripts/test-phase7c-trade-notifier-degraded-runtime-recovery-source.ps1
+      - scripts/test-phase7c-verifier-strictmode-array.ps1
+      - .github/workflows/phase7c-trade-notifier-deploy-verifier-ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-gate-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Wrapper child ownership regression on Windows
+        shell: powershell
+        run: .\scripts\test-phase7c-trade-notifier-wrapper-child-ownership.ps1
+
+      - name: Verifier source contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-trade-notifier-deploy-verifier-source.ps1
+
+      - name: Safe deploy source contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-trade-notifier-safe-deploy-source.ps1
+
+      - name: Degraded runtime recovery contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-trade-notifier-degraded-runtime-recovery-source.ps1
+
+      - name: StrictMode array regression with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-verifier-strictmode-array.ps1
+
+      - name: Verifier source contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-trade-notifier-deploy-verifier-source.ps1
+
+      - name: Safe deploy source contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-trade-notifier-safe-deploy-source.ps1
+
+      - name: Degraded runtime recovery contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-trade-notifier-degraded-runtime-recovery-source.ps1
+
+      - name: StrictMode array regression with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-verifier-strictmode-array.ps1

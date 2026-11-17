@@ -1,0 +1,64 @@
+name: Phase7C Telegram Lifecycle Observability CI
+
+# Final scoped verification runs on the exact feature head after source generation.
+on:
+  push:
+    branches:
+      - feat/phase7c-telegram-lifecycle-observability
+      - fix/phase7c-telegram-entry-resolution-lifecycle
+    paths:
+      - scripts/run-phase7b-telegram-notifier.mjs
+      - scripts/phase7c-system-alert-debounce.mjs
+      - scripts/phase7c-system-alert-debounce.test.mjs
+      - scripts/run-phase7b-demo-controller.ts
+      - scripts/test-phase7c-telegram-lifecycle-observability-contract.mjs
+      - scripts/test-phase7c-telegram-entry-resolution-lifecycle-contract.mjs
+      - scripts/phase7c-trade-notifier-synthetic.test.mjs
+      - scripts/test-phase7c-hold-telegram-dedupe-contract.mjs
+      - .github/workflows/phase7c-telegram-lifecycle-observability-ci.yml
+  pull_request:
+    paths:
+      - scripts/run-phase7b-telegram-notifier.mjs
+      - scripts/phase7c-system-alert-debounce.mjs
+      - scripts/phase7c-system-alert-debounce.test.mjs
+      - scripts/run-phase7b-demo-controller.ts
+      - scripts/test-phase7c-telegram-lifecycle-observability-contract.mjs
+      - scripts/test-phase7c-telegram-entry-resolution-lifecycle-contract.mjs
+      - scripts/phase7c-trade-notifier-synthetic.test.mjs
+      - scripts/test-phase7c-hold-telegram-dedupe-contract.mjs
+      - .github/workflows/phase7c-telegram-lifecycle-observability-ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: telegram-lifecycle-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Notifier JavaScript syntax
+        run: node --check ./scripts/run-phase7b-telegram-notifier.mjs
+
+      - name: Telegram lifecycle observability contract
+        run: node --test ./scripts/test-phase7c-telegram-lifecycle-observability-contract.mjs
+
+      - name: Telegram entry resolution lifecycle contract
+        run: node --test ./scripts/test-phase7c-telegram-entry-resolution-lifecycle-contract.mjs
+
+      - name: Existing synthetic notifier lifecycle regression
+        run: node --test ./scripts/phase7c-trade-notifier-synthetic.test.mjs
+
+      - name: Existing HOLD canonical and dedupe regression
+        run: node --test ./scripts/test-phase7c-hold-telegram-dedupe-contract.mjs
+
+      - name: Transient MT5 read system-alert debounce
+        run: node --test ./scripts/phase7c-system-alert-debounce.test.mjs

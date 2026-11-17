@@ -1,0 +1,31 @@
+{
+  "name": "XAUUSD AI MASTER Dev",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-24-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    }
+  },
+  "postCreateCommand": "corepack enable && corepack prepare pnpm@10.18.0 --activate && pnpm install --frozen-lockfile",
+  "forwardPorts": [5717, 3711],
+  "portsAttributes": {
+    "5717": {
+      "label": "XAUUSD Web development",
+      "onAutoForward": "notify"
+    },
+    "3711": {
+      "label": "Phase7C Control API development",
+      "onAutoForward": "silent"
+    }
+  },
+  "remoteUser": "node",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-vscode.powershell"
+      ]
+    }
+  }
+}

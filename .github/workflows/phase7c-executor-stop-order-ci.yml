@@ -1,0 +1,32 @@
+name: Phase7C Executor Stop Order CI
+
+on:
+  pull_request:
+    paths:
+      - "scripts/stop-phase7c-executors-local.ps1"
+      - "scripts/test-phase7c-executor-stop-order-source.ps1"
+      - ".github/workflows/phase7c-executor-stop-order-ci.yml"
+  push:
+    branches:
+      - fix/phase7c-supervisor-first-stop
+    paths:
+      - "scripts/stop-phase7c-executors-local.ps1"
+      - "scripts/test-phase7c-executor-stop-order-source.ps1"
+      - ".github/workflows/phase7c-executor-stop-order-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Supervisor-first shutdown contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-executor-stop-order-source.ps1
+      - name: Supervisor-first shutdown contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-executor-stop-order-source.ps1

@@ -1,0 +1,72 @@
+name: Phase7C Recent Deal History Time CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/phase7c-recent-deal-history-time
+    paths:
+      - "packages/mt5-broker/bridge/mt5_bridge/mt5_gateway.py"
+      - "packages/mt5-broker/bridge/mt5_bridge/broker_time.py"
+      - "packages/mt5-broker/bridge/tests/test_deal_history_time.py"
+      - "scripts/run-phase7b-telegram-notifier.mjs"
+      - "scripts/phase7c-trade-notifier-synthetic.test.mjs"
+      - "scripts/phase7c-telegram-zero-deal-pnl.test.mjs"
+      - ".github/workflows/phase7c-recent-deal-history-time-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/mt5-broker/bridge/mt5_bridge/mt5_gateway.py"
+      - "packages/mt5-broker/bridge/mt5_bridge/broker_time.py"
+      - "packages/mt5-broker/bridge/tests/test_deal_history_time.py"
+      - "scripts/run-phase7b-telegram-notifier.mjs"
+      - "scripts/phase7c-trade-notifier-synthetic.test.mjs"
+      - "scripts/phase7c-telegram-zero-deal-pnl.test.mjs"
+      - ".github/workflows/phase7c-recent-deal-history-time-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  mt5-deal-history-time:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: MT5 deal-history broker-time regression
+        run: python -m unittest discover -s packages/mt5-broker/bridge/tests -p 'test_deal_history_time.py' -v
+
+  telegram-zero-deal-pnl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Existing notifier regression plus zero-deal realized-PnL regression
+        run: |
+          node --test scripts/phase7c-trade-notifier-synthetic.test.mjs
+          node --test scripts/phase7c-telegram-zero-deal-pnl.test.mjs
+
+  diff-hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Diff hygiene
+        run: git diff --check

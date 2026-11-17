@@ -1,0 +1,112 @@
+name: Customer COPY_FOLLOWER E2E Read-Only
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/copy-protocol/**"
+      - "packages/customer-agent/**"
+      - "packages/customer-runtime-session/**"
+      - "packages/customer-runtime-gate/**"
+      - "packages/customer-activation/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-product-access/**"
+      - "packages/installation-proof/**"
+      - "packages/license-service/**"
+      - "scripts/customer-handoff-copy-follower-e2e.test.mjs"
+      - ".github/workflows/customer-copy-follower-e2e.yml"
+      - ".github/workflows/customer-handoff-production-acceptance-readonly.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/copy-protocol/**"
+      - "packages/customer-agent/**"
+      - "packages/customer-runtime-session/**"
+      - "packages/customer-runtime-gate/**"
+      - "packages/customer-activation/**"
+      - "packages/customer-grant-registry/**"
+      - "packages/customer-product-access/**"
+      - "packages/installation-proof/**"
+      - "packages/license-service/**"
+      - "scripts/customer-handoff-copy-follower-e2e.test.mjs"
+      - ".github/workflows/customer-copy-follower-e2e.yml"
+      - ".github/workflows/customer-handoff-production-acceptance-readonly.yml"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: customer-copy-follower-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  copy-follower-e2e:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build COPY_FOLLOWER E2E chain
+        shell: powershell
+        run: |
+          $packages = @(
+            "@xauusd/copy-protocol",
+            "@xauusd/license-service",
+            "@xauusd/installation-proof",
+            "@xauusd/customer-product-access",
+            "@xauusd/customer-grant-registry",
+            "@xauusd/customer-activation",
+            "@xauusd/customer-runtime-gate",
+            "@xauusd/customer-runtime-session",
+            "@xauusd/customer-agent"
+          )
+          foreach ($package in $packages) {
+            pnpm --filter $package build
+            if ($LASTEXITCODE -ne 0) { throw "BUILD_FAILED=$package" }
+          }
+
+      - name: Customer agent regression
+        run: pnpm --filter @xauusd/customer-agent test
+
+      - name: COPY_FOLLOWER simulated E2E
+        run: node --test scripts/customer-handoff-copy-follower-e2e.test.mjs
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: COPY_FOLLOWER E2E summary
+        shell: powershell
+        run: |
+          Write-Host 'COPY_FOLLOWER_E2E=PASS'
+          Write-Host 'AUTHENTICATED_GATEWAY=PASS'
+          Write-Host 'FOLLOWER_ACTIVATION=PASS'
+          Write-Host 'SIZING_MODE_ALLOWLIST=PASS'
+          Write-Host 'SIGNED_COPY_COMMAND=PASS'
+          Write-Host 'COPY_COMMAND_BINDING=PASS'
+          Write-Host 'COPY_COMMAND_REPLAY_REJECTION=PASS'
+          Write-Host 'COPY_COMMAND_SEQUENCE_GUARD=PASS'
+          Write-Host 'CROSS_CUSTOMER_REJECTION=PASS'
+          Write-Host 'MT5_EXECUTION=NONE'
+          Write-Host 'ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'
+          Write-Host 'LIVE_TEST_ORDER=NONE'

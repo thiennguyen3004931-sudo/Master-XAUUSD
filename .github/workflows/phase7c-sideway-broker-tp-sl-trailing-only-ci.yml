@@ -1,0 +1,43 @@
+name: Phase7C Sideway Broker TP SL Trailing Only CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - "scripts/phase7c-sideway-broker-tp-sl-trail-only.test.mjs"
+      - "scripts/phase7c-fixed-tp-sideway-exit.test.mjs"
+      - ".github/workflows/phase7c-sideway-broker-tp-sl-trailing-only-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - "scripts/phase7c-sideway-broker-tp-sl-trail-only.test.mjs"
+      - ".github/workflows/phase7c-sideway-broker-tp-sl-trailing-only-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sideway-post-fill-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-sideway-exit-policy:
+    name: Synthetic no-early-close / keep SL tightening (no MT5 orders)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: JavaScript syntax validation
+        run: |
+          node --check scripts/run-phase7c-sideway-controller.mjs
+          node --check scripts/phase7c-sideway-broker-tp-sl-trail-only.test.mjs
+      - name: Verify policy and legacy TP source contracts
+        run: |
+          node --test scripts/phase7c-sideway-broker-tp-sl-trail-only.test.mjs scripts/phase7c-fixed-tp-sideway-exit.test.mjs
+      - name: Patch hygiene
+        run: git diff --check

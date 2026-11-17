@@ -1,0 +1,37 @@
+name: Customer Restore Signing Key Lifecycle Fast CI
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/customer-restore-authority-key-lifecycle.mjs'
+      - 'scripts/customer-restore-authority-key-lifecycle.test.mjs'
+      - 'scripts/customer-restore-authority-signed-proof.mjs'
+      - 'scripts/customer-restore-authority-compare.mjs'
+      - 'scripts/customer-restore-authority-proof-issuer.mjs'
+      - '.github/workflows/customer-restore-signer-lifecycle-fast-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/customer-restore-authority-key-lifecycle.mjs'
+      - 'scripts/customer-restore-authority-key-lifecycle.test.mjs'
+      - 'scripts/customer-restore-authority-signed-proof.mjs'
+      - 'scripts/customer-restore-authority-compare.mjs'
+      - 'scripts/customer-restore-authority-proof-issuer.mjs'
+      - '.github/workflows/customer-restore-signer-lifecycle-fast-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-key-lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify signed proof key lifecycle against synthetic trusted epoch
+        run: |
+          node --test scripts/customer-restore-authority-key-lifecycle.test.mjs

@@ -1,0 +1,57 @@
+name: Phase7C Final Strategy Runtime Readiness Read-Only
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/phase7c-final-strategy-runtime-readiness-readonly.yml"
+      - "scripts/phase7c-final-strategy-runtime-readiness-readonly.ps1"
+      - "scripts/test-phase7c-final-strategy-runtime-readiness-readonly.mjs"
+      - "scripts/preflight-phase7c-production-readonly-local.ps1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: final-strategy-runtime-readiness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  readonly-runtime-readiness:
+    name: Read-only current-main runtime target check
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 15
+    env:
+      PRODUCTION_ROOT: F:\Project\XAUUSD_AI_MASTER\xauusd-ai-master
+    steps:
+      - name: Checkout diagnostic source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Source safety contract
+        run: node scripts/test-phase7c-final-strategy-runtime-readiness-readonly.mjs
+
+      - name: Canonical production preflight source regression
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-phase7c-production-readonly-preflight-v2-source.ps1
+
+      - name: Read-only runtime readiness diagnostic
+        shell: pwsh
+        env:
+          EXPECTED_MAIN: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\phase7c-final-strategy-runtime-readiness-readonly.ps1 -ProjectRoot $env:PRODUCTION_ROOT -ExpectedMainCommit $env:EXPECTED_MAIN
+
+      - name: Safety boundary
+        shell: pwsh
+        run: |
+          Write-Host 'READ_ONLY_DIAGNOSTIC=TRUE'
+          Write-Host 'DEPLOYMENT_MUTATION=NONE'
+          Write-Host 'BOT_MODE_MUTATION=NONE'
+          Write-Host 'ARM_MUTATION=NONE'
+          Write-Host 'MT5_ORDER_MUTATION=NONE'
+          Write-Host 'ACCOUNT_SWITCH=NONE'

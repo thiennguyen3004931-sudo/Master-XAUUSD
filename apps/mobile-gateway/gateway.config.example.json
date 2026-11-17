@@ -1,0 +1,11 @@
+{
+  "listenHost": "127.0.0.1",
+  "listenPort": 5791,
+  "webOrigin": "http://127.0.0.1:5717",
+  "apiOrigin": "http://127.0.0.1:3711",
+  "allowedUsers": [
+    "operator@example.com"
+  ],
+  "allowedOrigin": "https://example-device.example-tailnet.ts.net:8443",
+  "auditPath": "C:\\ProgramData\\XAUUSD-AI-MASTER\\mobile-readonly-gateway\\m4-audit.jsonl"
+}

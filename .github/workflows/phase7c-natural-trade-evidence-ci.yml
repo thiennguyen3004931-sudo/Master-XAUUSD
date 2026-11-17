@@ -1,0 +1,58 @@
+name: Phase7C Natural Trade Evidence CI
+
+on:
+  push:
+    branches:
+      - feat/phase7c-natural-trade-evidence-v1
+    paths:
+      - "apps/api/src/contracts/phase7c-performance-effectiveness.schema.ts"
+      - "apps/api/src/services/phase7c-performance-management-evidence.service.ts"
+      - "scripts/phase7c-performance-management-evidence.test.ts"
+      - "scripts/probe-phase7c-natural-trade-evidence-readonly-local.ps1"
+      - "scripts/test-phase7c-natural-trade-evidence-source.mjs"
+      - "scripts/test-phase7c-natural-trade-evidence-probe.mjs"
+      - ".github/workflows/phase7c-natural-trade-evidence-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/api/src/contracts/phase7c-performance-effectiveness.schema.ts"
+      - "apps/api/src/services/phase7c-performance-management-evidence.service.ts"
+      - "scripts/phase7c-performance-management-evidence.test.ts"
+      - "scripts/probe-phase7c-natural-trade-evidence-readonly-local.ps1"
+      - "scripts/test-phase7c-natural-trade-evidence-source.mjs"
+      - "scripts/test-phase7c-natural-trade-evidence-probe.mjs"
+      - ".github/workflows/phase7c-natural-trade-evidence-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  evidence-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Natural trade evidence source contract
+        run: node scripts/test-phase7c-natural-trade-evidence-source.mjs
+      - name: Natural trade evidence read-only probe contract
+        run: node scripts/test-phase7c-natural-trade-evidence-probe.mjs
+      - name: Natural trade management evidence RED/GREEN contract
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-performance-management-evidence.test.ts
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+      - name: P3 aggregate regression
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/phase7c-performance-effectiveness.test.ts

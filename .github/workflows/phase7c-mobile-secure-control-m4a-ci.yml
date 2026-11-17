@@ -1,0 +1,88 @@
+name: Phase7C Mobile Secure Control M4-A CI
+
+on:
+  push:
+    branches:
+      - feat/m4a-mobile-secure-control
+    paths:
+      - "apps/mobile-gateway/**"
+      - "apps/web/src/mobile-m4-control.ts"
+      - "apps/web/src/pages/Phase7CMobileReadOnlyPage.tsx"
+      - "apps/web/src/ui/Phase7CMobileM4ControlCard.tsx"
+      - "scripts/test-phase7c-mobile-m4-client.test.ts"
+      - "scripts/*phase7c-mobile-m4a*"
+      - ".github/workflows/phase7c-mobile-secure-control-m4a-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/mobile-gateway/**"
+      - "apps/web/src/mobile-m4-control.ts"
+      - "apps/web/src/pages/Phase7CMobileReadOnlyPage.tsx"
+      - "apps/web/src/ui/Phase7CMobileM4ControlCard.tsx"
+      - "scripts/test-phase7c-mobile-m4-client.test.ts"
+      - "scripts/*phase7c-mobile-m4a*"
+      - ".github/workflows/phase7c-mobile-secure-control-m4a-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install frozen workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Mobile gateway unit and security tests
+        run: node --test apps/mobile-gateway/test/*.test.mjs
+
+      - name: Mobile gateway syntax
+        run: |
+          node --check apps/mobile-gateway/gateway.js
+          node --check apps/mobile-gateway/server.cjs
+          node --check apps/mobile-gateway/m4-contract.cjs
+          node --check apps/mobile-gateway/canonical-client.cjs
+          node --check apps/mobile-gateway/transaction-store.cjs
+          node --check apps/mobile-gateway/audit.cjs
+          node --check apps/mobile-gateway/m4-action-broker.cjs
+
+      - name: Web M4 client contract
+        run: pnpm --filter @xauusd/risk-engine exec vitest run --root ../.. scripts/test-phase7c-mobile-m4-client.test.ts
+
+      - name: Build Web
+        run: pnpm --filter @xauusd/web build
+
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build
+
+      - name: M4 source security contract
+        run: node scripts/test-phase7c-mobile-m4a-source-contract.mjs
+
+      - name: Parse PowerShell rollout scripts only
+        shell: pwsh
+        run: |
+          $files = @(
+            "scripts/preflight-phase7c-mobile-m4a-local.ps1",
+            "scripts/deploy-phase7c-mobile-m4a-local.ps1",
+            "scripts/rollback-phase7c-mobile-m4a-local.ps1"
+          )
+          foreach ($file in $files) {
+            [void][ScriptBlock]::Create((Get-Content -Raw $file))
+            Write-Host "POWERSHELL_PARSE_PASS=$file"
+          }

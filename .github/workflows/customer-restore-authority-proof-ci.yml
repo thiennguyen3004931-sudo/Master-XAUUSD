@@ -1,0 +1,50 @@
+name: Customer Restore Authority Proof CI
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/customer-restore-authority-compare.mjs'
+      - 'scripts/customer-restore-authority-compare.test.mjs'
+      - 'scripts/customer-restore-authority-signed-proof.mjs'
+      - 'scripts/customer-restore-authority-signed-proof.test.mjs'
+      - 'scripts/customer-restore-authority-transition.mjs'
+      - 'scripts/customer-restore-authority-transition.test.mjs'
+      - 'scripts/customer-restore-authority-atomic-cas.mjs'
+      - 'scripts/customer-restore-authority-atomic-cas.test.mjs'
+      - 'scripts/customer-restore-authority-file-fixture.mjs'
+      - 'scripts/customer-restore-authority-file-fixture.test.mjs'
+      - 'scripts/customer-restore-authority-proof-issuer.mjs'
+      - 'scripts/customer-restore-authority-proof-issuer.test.mjs'
+      - 'scripts/customer-restore-physical-sqlite-signed-authority-e2e.test.mjs'
+      - 'scripts/customer-restore-independent-witness-guard.mjs'
+      - 'scripts/customer-restore-independent-witness-guard.test.mjs'
+      - 'scripts/customer-sqlite-encrypted-snapshot.mjs'
+      - 'scripts/customer-sqlite-encrypted-snapshot.test.mjs'
+      - '.github/workflows/customer-restore-authority-proof-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-restore-authority:
+    name: Verify signed authority and rollback rejection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Run independent authority proof unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test scripts/customer-restore-authority-compare.test.mjs scripts/customer-restore-authority-signed-proof.test.mjs scripts/customer-restore-authority-transition.test.mjs scripts/customer-restore-authority-atomic-cas.test.mjs scripts/customer-restore-authority-file-fixture.test.mjs scripts/customer-restore-authority-proof-issuer.test.mjs scripts/customer-restore-physical-sqlite-signed-authority-e2e.test.mjs scripts/customer-restore-independent-witness-guard.test.mjs scripts/customer-sqlite-encrypted-snapshot.test.mjs 2>&1 | tee restore-authority-test-output.txt
+      - name: Upload test diagnostics even when tests fail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-authority-test-diagnostics
+          path: restore-authority-test-output.txt
+          if-no-files-found: warn

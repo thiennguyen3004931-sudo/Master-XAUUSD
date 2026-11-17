@@ -1,0 +1,111 @@
+name: Customer Product Access CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/customer-product-access/**"
+      - "scripts/test-customer-product-access-boundary.mjs"
+      - ".github/workflows/customer-product-access-ci.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/customer-product-access/**"
+      - "scripts/test-customer-product-access-boundary.mjs"
+      - ".github/workflows/customer-product-access-ci.yml"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: customer-product-access-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  customer-product-access:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build copy protocol dependency
+        run: pnpm --filter @xauusd/copy-protocol build
+
+      - name: Build license service dependency
+        run: pnpm --filter @xauusd/license-service build
+
+      - name: Customer product access tests
+        run: pnpm --filter @xauusd/customer-product-access test
+
+      - name: Customer product access typecheck
+        run: pnpm --filter @xauusd/customer-product-access typecheck
+
+      - name: Customer product access build
+        run: pnpm --filter @xauusd/customer-product-access build
+
+      - name: Private product boundary contract
+        run: node --test scripts/test-customer-product-access-boundary.mjs
+
+      - name: Fetch pinned public contract
+        shell: powershell
+        run: |
+          $lock = Get-Content "security/public-contract.lock.json" -Raw | ConvertFrom-Json
+          $publicCommit = [string]$lock.publicCommit
+          if ($publicCommit -notmatch '^[0-9a-f]{40}$') {
+            throw 'PUBLIC_CONTRACT_COMMIT_INVALID'
+          }
+          $fetchOk = $false
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            git fetch --no-tags --depth=1 https://github.com/thiennguyen3004931-sudo/xauusd-ai-master.git $publicCommit
+            if ($LASTEXITCODE -eq 0) {
+              $fetchOk = $true
+              break
+            }
+            if ($attempt -lt 4) {
+              Write-Warning "Public contract fetch attempt $attempt failed; retrying"
+              Start-Sleep -Seconds 5
+            }
+          }
+          if (-not $fetchOk) {
+            throw "PUBLIC_CONTRACT_FETCH_FAILED_AFTER_RETRIES"
+          }
+          Write-Host "CUSTOMER_ACCESS_PUBLIC_CONTRACT_FETCH=$publicCommit"
+
+      - name: Public contract lock remains unchanged
+        run: node scripts/security/verify-public-contract-lock.mjs security/public-contract.lock.json
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Safety summary
+        shell: powershell
+        run: |
+          Write-Host 'CUSTOMER_PRODUCT_ACCESS=PASS'
+          Write-Host 'PUBLIC_CONTRACT_MUTATION=NONE'
+          Write-Host 'TRADING_LOGIC_MUTATION=NONE'
+          Write-Host 'PRODUCTION_MUTATION=NONE'
+          Write-Host 'MODE_MUTATION=NONE'
+          Write-Host 'ARM_MUTATION=NONE'
+          Write-Host 'ORDER_MUTATION=NONE'
+          Write-Host 'POSITION_MUTATION=NONE'
+          Write-Host 'LIVE_TEST_ORDER=NONE'

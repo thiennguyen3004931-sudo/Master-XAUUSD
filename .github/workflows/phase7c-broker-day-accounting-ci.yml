@@ -1,0 +1,63 @@
+name: Phase7C Broker-Day Accounting CI
+# Scope B accounting regression is read-only: no runtime, ARM, mode, bridge, or order mutation.
+# Final tree verification includes broker-clock legacy matcher compatibility.
+
+on:
+  push:
+    branches:
+      - feat/phase7c-broker-day-accounting
+    paths:
+      - "packages/mt5-broker/src/accounting/**"
+      - "packages/mt5-broker/src/index.ts"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - "apps/api/src/services/phase7c-daily-recovery-view.service.ts"
+      - "scripts/test-phase7c-broker-day-accounting-consumers-contract.mjs"
+      - ".github/workflows/phase7c-broker-day-accounting-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/mt5-broker/src/accounting/**"
+      - "packages/mt5-broker/src/index.ts"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/run-phase7c-sideway-controller.mjs"
+      - "apps/api/src/services/phase7c-daily-recovery-view.service.ts"
+      - "scripts/test-phase7c-broker-day-accounting-consumers-contract.mjs"
+      - ".github/workflows/phase7c-broker-day-accounting-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  accounting-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Canonical broker-day accounting contract
+        run: pnpm --filter @xauusd/mt5-broker exec vitest run src/accounting/broker-day-realized-pnl.test.ts
+      - name: Consumer migration contract when present
+        run: |
+          if [ -f scripts/test-phase7c-broker-day-accounting-consumers-contract.mjs ]; then
+            node --test scripts/test-phase7c-broker-day-accounting-consumers-contract.mjs
+          fi
+      - name: Build MT5 broker dependency graph
+        run: pnpm --filter @xauusd/mt5-broker... build
+      - name: MT5 broker typecheck
+        run: pnpm --filter @xauusd/mt5-broker typecheck
+      - name: Diff hygiene
+        run: git diff --check

@@ -1,0 +1,58 @@
+name: Phase7C Performance Period Carry-In CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-performance-period-carry-in
+    paths:
+      - "apps/api/src/services/mt5-performance.service.ts"
+      - "scripts/test-phase7c-performance-period-carry-in-contract.mjs"
+      - ".github/workflows/phase7c-performance-period-carry-in-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/api/src/services/mt5-performance.service.ts"
+      - "scripts/test-phase7c-performance-period-carry-in-contract.mjs"
+      - ".github/workflows/phase7c-performance-period-carry-in-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  performance-period-carry-in:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run Performance period carry-in contract
+        run: node --test scripts/test-phase7c-performance-period-carry-in-contract.mjs
+
+  api-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build

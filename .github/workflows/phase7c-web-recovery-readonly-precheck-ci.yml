@@ -1,0 +1,48 @@
+name: Phase7C Web Recovery Read-Only Precheck CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/phase7c-web-recovery-readonly-precheck.yml'
+      - '.github/workflows/phase7c-web-recovery-readonly-precheck-ci.yml'
+      - 'scripts/ops/check-phase7c-web-recovery-eligibility-readonly.ps1'
+      - 'scripts/test-phase7c-web-recovery-readonly-precheck-source.ps1'
+
+permissions:
+  contents: read
+
+jobs:
+  static-no-runtime-mutations:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source only
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Strict manual-only GET-only precheck static test
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-phase7c-web-recovery-readonly-precheck-source.ps1
+
+      - name: Synthetic missing-production fail-closed test (NO live reads)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $missing = Join-Path $env:RUNNER_TEMP ('missing-prod-' + [guid]::NewGuid().ToString('N'))
+          $receipt = Join-Path $env:RUNNER_TEMP ('synthetic-recovery-' + [guid]::NewGuid().ToString('N') + '.json')
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/ops/check-phase7c-web-recovery-eligibility-readonly.ps1 -ProductionRoot $missing -ReceiptPath $receipt
+          if ($LASTEXITCODE -ne 0) { throw 'SYNTHETIC_PRECHECK_UNEXPECTED_EXIT' }
+          $out = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+          if ($out.webRestartAuthorized -ne $false -or $out.preRecoveryChecksPass -ne $false) { throw 'SYNTHETIC_PRECHECK_UNSAFE_PASS' }
+          if ('PRODUCTION_ROOT_MISSING' -notin @($out.blockerCodes)) { throw 'SYNTHETIC_PRECHECK_MISSING_FAIL_CLOSED_REASON' }
+          Write-Host 'PHASE7C_WEB_RECOVERY_SYNTHETIC_FAIL_CLOSED=PASS'
+
+      - name: Verify test path never performs LIVE reads
+        shell: powershell
+        run: |
+          Write-Host 'PHASE7C_WEB_RECOVERY_READONLY_CI=SOURCE_ONLY'
+          Write-Host 'BROKER_QUERIES=NONE'
+          Write-Host 'PRODUCTION_MUTATIONS=NONE'

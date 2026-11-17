@@ -1,0 +1,37 @@
+name: Phase7C Account Switch Canonical Lifecycle CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-account-switch-canonical-lifecycle
+    paths:
+      - "scripts/switch-phase7c-account-mode-local.ps1"
+      - "scripts/recover-phase7c-demo-after-failed-switch-local.ps1"
+      - "scripts/test-phase7c-account-switch-canonical-lifecycle-local.ps1"
+      - "docs/superpowers/plans/2026-08-28-phase7c-account-switch-canonical-lifecycle.md"
+      - ".github/workflows/phase7c-account-switch-canonical-lifecycle-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/switch-phase7c-account-mode-local.ps1"
+      - "scripts/recover-phase7c-demo-after-failed-switch-local.ps1"
+      - "scripts/test-phase7c-account-switch-canonical-lifecycle-local.ps1"
+      - "docs/superpowers/plans/2026-08-28-phase7c-account-switch-canonical-lifecycle.md"
+      - ".github/workflows/phase7c-account-switch-canonical-lifecycle-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  canonical-lifecycle-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Canonical lifecycle source contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-account-switch-canonical-lifecycle-local.ps1
+      - name: Canonical lifecycle source contract - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-account-switch-canonical-lifecycle-local.ps1

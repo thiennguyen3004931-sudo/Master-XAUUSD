@@ -1,0 +1,54 @@
+name: Phase7C Production Historical Acceptance Read-Only CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-production-historical-acceptance
+    paths:
+      - "scripts/probe-phase7c-production-historical-acceptance-readonly-local.ps1"
+      - "scripts/test-phase7c-production-historical-acceptance-readonly.mjs"
+      - ".github/workflows/phase7c-production-historical-acceptance-readonly-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/probe-phase7c-production-historical-acceptance-readonly-local.ps1"
+      - "scripts/test-phase7c-production-historical-acceptance-readonly.mjs"
+      - ".github/workflows/phase7c-production-historical-acceptance-readonly-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  readonly-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Production historical acceptance read-only source contract
+        run: node scripts/test-phase7c-production-historical-acceptance-readonly.mjs
+
+  powershell-parse:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse probe - PowerShell 7
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\probe-phase7c-production-historical-acceptance-readonly-local.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if (@($errors).Count -ne 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+
+      - name: Parse probe - Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\probe-phase7c-production-historical-acceptance-readonly-local.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if (@($errors).Count -ne 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
