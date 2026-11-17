@@ -2312,6 +2312,29 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertEqual(sc["timelineSnapshots"][-1]["ts"], ts0 + 900_000)
         self.assertFalse(any(s["ts"] > ts0 + 900_000 for s in sc["timelineSnapshots"]))
 
+    def test_T64_margin_breach_events_count_transitions_not_each_m5(self):
+        """T64: A continuous multi-bar margin breach is ONE event, with separate breach snapshots."""
+        ts0 = 1800200000000
+        trade = {
+            "ticket": 502001, "tsMs": ts0, "exitTsMs": ts0 + 900_000,
+            "entry": 4000.0, "exit": 4000.0, "sl": 3993.0, "tp": 4030.0,
+            "initialR": 7.0, "finalSl": 3993.0, "beReachedTs": 0,
+            "exitType": "BE_EXIT", "pts": 0.0, "netPts": 0.0,
+            "rMultiple": 0.0, "volume": 0.05, "marginUsd": 400.0,
+            "side": "BUY", "spreadPts": 0.0, "commissionPts": 0.0, "slippagePts": 0.0,
+        }
+        bars = [[4000.0, 4000.2, 3999.8, 4000.0, ts0 - 300_000 + i * 300_000] for i in range(4)]
+        sc = engine._build_portfolio_scenario_comparison(
+            [trade], [], 0.05, 320.0, 100.0,
+            margin_call_level_pct=100.0, stop_out_level_pct=90.0,
+            market_m5_bars=bars, market_spread_pts=0.0,
+        )["scenarioWithoutDca"]
+        self.assertEqual(sc["marginCallEvents"], 1)
+        self.assertEqual(sc["stopOutEvents"], 1)
+        self.assertEqual(sc["marginCallBreachedSnapshots"], 3)
+        self.assertEqual(sc["stopOutBreachedSnapshots"], 3)
+        self.assertFalse(sc["stopOutLiquidationSimulated"])
+
     def test_T60_corrupted_config_on_startup_never_defaults_to_002_and_blocks_new_orders(self):
         """T60 (Section VI, Task 8 & Task 9): Simulated power-loss / corrupted config file marks config unverified, returns fixedLot=null (not 0.02), and blocks /api/v1/mt5/order until repaired."""
         node_verify = r"""
