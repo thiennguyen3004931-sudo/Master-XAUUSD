@@ -2605,10 +2605,69 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertTrue(sc["marginEventsAreObservationsOnly"])
         self.assertFalse(sc["intrabarMarginStressSimulated"])
         self.assertFalse(sc["brokerStopOutExecutionVerified"])
-        # A stop-out observation MUST NOT silently settle the position or
-        # mutate its simulated realized balance as if a broker liquidated it.
         self.assertEqual(sc["settledPositions"], 1)
         self.assertEqual(sc["endingBalanceUsd"], 320.0)
+
+    def test_T71_closed_m5_intrabar_adverse_margin_risk_is_observation_only(self):
+        """A transient M5 wick detects stop-out risk without fabricated liquidation."""
+        ts0 = 1800400000000
+        position = {
+            "ticket": 504001, "tsMs": ts0, "exitTsMs": ts0 + 600_000,
+            "entry": 4000.0, "exit": 4000.0, "sl": 3993.0, "tp": 4030.0,
+            "initialR": 7.0, "finalSl": 3993.0, "beReachedTs": 0,
+            "exitType": "OPEN_AT_END", "pts": 0.0, "netPts": 0.0,
+            "rMultiple": 0.0, "volume": 0.05, "marginUsd": 400.0,
+            "side": "BUY", "spreadPts": 0.0, "commissionPts": 0.0,
+            "slippagePts": 0.0, "isOpenAtEnd": True,
+        }
+        bars = [
+            [4000.0, 4001.0, 3980.0, 4000.0, ts0],
+            [4000.0, 4000.5, 3999.5, 4000.0, ts0 + 300_000],
+            # Not closed at the dataset end: must not enter diagnostics.
+            [4000.0, 4001.0, 3000.0, 4000.0, ts0 + 600_000],
+        ]
+        result = engine._build_portfolio_scenario_comparison(
+            [], [position], 0.05, 350.0, 100.0,
+            margin_call_level_pct=100.0, stop_out_level_pct=75.0,
+            market_m5_bars=bars, market_spread_pts=0.0,
+        )["scenarioWithoutDca"]
+        wick = next(s for s in result["timelineSnapshots"] if s["ts"] == ts0 + 300_000)
+        self.assertGreater(wick["marginLevelPct"], 75.0)
+        self.assertLess(wick["intrabarAdverseMarginLevelPct"], 75.0)
+        self.assertTrue(wick["intrabarStopOutRiskObserved"])
+        self.assertGreaterEqual(result["intrabarStopOutRiskSnapshots"], 1)
+        self.assertLess(result["intrabarMinMarginLevelPct"], 75.0)
+        self.assertTrue(result["intrabarMarginRiskIsDiagnosticOnly"])
+        self.assertFalse(result["stopOutLiquidationSimulated"])
+        self.assertEqual(result["endingBalanceUsd"], 350.0)
+        self.assertFalse(any(s["ts"] > ts0 + 600_000 for s in result["timelineSnapshots"]))
+        self.assertGreater(result["intrabarMinMarginLevelPct"], -1000.0)
+
+    def test_T72_future_only_m5_wick_cannot_affect_intrabar_margin(self):
+        """An unclosed future M5 candle must not alter adverse-margin evidence."""
+        ts0 = 1800500000000
+        position = {
+            "ticket": 505001, "tsMs": ts0, "exitTsMs": ts0 + 300_000,
+            "entry": 4000.0, "exit": 4000.0, "sl": 3993.0, "tp": 4030.0,
+            "initialR": 7.0, "finalSl": 3993.0, "beReachedTs": 0,
+            "exitType": "OPEN_AT_END", "pts": 0.0, "netPts": 0.0,
+            "rMultiple": 0.0, "volume": 0.05, "marginUsd": 400.0,
+            "side": "BUY", "spreadPts": 0.0, "commissionPts": 0.0,
+            "slippagePts": 0.0, "isOpenAtEnd": True,
+        }
+        no_future = engine._build_portfolio_scenario_comparison(
+            [], [position], 0.05, 350.0, 100.0,
+            market_m5_bars=[], market_spread_pts=0.0,
+        )["scenarioWithoutDca"]
+        with_future = engine._build_portfolio_scenario_comparison(
+            [], [position], 0.05, 350.0, 100.0,
+            market_m5_bars=[[4000.0, 4001.0, 2000.0, 4000.0, ts0 + 300_000]],
+            market_spread_pts=0.0,
+        )["scenarioWithoutDca"]
+        self.assertEqual(with_future["intrabarMarginRiskSnapshots"], 0)
+        self.assertEqual(with_future["intrabarStopOutRiskSnapshots"], 0)
+        self.assertIsNone(with_future["intrabarMinMarginLevelPct"])
+        self.assertEqual(with_future["endingEquityUsd"], no_future["endingEquityUsd"])
 
     def test_T60_corrupted_config_on_startup_never_defaults_to_002_and_blocks_new_orders(self):
         """T60 (Section VI, Task 8 & Task 9): Simulated power-loss / corrupted config file marks config unverified, returns fixedLot=null (not 0.02), and blocks /api/v1/mt5/order until repaired."""
