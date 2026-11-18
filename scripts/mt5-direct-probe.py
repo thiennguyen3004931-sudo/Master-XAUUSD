@@ -3682,6 +3682,10 @@ def _build_portfolio_scenario_comparison(
             "m5StalePriceSnapshots": stale_m5_snapshots,
             "marginEventsAreObservationsOnly": True,
             "stopOutLiquidationSimulated": False,
+            # Closed M5 marks are not intrabar extrema. Never present these
+            # diagnostic snapshots as broker stop-out execution evidence.
+            "intrabarMarginStressSimulated": False,
+            "brokerStopOutExecutionVerified": False,
         }
 
     scen_a = _run_timeline(include_dca=False)
