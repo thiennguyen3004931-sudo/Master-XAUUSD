@@ -26,6 +26,7 @@ import os
 import json
 import time
 import uuid
+import threading
 from contextlib import contextmanager
 import datetime
 import subprocess
@@ -245,6 +246,42 @@ def _cross_process_file_lock(file_path):
             except Exception:
                 pass
         fh.close()
+
+
+# Serialize the entire new-order read/check/send/reconcile transaction.
+# A global runtime lock is intentionally stricter than account-scoped locking:
+# it prevents two local execution gateways from racing on the same broker.
+_ENTRY_GATE_THREAD_LOCK = threading.Lock()
+
+
+@contextmanager
+def _strict_new_order_lock():
+    """Fail closed if the OS cannot acquire an exclusive cross-process lock."""
+    lock_path = RUNTIME_DIR / "v6-new-order-execution.lock"
+    with _ENTRY_GATE_THREAD_LOCK:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "a+b") as fh:
+            if os.name == "nt":
+                import msvcrt
+                fh.seek(0)
+                if fh.read(1) == b"":
+                    fh.seek(0)
+                    fh.write(b"\x00")
+                    fh.flush()
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
 def _load_json_state_unlocked(file_path):
@@ -1743,6 +1780,22 @@ def _reconcile_filled_order(mt5, active_symbol, req_side, req_vol, req_price, re
 
 
 def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V6"):
+    """Lock the complete risk assessment and submission to prevent entry races.
+
+    Existing SL/TP management uses separate code paths and is not blocked.
+    """
+    try:
+        with _strict_new_order_lock():
+            return _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag)
+    except (OSError, ImportError) as exc:
+        return {
+            "ok": False, "submitted": False,
+            "status": "BLOCKED_ENTRY_LOCK_UNAVAILABLE",
+            "message": f"Cannot acquire new-order execution lock (fail-closed): {exc}",
+        }
+
+
+def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V6"):
     """Unified Fail-Closed Execution Gateway & Final Pre-Send SL Gate (Section 1.2, 1.3, 1.4).
     Unit convention: 1 price unit ("1 giá") = 1.00 USD/oz (distinct from broker `point`).
     """
