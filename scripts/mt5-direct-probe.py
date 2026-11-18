@@ -59,7 +59,6 @@ RUNTIME_DIR = Path(__file__).resolve().parent.parent / ".runtime"
 MANAGER_STATE_FILE = RUNTIME_DIR / "v6-position-manager-state.json"
 DAILY_RISK_STATE_FILE = RUNTIME_DIR / "v6-daily-risk-state.json"
 REGIME_STATE_FILE = RUNTIME_DIR / "v6-regime-state.json"
-UNCERTAIN_ENTRY_STATE_FILE = RUNTIME_DIR / "v6-uncertain-entry-state.json"
 
 
 def ensure_mt5_installed():
@@ -1798,18 +1797,20 @@ def _reconcile_filled_order(mt5, active_symbol, req_side, req_vol, req_price, re
 
 def _read_uncertain_entry_state():
     """Reject corrupt/unreadable state instead of silently treating it as empty."""
-    with _cross_process_file_lock(UNCERTAIN_ENTRY_STATE_FILE):
-        if not UNCERTAIN_ENTRY_STATE_FILE.exists():
+    file_path = RUNTIME_DIR / "v6-uncertain-entry-state.json"
+    with _cross_process_file_lock(file_path):
+        if not file_path.exists():
             return {}
-        state = json.loads(UNCERTAIN_ENTRY_STATE_FILE.read_text(encoding="utf-8"))
+        state = json.loads(file_path.read_text(encoding="utf-8"))
         if not isinstance(state, dict):
             raise ValueError("Uncertain entry state is not an object")
         return state
 
 
 def _write_uncertain_entry_state(state):
-    with _cross_process_file_lock(UNCERTAIN_ENTRY_STATE_FILE):
-        _save_json_state_unlocked(UNCERTAIN_ENTRY_STATE_FILE, state)
+    file_path = RUNTIME_DIR / "v6-uncertain-entry-state.json"
+    with _cross_process_file_lock(file_path):
+        _save_json_state_unlocked(file_path, state)
 
 
 def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V6"):
