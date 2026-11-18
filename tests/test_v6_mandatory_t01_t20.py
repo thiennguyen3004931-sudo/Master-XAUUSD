@@ -2669,6 +2669,63 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertIsNone(with_future["intrabarMinMarginLevelPct"])
         self.assertEqual(with_future["endingEquityUsd"], no_future["endingEquityUsd"])
 
+    def test_T73_sell_intrabar_stress_uses_ask_high_including_spread(self):
+        """SELL adverse wick must mark high ASK, while close remains solvent."""
+        ts0 = 1800600000000
+        position = {
+            "ticket": 506001, "tsMs": ts0, "exitTsMs": ts0 + 600_000,
+            "entry": 4000.0, "exit": 4000.0, "sl": 4007.0, "tp": 3970.0,
+            "initialR": 7.0, "finalSl": 4007.0, "beReachedTs": 0,
+            "exitType": "OPEN_AT_END", "pts": 0.0, "netPts": 0.0,
+            "rMultiple": 0.0, "volume": 0.05, "marginUsd": 400.0,
+            "side": "SELL", "spreadPts": 0.2, "commissionPts": 0.0,
+            "slippagePts": 0.0, "isOpenAtEnd": True,
+        }
+        bars = [
+            [4000.0, 4020.0, 3999.0, 4000.0, ts0],
+            [4000.0, 4001.0, 3999.0, 4000.0, ts0 + 300_000],
+        ]
+        sc = engine._build_portfolio_scenario_comparison(
+            [], [position], 0.05, 350.0, 100.0,
+            margin_call_level_pct=100.0, stop_out_level_pct=75.0,
+            market_m5_bars=bars, market_spread_pts=0.2,
+        )["scenarioWithoutDca"]
+        mark = next(p for p in sc["timelineSnapshots"] if p["ts"] == ts0 + 300_000)
+        self.assertAlmostEqual(mark["intrabarAdverseMarginLevelPct"], 62.25, places=2)
+        self.assertTrue(mark["intrabarStopOutRiskObserved"])
+        self.assertGreater(mark["marginLevelPct"], 75.0)
+        self.assertFalse(sc["stopOutLiquidationSimulated"])
+        self.assertFalse(sc["brokerStopOutExecutionVerified"])
+        self.assertEqual(sc["endingBalanceUsd"], 350.0)
+
+    def test_T74_midbar_entry_disables_intrabar_stress_for_mixed_exposure(self):
+        """Do not attribute a whole-bar wick to a position entered mid-bar."""
+        ts0 = 1800700000000
+        position = {
+            "ticket": 507001, "tsMs": ts0 + 150_000,
+            "exitTsMs": ts0 + 300_000,
+            "entry": 4000.0, "exit": 4000.0, "sl": 3993.0, "tp": 4030.0,
+            "initialR": 7.0, "finalSl": 3993.0, "beReachedTs": 0,
+            "exitType": "OPEN_AT_END", "pts": 0.0, "netPts": 0.0,
+            "rMultiple": 0.0, "volume": 0.05, "marginUsd": 400.0,
+            "side": "BUY", "spreadPts": 0.0, "commissionPts": 0.0,
+            "slippagePts": 0.0, "isOpenAtEnd": True,
+        }
+        bars = [
+            [4000.0, 4001.0, 3000.0, 4000.0, ts0],
+        ]
+        sc = engine._build_portfolio_scenario_comparison(
+            [], [position], 0.05, 350.0, 100.0,
+            market_m5_bars=bars, market_spread_pts=0.0,
+        )["scenarioWithoutDca"]
+        mark = next(p for p in sc["timelineSnapshots"] if p["ts"] == ts0 + 300_000)
+        self.assertIsNone(mark["intrabarAdverseMarginLevelPct"])
+        self.assertFalse(mark["intrabarStopOutRiskObserved"])
+        self.assertEqual(sc["intrabarMarginRiskSnapshots"], 0)
+        self.assertIsNone(sc["intrabarMinMarginLevelPct"])
+        self.assertEqual(sc["endingBalanceUsd"], 350.0)
+        self.assertFalse(sc["stopOutLiquidationSimulated"])
+
     def test_T60_corrupted_config_on_startup_never_defaults_to_002_and_blocks_new_orders(self):
         """T60 (Section VI, Task 8 & Task 9): Simulated power-loss / corrupted config file marks config unverified, returns fixedLot=null (not 0.02), and blocks /api/v1/mt5/order until repaired."""
         node_verify = r"""
