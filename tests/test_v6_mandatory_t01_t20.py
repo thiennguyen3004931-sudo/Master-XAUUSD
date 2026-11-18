@@ -986,6 +986,45 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertFalse(blocked[0].get("submitted"))
         self.assertTrue(any(r.get("ok") for r in results))
 
+    def test_T69_real_entry_flags_alone_cannot_bypass_broker_binding(self):
+        """T69: REAL order must verify terminal, broker account and Expert state."""
+        broker = SafeMockBroker(trade_mode=2)
+        base = {
+            "side": "BUY", "volume": 0.01,
+            "slDistance": 6.8, "tpDistance": 16.0,
+            "liveAuthorized": True, "liveArmed": True,
+            "explicitLiveGateConfirmed": True,
+        }
+        missing = engine.execute_order(broker, "XAUUSD.G", base)
+        self.assertFalse(missing["ok"])
+        self.assertFalse(missing["submitted"])
+        self.assertEqual(missing["status"], "BLOCKED_LIVE_ACCOUNT_BINDING")
+        self.assertEqual(broker.sent, [])
+
+        bound = dict(base, login=str(broker.login_id), server=broker.server_name, accountMode="LIVE")
+        from unittest.mock import patch
+        with patch.object(broker, "terminal_info", return_value=None):
+            no_terminal = engine.execute_order(broker, "XAUUSD.G", bound)
+        self.assertFalse(no_terminal["ok"])
+        self.assertEqual(no_terminal["status"], "BLOCKED_LIVE_EXECUTION_GATE")
+        self.assertEqual(broker.sent, [])
+
+        original_account_info = broker.account_info
+        def expert_disabled():
+            acct = original_account_info()
+            acct.trade_expert = False
+            return acct
+        with patch.object(broker, "account_info", side_effect=expert_disabled):
+            no_expert = engine.execute_order(broker, "XAUUSD.G", bound)
+        self.assertFalse(no_expert["ok"])
+        self.assertEqual(no_expert["status"], "BLOCKED_LIVE_EXECUTION_GATE")
+        self.assertEqual(broker.sent, [])
+
+        mismatched = dict(bound, server="DIFFERENT-REAL-BROKER")
+        wrong_server = engine.execute_order(broker, "XAUUSD.G", mismatched)
+        self.assertFalse(wrong_server["ok"])
+        self.assertEqual(broker.sent, [])
+
     def test_T25_quote_movement_pushing_sl_above_8_usd_blocks_at_execute_order(self):
         """T25 (Section 1.4 & 5): Quote thay đổi ngay trước order_send làm SL vượt 8 giá thì bị chặn (WAIT_PULLBACK)."""
         mt5 = SafeMockBroker(equity=4000.0)
