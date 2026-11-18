@@ -916,10 +916,12 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertTrue(all(not r.get("submitted") for r in results))
 
         def failed_lock():
-            raise OSError("synthetic OS lock failure")
+            raise engine._EntryExecutionLockUnavailable("synthetic OS lock failure")
 
-        with patch.object(engine, "_strict_new_order_lock", side_effect=failed_lock), \\
-             patch.object(engine, "_execute_order_serialized") as internal:
+        with (
+            patch.object(engine, "_strict_new_order_lock", side_effect=failed_lock),
+            patch.object(engine, "_execute_order_serialized") as internal,
+        ):
             blocked = engine.execute_order(None, "XAUUSD.G", {})
         self.assertFalse(blocked["ok"])
         self.assertFalse(blocked["submitted"])
