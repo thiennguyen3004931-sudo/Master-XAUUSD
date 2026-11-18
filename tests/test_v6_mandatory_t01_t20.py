@@ -2749,7 +2749,9 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         )["scenarioWithoutDca"]
         mark = next(p for p in sc["timelineSnapshots"] if p["ts"] == ts0 + 300_000)
         self.assertEqual(mark["openCount"], 2)
-        self.assertAlmostEqual(mark["intrabarAdverseMarginLevelPct"], 100.0, places=2)
+        # Two 0.05-lot BUY positions lose $50 each at BID low 3990;
+        # adverse equity $900 / combined used margin $800 = 112.5%.
+        self.assertAlmostEqual(mark["intrabarAdverseMarginLevelPct"], 112.5, places=2)
         self.assertEqual(mark["usedMarginUsd"], 800.0)
         self.assertFalse(sc["stopOutLiquidationSimulated"])
         self.assertEqual(sc["endingBalanceUsd"], 1000.0)
