@@ -49,6 +49,10 @@ class MockBroker:
     def order_calc_margin(self, kind, symbol, lot, price):
         return lot * price
 
+    def orders_get(self, *args, **kwargs):
+        # Default mock confirms an empty pending-order inventory.
+        return []
+
     def history_deals_get(self, from_ts, to_ts):
         # Verified empty history is distinct from missing/unavailable history API.
         return []
@@ -108,6 +112,26 @@ class ExecutionRiskTest(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self._tmp_rt, ignore_errors=True)
+    def test_pending_orders_read_fail_closed(self):
+        for failure in ("missing", "exception", "none"):
+            with self.subTest(failure=failure):
+                mt5 = MockBroker()
+                if failure == "missing":
+                    mt5.orders_get = None
+                elif failure == "exception":
+                    def unavailable(*args, **kwargs):
+                        raise RuntimeError("mock read failure")
+                    mt5.orders_get = unavailable
+                else:
+                    mt5.orders_get = lambda *args, **kwargs: None
+                result = engine.execute_order(mt5, "XAUUSD.G", {
+                    "side": "BUY", "volume": 0.02, "slDistance": 7,
+                    "tpDistance": 16
+                })
+                self.assertFalse(result["ok"], result)
+                self.assertEqual(result["status"], "BLOCKED_PENDING_ORDERS_UNVERIFIED")
+                self.assertEqual(mt5.sent, [])
+
     def test_above_risk_budget_emits_warning_without_blocking_fixed_lot(self):
         mt5 = MockBroker()
         result = engine.execute_order(mt5, "XAUUSD.G", {
