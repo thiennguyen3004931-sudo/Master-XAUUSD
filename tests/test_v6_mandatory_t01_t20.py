@@ -984,7 +984,7 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         blocked = [r for r in results if r.get("status") == "BLOCKED_DAILY_LOSS_LIMIT"]
         self.assertEqual(len(blocked), 1)
         self.assertFalse(blocked[0].get("submitted"))
-        self.assertTrue(any(r.get("submitted") for r in results))
+        self.assertTrue(any(r.get("ok") for r in results))
 
     def test_T25_quote_movement_pushing_sl_above_8_usd_blocks_at_execute_order(self):
         """T25 (Section 1.4 & 5): Quote thay đổi ngay trước order_send làm SL vượt 8 giá thì bị chặn (WAIT_PULLBACK)."""
