@@ -192,6 +192,37 @@ class TradeRulesTest(unittest.TestCase):
         self.assertFalse(missing["active"])
         self.assertTrue(missing["expired"])
 
+    def test_wait_pullback_rejects_malformed_time_and_unbounded_expiry(self):
+        """Corrupted persisted state must never resurrect a wide-stop setup."""
+        from xauusd_v6_trade_rules import (
+            evaluate_wait_pullback_expiry, WAIT_PULLBACK_MAX_AGE_MS
+        )
+        created = 1795000000000
+        valid = {
+            "createdAtTs": created,
+            "expiresAtTs": created + WAIT_PULLBACK_MAX_AGE_MS,
+        }
+        for state, now in [
+            ({}, created + 1),
+            ({"expiresAtTs": created + 1000}, created + 1),
+            ({"createdAtTs": "broken", "expiresAtTs": created + 1000}, created + 1),
+            ({**valid, "createdAtTs": 0}, created + 1),
+            ({**valid, "expiresAtTs": created - 1}, created + 1),
+            ({**valid, "expiresAtTs": created + WAIT_PULLBACK_MAX_AGE_MS + 1}, created + 1),
+            ({**valid, "expiresAtTs": True}, created + 1),
+            (valid, 0),
+            (valid, "not-a-time"),
+            (valid, created - 1),
+        ]:
+            with self.subTest(state=state, now=now):
+                outcome = evaluate_wait_pullback_expiry(state, now)
+                self.assertFalse(outcome["active"])
+                self.assertTrue(outcome["expired"])
+                self.assertEqual(outcome["status"], "WAIT_PULLBACK_INVALID_STATE")
+        active = evaluate_wait_pullback_expiry(valid, created + 1)
+        self.assertTrue(active["active"])
+        self.assertEqual(active["remainingMs"], WAIT_PULLBACK_MAX_AGE_MS - 1)
+
     def test_score_is_not_probabilistic_winrate(self):
         m5, m15, h1, h4 = self.fixtures()
         plan = evaluate_entry(m5, m15, h1, h4, 4018.5, 4018.7, "BOT_1_TREND", 95)
