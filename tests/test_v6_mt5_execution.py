@@ -137,6 +137,52 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(len(mt5.sent), 0)
 
+    def test_buy_sell_wide_structural_sl_waits_without_broker_submission(self):
+        """Actual execution gateway must not shrink a >8 USD structural stop."""
+        for side, stop, tp, invalidation in [
+            ("BUY", 3992.10, 4017.0, 3992.50),   # 4000.20 - 3992.10 = 8.10
+            ("SELL", 4008.10, 3983.0, 4007.90),  # 4008.10 - 4000.00 = 8.10
+        ]:
+            with self.subTest(side=side):
+                broker = MockBroker()
+                cfg = {
+                    "side": side, "volume": 0.02,
+                    "explicitSlPrice": stop, "explicitTpPrice": tp,
+                    "structuralInvalidationPrice": invalidation,
+                    "minRewardRisk": 1.2,
+                }
+                rejected = engine.execute_order(broker, "XAUUSD.G", cfg)
+                self.assertFalse(rejected["ok"], rejected)
+                self.assertFalse(rejected.get("submitted", False))
+                self.assertEqual(rejected["status"], "WAIT_PULLBACK")
+                self.assertGreater(rejected["slDistance"], 8.0)
+                self.assertEqual(broker.sent, [])
+
+                # A confirmed non-submission is safe to reevaluate after a
+                # pullback; unlike unknown broker fills it must not latch
+                # BLOCKED_UNCERTAIN_PREVIOUS_ENTRY.
+                again = engine.execute_order(broker, "XAUUSD.G", cfg)
+                self.assertEqual(again["status"], "WAIT_PULLBACK")
+                self.assertEqual(broker.sent, [])
+
+    def test_buy_sell_exactly_eight_usd_sl_is_not_forced_to_pullback(self):
+        """8.00 is an inclusive maximum at the final broker quote."""
+        for side, stop, tp, invalidation in [
+            ("BUY", 3992.20, 4017.0, 3992.50),
+            ("SELL", 4008.00, 3983.0, 4007.80),
+        ]:
+            with self.subTest(side=side):
+                broker = MockBroker()
+                result = engine.execute_order(broker, "XAUUSD.G", {
+                    "side": side, "volume": 0.02,
+                    "explicitSlPrice": stop, "explicitTpPrice": tp,
+                    "structuralInvalidationPrice": invalidation,
+                    "minRewardRisk": 1.2,
+                })
+                self.assertTrue(result["ok"], result)
+                self.assertEqual(len(broker.sent), 1)
+                self.assertEqual(broker.sent[0]["sl"], stop)
+
     def test_lot_not_rounded_up_to_broker_step(self):
         mt5 = MockBroker()
         result = engine.execute_order(mt5, "XAUUSD.G", {
