@@ -235,6 +235,54 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertTrue(result["uncertain"])
         self.assertEqual(len(mt5.sent), 1)
 
+    def test_uncertain_entry_freeze_survives_restart_and_blocks_retry(self):
+        """P0: An ambiguous broker submission must freeze future entries."""
+        class NoResponseBroker(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                return None
+
+        broker = NoResponseBroker()
+        cfg = {"side": "BUY", "volume": 0.02, "slDistance": 6.8, "tpDistance": 16.0}
+        first = engine.execute_order(broker, "XAUUSD.G", cfg)
+        self.assertFalse(first["ok"])
+        self.assertTrue(first["submitted"])
+        self.assertTrue(first["uncertain"])
+        self.assertEqual(len(broker.sent), 1)
+
+        # New broker object simulates a restarted process sharing runtime state.
+        restarted_broker = MockBroker()
+        blocked = engine.execute_order(restarted_broker, "XAUUSD.G", cfg)
+        self.assertFalse(blocked["ok"])
+        self.assertFalse(blocked["submitted"])
+        self.assertEqual(blocked["status"], "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY")
+        self.assertEqual(restarted_broker.sent, [])
+
+        # A corrupt persistent marker must block rather than authorize orders.
+        (engine.RUNTIME_DIR / "v6-uncertain-entry-state.json").write_text(
+            "{partial", encoding="utf-8"
+        )
+        invalid = engine.execute_order(restarted_broker, "XAUUSD.G", cfg)
+        self.assertFalse(invalid["ok"])
+        self.assertFalse(invalid["submitted"])
+        self.assertEqual(invalid["status"], "BLOCKED_ENTRY_STATE_UNAVAILABLE")
+        self.assertEqual(restarted_broker.sent, [])
+
+    def test_crash_during_entry_leaves_persistent_freeze(self):
+        """P0: A crash after durable intent but before response is not retried."""
+        from unittest.mock import patch
+
+        broker = MockBroker()
+        cfg = {"side": "BUY", "volume": 0.02, "slDistance": 6.8, "tpDistance": 16.0}
+        with patch.object(engine, "_execute_order_serialized", side_effect=RuntimeError("synthetic crash")):
+            with self.assertRaises(RuntimeError):
+                engine.execute_order(broker, "XAUUSD.G", cfg)
+
+        blocked = engine.execute_order(MockBroker(), "XAUUSD.G", cfg)
+        self.assertFalse(blocked["ok"])
+        self.assertFalse(blocked["submitted"])
+        self.assertEqual(blocked["status"], "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY")
+
     def test_broker_timeout_and_connection_loss_are_not_confirmed_rejections(self):
         class TransportIssueBroker(MockBroker):
             def __init__(self, code):
