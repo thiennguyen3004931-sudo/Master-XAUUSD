@@ -657,12 +657,33 @@ def _plan(
 
 
 def evaluate_wait_pullback_expiry(wait_state, current_ts_ms):
-    """Check whether a stored WAIT_PULLBACK setup is still valid or has expired (Section IV)."""
+    """Fail closed on missing, corrupt, or inconsistent WAIT_PULLBACK timestamps."""
+    invalid = {
+        "active": False,
+        "expired": True,
+        "status": "WAIT_PULLBACK_INVALID_STATE",
+        "reason": "Missing or invalid WAIT_PULLBACK timestamp state",
+    }
     if not isinstance(wait_state, dict):
-        return {"active": False, "expired": True, "reason": "Missing WAIT_PULLBACK state"}
-    created_ts = int(wait_state.get("createdAtTs") or 0)
-    expires_ts = int(wait_state.get("expiresAtTs") or (created_ts + WAIT_PULLBACK_MAX_AGE_MS))
-    cur_ts = int(current_ts_ms or 0)
+        return invalid
+    try:
+        # Reject booleans, non-integral floats, and malformed timestamps instead
+        # of silently converting them into a seemingly valid entry window.
+        fields = (wait_state.get("createdAtTs"), wait_state.get("expiresAtTs"), current_ts_ms)
+        if any(isinstance(value, bool) or value is None for value in fields):
+            return invalid
+        created_ts, expires_ts, cur_ts = (int(value) for value in fields)
+        if any(str(value).strip() != str(parsed) for value, parsed in zip(fields, (created_ts, expires_ts, cur_ts))):
+            return invalid
+    except (ValueError, TypeError, OverflowError):
+        return invalid
+    if (
+        created_ts <= 0 or cur_ts <= 0
+        or expires_ts <= created_ts
+        or expires_ts - created_ts > WAIT_PULLBACK_MAX_AGE_MS
+        or cur_ts < created_ts
+    ):
+        return invalid
     if cur_ts > expires_ts:
         return {"active": False, "expired": True, "status": "WAIT_PULLBACK_EXPIRED", "reason": "WAIT_PULLBACK setup expired"}
     return {"active": True, "expired": False, "status": "WAIT_PULLBACK_ACTIVE", "remainingMs": expires_ts - cur_ts}
