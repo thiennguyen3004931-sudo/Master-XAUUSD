@@ -928,6 +928,64 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertEqual(blocked["status"], "BLOCKED_ENTRY_LOCK_UNAVAILABLE")
         internal.assert_not_called()
 
+    def test_T68_concurrent_real_gateway_rechecks_shared_daily_risk(self):
+        """T68: Two concurrent offline entries share the actual broker budget."""
+        import concurrent.futures
+        import threading
+
+        broker = SafeMockBroker(equity=4000.0)
+        broker.pending_orders = []
+        broker.positions = []
+        barrier = threading.Barrier(3)
+        original_send = broker.order_send
+
+        def send_and_register(request):
+            result = original_send(request)
+            if request.get("action") == broker.TRADE_ACTION_DEAL and "position" not in request:
+                ticket = 880001
+                broker.positions.append(SimpleNamespace(
+                    ticket=ticket, identifier=ticket, symbol=request["symbol"],
+                    type=request["type"], volume=request["volume"],
+                    price_open=request["price"], price_current=request["price"],
+                    sl=request["sl"], tp=request["tp"], magic=270715,
+                    comment="V6_CONCURRENT_TEST",
+                ))
+                return SimpleNamespace(
+                    retcode=10009, order=ticket, deal=ticket + 1,
+                    volume=request["volume"], price=request["price"],
+                )
+            return result
+
+        broker.order_send = send_and_register
+        config = {
+            "side": "BUY", "volume": 0.02, "slDistance": 6.8,
+            "tpDistance": 16.0, "maxDailyLossPercent": 0.5,
+            "reconcileRetryDelaySec": 0,
+        }
+
+        def enter():
+            barrier.wait(timeout=10)
+            return engine.execute_order(broker, "XAUUSD.G", dict(config))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(enter)
+            second = pool.submit(enter)
+            barrier.wait(timeout=10)
+            results = [first.result(timeout=15), second.result(timeout=15)]
+
+        # The initial proposed 0.02 lot uses ~$14.28 of the $20 daily
+        # risk budget. A second 0.02 lot would exceed that budget.
+        submitted_entries = [
+            r for r in broker.sent
+            if r.get("action") == broker.TRADE_ACTION_DEAL and "position" not in r
+        ]
+        self.assertEqual(len(submitted_entries), 1)
+        self.assertEqual(len(broker.positions), 1)
+        blocked = [r for r in results if r.get("status") == "BLOCKED_DAILY_LOSS_LIMIT"]
+        self.assertEqual(len(blocked), 1)
+        self.assertFalse(blocked[0].get("submitted"))
+        self.assertTrue(any(r.get("submitted") for r in results))
+
     def test_T25_quote_movement_pushing_sl_above_8_usd_blocks_at_execute_order(self):
         """T25 (Section 1.4 & 5): Quote thay đổi ngay trước order_send làm SL vượt 8 giá thì bị chặn (WAIT_PULLBACK)."""
         mt5 = SafeMockBroker(equity=4000.0)
