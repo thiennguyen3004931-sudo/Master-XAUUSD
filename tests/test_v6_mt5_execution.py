@@ -43,8 +43,11 @@ class MockBroker:
         return SimpleNamespace(ask=self.asks, bid=self.bids, time=int(time.time()))
 
     def account_info(self):
-        return SimpleNamespace(equity=4000.0, balance=4000.0, login=5201362,
-                               server="MOCK-DEMO", trade_mode=0)
+        return SimpleNamespace(equity=4000.0, balance=4000.0, margin_free=4000.0,
+                               login=5201362, server="MOCK-DEMO", trade_mode=0)
+
+    def order_calc_margin(self, kind, symbol, lot, price):
+        return lot * price
 
     def history_deals_get(self, from_ts, to_ts):
         # Verified empty history is distinct from missing/unavailable history API.
@@ -127,6 +130,72 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertEqual(len(mt5.sent), 1)
         self.assertGreater(mt5.sent[0]["tp"], mt5.sent[0]["price"])
         self.assertLess(mt5.sent[0]["sl"], mt5.sent[0]["price"])
+
+    def test_margin_data_or_calculation_failure_blocks_new_orders(self):
+        """P0: missing, invalid or inaccessible broker margin cannot submit."""
+        from unittest.mock import patch
+
+        scenarios = [
+            ("missing_free_margin", None, None),
+            ("nan_free_margin", float("nan"), None),
+            ("zero_free_margin", 0.0, None),
+            ("negative_free_margin", -5.0, None),
+            ("invalid_free_margin", "unavailable", None),
+            ("missing_margin_api", 4000.0, "missing"),
+            ("none_margin", 4000.0, None),
+            ("nan_margin", 4000.0, float("nan")),
+            ("negative_margin", 4000.0, -1.0),
+            ("zero_margin", 4000.0, 0.0),
+            ("margin_exception", 4000.0, "raise"),
+        ]
+        cfg = {"side": "BUY", "volume": 0.02, "slDistance": 6.8, "tpDistance": 16}
+        for label, free, required in scenarios:
+            with self.subTest(case=label):
+                broker = MockBroker()
+                old_info = broker.account_info
+                def with_margin():
+                    account = old_info()
+                    if label == "missing_free_margin":
+                        del account.margin_free
+                    else:
+                        account.margin_free = free
+                    return account
+
+                def margin_calc(*args):
+                    if required == "raise":
+                        raise RuntimeError("mock broker unavailable")
+                    return required
+
+                with patch.object(broker, "account_info", side_effect=with_margin):
+                    if label == "missing_margin_api":
+                        broker.order_calc_margin = None
+                        outcome = engine.execute_order(broker, "XAUUSD.G", cfg)
+                    elif label in ("missing_free_margin", "nan_free_margin", "zero_free_margin",
+                                   "negative_free_margin", "invalid_free_margin"):
+                        outcome = engine.execute_order(broker, "XAUUSD.G", cfg)
+                    else:
+                        with patch.object(broker, "order_calc_margin", side_effect=margin_calc):
+                            outcome = engine.execute_order(broker, "XAUUSD.G", cfg)
+                self.assertFalse(outcome["ok"], outcome)
+                self.assertFalse(outcome.get("submitted", False), outcome)
+                self.assertEqual(outcome.get("status"), "BLOCKED_MARGIN_UNVERIFIED", outcome)
+                self.assertEqual(broker.sent, [])
+
+    def test_margin_reserve_is_required_but_valid_margin_allows_entry(self):
+        """P0: margin requirement must be below the conservative 95% budget."""
+        from unittest.mock import patch
+        cfg = {"side": "BUY", "volume": 0.02, "slDistance": 6.8, "tpDistance": 16}
+        broker = MockBroker()
+        with patch.object(broker, "order_calc_margin", return_value=3800.01):
+            blocked = engine.execute_order(broker, "XAUUSD.G", cfg)
+        self.assertEqual(blocked.get("status"), "BLOCKED_INSUFFICIENT_MARGIN")
+        self.assertFalse(blocked.get("submitted", False))
+        self.assertEqual(broker.sent, [])
+
+        with patch.object(broker, "order_calc_margin", return_value=100.0):
+            allowed = engine.execute_order(broker, "XAUUSD.G", cfg)
+        self.assertTrue(allowed["ok"], allowed)
+        self.assertEqual(len(broker.sent), 1)
 
     def test_high_spread_is_rejected(self):
         mt5 = MockBroker()

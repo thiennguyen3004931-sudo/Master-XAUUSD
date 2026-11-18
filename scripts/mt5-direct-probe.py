@@ -2088,17 +2088,32 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
             f"WARNING_DRAWDOWN: Drawdown hiện tại {cur_dd_pct:.2f}% vượt ngưỡng cảnh báo {warn_dd_pct:.2f}%"
         )
 
-    # Mandatory broker safety gate: Free Margin MUST still pass!
-    free_margin_attr = getattr(account, "margin_free", None)
-    free_margin_val = float(free_margin_attr) if free_margin_attr is not None else None
-    if free_margin_val is not None:
-        if not isfinite(free_margin_val) or free_margin_val <= 0:
-            return {"ok": False, "message": "Rejected: insufficient free margin"}
-        calc_margin = getattr(mt5, "order_calc_margin", None)
-        if callable(calc_margin):
-            needed_margin = calc_margin(order_type, active_symbol, volume, price)
-            if needed_margin is None or not isfinite(float(needed_margin)) or float(needed_margin) > free_margin_val * 0.95:
-                return {"ok": False, "message": "Rejected: insufficient free margin for requested order"}
+    # Mandatory broker safety gate: never assume free margin or order margin.
+    # A missing, malformed or inaccessible broker API must fail closed.
+    try:
+        free_margin_val = float(getattr(account, "margin_free", None))
+    except (TypeError, ValueError, OverflowError):
+        return {"ok": False, "submitted": False, "status": "BLOCKED_MARGIN_UNVERIFIED",
+                "message": "Cannot verify broker free margin for new entry"}
+    if not isfinite(free_margin_val) or free_margin_val <= 0:
+        return {"ok": False, "submitted": False, "status": "BLOCKED_MARGIN_UNVERIFIED",
+                "message": "Broker free margin unavailable or insufficient"}
+    calc_margin = getattr(mt5, "order_calc_margin", None)
+    if not callable(calc_margin):
+        return {"ok": False, "submitted": False, "status": "BLOCKED_MARGIN_UNVERIFIED",
+                "message": "Broker order_calc_margin API unavailable"}
+    try:
+        margin_raw = calc_margin(order_type, active_symbol, volume, price)
+        needed_margin = float(margin_raw)
+    except Exception:
+        return {"ok": False, "submitted": False, "status": "BLOCKED_MARGIN_UNVERIFIED",
+                "message": "Broker order_calc_margin failed"}
+    if not isfinite(needed_margin) or needed_margin <= 0:
+        return {"ok": False, "submitted": False, "status": "BLOCKED_MARGIN_UNVERIFIED",
+                "message": "Broker order margin is invalid"}
+    if needed_margin > free_margin_val * 0.95:
+        return {"ok": False, "submitted": False, "status": "BLOCKED_INSUFFICIENT_MARGIN",
+                "message": "Rejected: requested order exceeds 95% of verified free margin"}
 
     try:
         existing_positions = mt5.positions_get()
