@@ -2782,6 +2782,42 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertEqual(sc["intrabarMarginRiskSnapshots"], 0)
         self.assertEqual(sc["endingBalanceUsd"], 1000.0)
 
+    def test_T77_hedged_buy_sell_ohlc_stress_is_not_broker_liquidation(self):
+        """Opposite OHLC extremes are a conservative diagnostic, not simultaneous ticks."""
+        ts0 = 1801000000000
+        def position(ticket, side):
+            return {
+                "ticket": ticket, "tsMs": ts0, "exitTsMs": ts0 + 300_000,
+                "entry": 4000.0, "exit": 4000.0,
+                "sl": 3993.0 if side == "BUY" else 4007.0,
+                "tp": 4030.0 if side == "BUY" else 3970.0,
+                "initialR": 7.0, "finalSl": 3993.0 if side == "BUY" else 4007.0,
+                "beReachedTs": 0, "exitType": "OPEN_AT_END",
+                "pts": 0.0, "netPts": 0.0, "rMultiple": 0.0,
+                "volume": 0.05, "marginUsd": 400.0, "side": side,
+                "spreadPts": 0.0, "commissionPts": 0.0,
+                "slippagePts": 0.0, "isOpenAtEnd": True,
+            }
+        bars = [[4000.0, 4010.0, 3990.0, 4000.0, ts0]]
+        sc = engine._build_portfolio_scenario_comparison(
+            [], [position(510001, "BUY"), position(510002, "SELL")],
+            0.05, 1000.0, 100.0, market_m5_bars=bars,
+            market_spread_pts=0.0,
+        )["scenarioWithoutDca"]
+        mark = next(p for p in sc["timelineSnapshots"] if p["ts"] == ts0 + 300_000)
+        self.assertEqual(mark["openCount"], 2)
+        self.assertEqual(mark["usedMarginUsd"], 800.0)
+        # BUY's low and SELL's high are separate extrema; never call this
+        # an observed broker tick sequence or an executed stop-out.
+        self.assertFalse(sc["brokerStopOutExecutionVerified"])
+        self.assertFalse(sc["stopOutLiquidationSimulated"])
+        self.assertEqual(sc["endingBalanceUsd"], 1000.0)
+        self.assertEqual(mark["marginLevelPct"], 125.0)
+        if mark["intrabarAdverseMarginLevelPct"] is not None:
+            self.assertLessEqual(
+                mark["intrabarAdverseMarginLevelPct"], mark["marginLevelPct"]
+            )
+
     def test_T60_corrupted_config_on_startup_never_defaults_to_002_and_blocks_new_orders(self):
         """T60 (Section VI, Task 8 & Task 9): Simulated power-loss / corrupted config file marks config unverified, returns fixedLot=null (not 0.02), and blocks /api/v1/mt5/order until repaired."""
         node_verify = r"""
