@@ -1401,6 +1401,9 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
                 return (p_close - p_open) * vol * 100.0 if action == 0 else (p_open - p_close) * vol * 100.0
             def order_calc_margin(self, action, sym, vol, price):
                 return vol * 1000.0
+            def orders_get(self, *args, **kwargs):
+                # Explicitly verified empty pending inventory for T33's offline broker.
+                return []
             def order_send(self, req):
                 return SimpleNamespace(retcode=10009, order=7001, deal=8001, volume=req["volume"], price=req["price"])
             def history_deals_get(self, *args, **kwargs):
