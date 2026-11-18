@@ -248,6 +248,10 @@ def _cross_process_file_lock(file_path):
         fh.close()
 
 
+class _EntryExecutionLockUnavailable(Exception):
+    """Only raised when OS-level entry-lock acquisition fails."""
+
+
 # Serialize the entire new-order read/check/send/reconcile transaction.
 # A global runtime lock is intentionally stricter than account-scoped locking:
 # it prevents two local execution gateways from racing on the same broker.
@@ -259,29 +263,41 @@ def _strict_new_order_lock():
     """Fail closed if the OS cannot acquire an exclusive cross-process lock."""
     lock_path = RUNTIME_DIR / "v6-new-order-execution.lock"
     with _ENTRY_GATE_THREAD_LOCK:
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_path, "a+b") as fh:
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            fh = open(lock_path, "a+b")
+        except OSError as exc:
+            raise _EntryExecutionLockUnavailable(str(exc)) from exc
+        try:
             if os.name == "nt":
-                import msvcrt
-                fh.seek(0)
-                if fh.read(1) == b"":
+                try:
+                    import msvcrt
                     fh.seek(0)
-                    fh.write(b"\x00")
-                    fh.flush()
-                fh.seek(0)
-                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                    if fh.read(1) == b"":
+                        fh.seek(0)
+                        fh.write(b"\\x00")
+                        fh.flush()
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                except (OSError, ImportError) as exc:
+                    raise _EntryExecutionLockUnavailable(str(exc)) from exc
                 try:
                     yield
                 finally:
                     fh.seek(0)
                     msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
             else:
-                import fcntl
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                try:
+                    import fcntl
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                except (OSError, ImportError) as exc:
+                    raise _EntryExecutionLockUnavailable(str(exc)) from exc
                 try:
                     yield
                 finally:
                     fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            fh.close()
 
 
 def _load_json_state_unlocked(file_path):
@@ -1787,7 +1803,7 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
     try:
         with _strict_new_order_lock():
             return _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag)
-    except (OSError, ImportError) as exc:
+    except _EntryExecutionLockUnavailable as exc:
         return {
             "ok": False, "submitted": False,
             "status": "BLOCKED_ENTRY_LOCK_UNAVAILABLE",
