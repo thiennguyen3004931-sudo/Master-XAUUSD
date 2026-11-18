@@ -99,6 +99,81 @@ class TradeRulesTest(unittest.TestCase):
                 self.assertEqual(result["newTp"], tp)
                 self.assertFalse(result["tpModified"])
 
+    def test_management_sequence_pre_be_then_be_then_confirmed_m5_trail(self):
+        """Offline BUY/SELL lifecycle: reduce risk, reach BE at 1R, then trail."""
+        # Each M5 list contains ONLY closed candles with an actual 3-bar
+        # confirmed local pivot; later swings cannot affect earlier steps.
+        buy_early = [
+            [3999, 4000, 3997, 3999],
+            [3998, 3999, 3995, 3998],
+            [3999, 4001, 3997, 4000],
+            [4001, 4002, 3999, 4001],
+            [4002, 4003, 4000, 4002],
+        ]
+        buy_late = [
+            [4010, 4011, 4008, 4010],
+            [4009, 4010, 4006, 4009],
+            [4010, 4012, 4008, 4011],
+            [4011, 4013, 4009, 4012],
+            [4012, 4014, 4010, 4013],
+        ]
+        sell_early = [
+            [4001, 4003, 4000, 4001],
+            [4002, 4005, 4001, 4002],
+            [4001, 4003, 3999, 4000],
+            [3999, 4001, 3998, 3999],
+            [3998, 4000, 3997, 3998],
+        ]
+        sell_late = [
+            [3990, 3992, 3989, 3990],
+            [3991, 3994, 3990, 3991],
+            [3990, 3992, 3988, 3989],
+            [3989, 3991, 3987, 3988],
+            [3988, 3990, 3986, 3987],
+        ]
+        for side, initial_sl, tp, prices, early, late in [
+            ("BUY", 3993.2, 4040.0, [4003.0, 4007.0, 4014.0], buy_early, buy_late),
+            ("SELL", 4006.8, 3960.0, [3997.0, 3993.0, 3986.0], sell_early, sell_late),
+        ]:
+            with self.subTest(side=side):
+                previous_sl = initial_sl
+                favorable_extreme = 4000.0
+                actions = []
+                for index, price in enumerate(prices):
+                    confirmed_m5 = early if index < 2 else late
+                    result = evaluate_position_management_step(
+                        side=side,
+                        entry=4000.0,
+                        current_price=price,
+                        current_sl=previous_sl,
+                        current_tp=tp,
+                        initial_r=6.8,
+                        favorable_extreme=favorable_extreme,
+                        confirmed_m5=confirmed_m5,
+                        confirmed_m15=[],
+                        config={"enablePeakLock": False, "enableM5StructuralTrail": True},
+                    )
+                    self.assertTrue(result["shouldModifySl"], result)
+                    self.assertEqual(result["newTp"], tp)
+                    self.assertFalse(result["tpModified"])
+                    self.assertEqual(result["initialR"], 6.8)
+                    self.assertFalse(any("close" in key.lower() for key in result))
+                    if side == "BUY":
+                        self.assertGreater(result["newSl"], previous_sl)
+                        self.assertLess(result["newSl"], price)
+                    else:
+                        self.assertLess(result["newSl"], previous_sl)
+                        self.assertGreater(result["newSl"], price)
+                    previous_sl = result["newSl"]
+                    favorable_extreme = result["favorableExtreme"]
+                    actions.append(result["actionCode"])
+                self.assertEqual(actions, [
+                    "M5_STRUCTURAL_TRAIL_PRE_BE",
+                    "BE_1R",
+                    "M5_STRUCTURAL_TRAIL_POST_BE",
+                ])
+                self.assertTrue(result["atBeAfter"])
+
     def test_score_is_not_probabilistic_winrate(self):
         m5, m15, h1, h4 = self.fixtures()
         plan = evaluate_entry(m5, m15, h1, h4, 4018.5, 4018.7, "BOT_1_TREND", 95)
