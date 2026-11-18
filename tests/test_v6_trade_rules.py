@@ -174,6 +174,24 @@ class TradeRulesTest(unittest.TestCase):
                 ])
                 self.assertTrue(result["atBeAfter"])
 
+    def test_wait_pullback_expiry_boundary_is_fail_closed(self):
+        """Expired wide-stop setup must not be treated as an active entry."""
+        from xauusd_v6_trade_rules import evaluate_wait_pullback_expiry
+        created = 1795000000000
+        expires = created + 900000
+        state = {"createdAtTs": created, "expiresAtTs": expires}
+        before = evaluate_wait_pullback_expiry(state, expires - 1)
+        self.assertTrue(before["active"])
+        self.assertFalse(before["expired"])
+        self.assertEqual(before["remainingMs"], 1)
+        after = evaluate_wait_pullback_expiry(state, expires + 1)
+        self.assertFalse(after["active"])
+        self.assertTrue(after["expired"])
+        self.assertEqual(after["status"], "WAIT_PULLBACK_EXPIRED")
+        missing = evaluate_wait_pullback_expiry(None, expires)
+        self.assertFalse(missing["active"])
+        self.assertTrue(missing["expired"])
+
     def test_score_is_not_probabilistic_winrate(self):
         m5, m15, h1, h4 = self.fixtures()
         plan = evaluate_entry(m5, m15, h1, h4, 4018.5, 4018.7, "BOT_1_TREND", 95)
