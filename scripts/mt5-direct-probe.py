@@ -1831,6 +1831,7 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
     tp_points_price = float(cfg_o.get("tpDistance") or 16.0)
 
     # Gate 1: Terminal connection & Account binding / LIVE authorization check
+    term_info = None
     if callable(getattr(mt5, "terminal_info", None)):
         try:
             term_info = mt5.terminal_info()
