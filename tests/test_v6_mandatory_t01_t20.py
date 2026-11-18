@@ -884,6 +884,48 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertFalse(second.get("submitted"))
         self.assertEqual(mt5.sent, [])
 
+    def test_T67_concurrent_new_orders_are_serialized_and_lock_failure_blocks(self):
+        """T67: New-order risk/read/send gateway cannot run concurrently."""
+        import concurrent.futures
+        import threading
+        from unittest.mock import patch
+
+        stats = {"active": 0, "max_active": 0, "calls": 0}
+        mutex = threading.Lock()
+        started = threading.Event()
+
+        def fake_serialized(mt5, symbol, cfg, tag):
+            with mutex:
+                stats["active"] += 1
+                stats["calls"] += 1
+                stats["max_active"] = max(stats["max_active"], stats["active"])
+                started.set()
+            time.sleep(0.06)
+            with mutex:
+                stats["active"] -= 1
+            return {"ok": False, "submitted": False, "status": "SIMULATED_ONLY"}
+
+        with patch.object(engine, "_execute_order_serialized", side_effect=fake_serialized):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                a = pool.submit(engine.execute_order, None, "XAUUSD.G", {})
+                self.assertTrue(started.wait(timeout=5))
+                b = pool.submit(engine.execute_order, None, "XAUUSD.G", {})
+                results = [a.result(timeout=10), b.result(timeout=10)]
+        self.assertEqual(stats["calls"], 2)
+        self.assertEqual(stats["max_active"], 1)
+        self.assertTrue(all(not r.get("submitted") for r in results))
+
+        def failed_lock():
+            raise OSError("synthetic OS lock failure")
+
+        with patch.object(engine, "_strict_new_order_lock", side_effect=failed_lock), \\
+             patch.object(engine, "_execute_order_serialized") as internal:
+            blocked = engine.execute_order(None, "XAUUSD.G", {})
+        self.assertFalse(blocked["ok"])
+        self.assertFalse(blocked["submitted"])
+        self.assertEqual(blocked["status"], "BLOCKED_ENTRY_LOCK_UNAVAILABLE")
+        internal.assert_not_called()
+
     def test_T25_quote_movement_pushing_sl_above_8_usd_blocks_at_execute_order(self):
         """T25 (Section 1.4 & 5): Quote thay đổi ngay trước order_send làm SL vượt 8 giá thì bị chặn (WAIT_PULLBACK)."""
         mt5 = SafeMockBroker(equity=4000.0)
