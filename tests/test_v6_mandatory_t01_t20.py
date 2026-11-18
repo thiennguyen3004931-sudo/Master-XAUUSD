@@ -2602,6 +2602,13 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertEqual(sc["marginCallBreachedSnapshots"], 3)
         self.assertEqual(sc["stopOutBreachedSnapshots"], 3)
         self.assertFalse(sc["stopOutLiquidationSimulated"])
+        self.assertTrue(sc["marginEventsAreObservationsOnly"])
+        self.assertFalse(sc["intrabarMarginStressSimulated"])
+        self.assertFalse(sc["brokerStopOutExecutionVerified"])
+        # A stop-out observation MUST NOT silently settle the position or
+        # mutate its simulated realized balance as if a broker liquidated it.
+        self.assertEqual(sc["settledPositions"], 1)
+        self.assertEqual(sc["endingBalanceUsd"], 320.0)
 
     def test_T60_corrupted_config_on_startup_never_defaults_to_002_and_blocks_new_orders(self):
         """T60 (Section VI, Task 8 & Task 9): Simulated power-loss / corrupted config file marks config unverified, returns fixedLot=null (not 0.02), and blocks /api/v1/mt5/order until repaired."""
