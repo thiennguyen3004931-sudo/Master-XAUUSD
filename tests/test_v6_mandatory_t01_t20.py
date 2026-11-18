@@ -264,6 +264,61 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertTrue(res["goodTok"])
         self.assertEqual(res["statusNoTok"], 401)
 
+    def test_T70_sensitive_api_routes_require_control_token(self):
+        """T70: All sensitive API endpoints reject missing or invalid tokens."""
+        node_verify = r"""
+        process.env.ZIQ_V6_CONTROL_TOKEN = 'offline_test_token_secure_2026';
+        const { handleApiRequest, setMt5EngineInvokerForTest } =
+          await import('./scripts/xauusd-standalone-server.mjs');
+        let brokerCalls = 0;
+        setMt5EngineInvokerForTest(() => { brokerCalls++; throw new Error('BROKER MUST NOT RUN'); });
+        const endpoints = [
+          ['/api/v1/mt5/order', 'POST'],
+          ['/api/v1/mt5/close', 'POST'],
+          ['/api/v1/mt5/breakeven', 'POST'],
+          ['/api/v1/mt5/auto-bot', 'POST'],
+          ['/api/v1/mt5/arm-live', 'POST'],
+          ['/api/v1/mt5/emergency-stop', 'POST'],
+          ['/api/v1/mt5/connect-account', 'POST'],
+          ['/api/v1/mt5/positive-dca', 'POST'],
+          ['/api/v1/mt5/approve-proposal', 'POST'],
+          ['/api/v1/mt5/fixed-lot', 'POST'],
+          ['/api/v1/mt5/telegram-config', 'POST'],
+          ['/api/v1/mt5/run-backtest', 'POST'],
+          ['/api/v1/mt5/status', 'GET'],
+          ['/api/v1/overview', 'GET'],
+          ['/health', 'GET'],
+        ];
+        const origins = ['127.0.0.1', '192.168.1.25', '203.0.113.15'];
+        const results = [];
+        for (const [url, method] of endpoints) {
+          for (const remoteAddress of origins) {
+            for (const token of [null, 'incorrect_token']) {
+              const req = {
+                method, url,
+                headers: token ? { 'x-v6-control-token': token } : {},
+                socket: { remoteAddress },
+              };
+              let status = 0, response = '';
+              await handleApiRequest(req, {
+                writeHead(s) { status = s; },
+                end(body) { response = String(body || ''); },
+              });
+              results.push({ url, remoteAddress, status, hasToken: /offline_test_token_secure_2026/.test(response) });
+            }
+          }
+        }
+        console.log(JSON.stringify({ results, brokerCalls }));
+        """
+        out = subprocess.check_output(
+            ["node", "--input-type=module", "-e", node_verify], cwd=ROOT
+        ).decode("utf-8").strip()
+        result = json.loads(out.splitlines()[-1])
+        self.assertEqual(len(result["results"]), 90)
+        self.assertTrue(all(item["status"] == 401 for item in result["results"]))
+        self.assertTrue(all(not item["hasToken"] for item in result["results"]))
+        self.assertEqual(result["brokerCalls"], 0)
+
     def test_T04_localhost_and_lan_without_token_rejected(self):
         """T04: Gọi từ localhost/LAN không có token -> Từ chối."""
         node_verify = """
