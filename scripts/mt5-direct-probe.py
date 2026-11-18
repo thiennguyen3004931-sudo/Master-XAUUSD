@@ -2133,26 +2133,31 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
         open_risk += max(0.0, -float(old_profit)) * 1.05
 
     pending_risk = 0.0
-    if callable(getattr(mt5, "orders_get", None)):
-        try:
-            pending_orders = mt5.orders_get()
-        except Exception:
-            pending_orders = None
-        if pending_orders is None:
-            return {"ok": False, "message": "Cannot verify broker pending orders; new order blocked"}
-        for pend in pending_orders:
-            pend_sl = float(getattr(pend, "sl", 0) or 0)
-            if pend_sl <= 0:
-                return {"ok": False, "message": "A pending order has no SL; new orders blocked"}
-            pend_type_raw = int(getattr(pend, "type", 0) or 0)
-            pend_dir = 0 if pend_type_raw in (0, 2, 4, 6) else 1
-            pend_vol = float(getattr(pend, "volume_current", 0) or getattr(pend, "volume_initial", 0) or 0)
-            pend_price = float(getattr(pend, "price_open", 0) or price)
-            pend_sym = str(getattr(pend, "symbol", active_symbol))
-            pend_loss = calc(pend_dir, pend_sym, pend_vol, pend_price, pend_sl)
-            if pend_loss is None or not isfinite(float(pend_loss)):
-                return {"ok": False, "message": "Cannot compute pending order SL risk"}
-            pending_risk += max(0.0, -float(pend_loss)) * 1.05
+    # Mandatory pending-order inventory: missing broker API is NOT an empty order book.
+    orders_get = getattr(mt5, "orders_get", None)
+    if not callable(orders_get):
+        return {"ok": False, "submitted": False, "status": "BLOCKED_PENDING_ORDERS_UNVERIFIED",
+                "message": "Broker pending orders API unavailable; new order blocked"}
+    try:
+        pending_orders = orders_get()
+    except Exception:
+        pending_orders = None
+    if pending_orders is None:
+        return {"ok": False, "submitted": False, "status": "BLOCKED_PENDING_ORDERS_UNVERIFIED",
+                "message": "Cannot verify broker pending orders; new order blocked"}
+    for pend in pending_orders:
+        pend_sl = float(getattr(pend, "sl", 0) or 0)
+        if pend_sl <= 0:
+            return {"ok": False, "message": "A pending order has no SL; new orders blocked"}
+        pend_type_raw = int(getattr(pend, "type", 0) or 0)
+        pend_dir = 0 if pend_type_raw in (0, 2, 4, 6) else 1
+        pend_vol = float(getattr(pend, "volume_current", 0) or getattr(pend, "volume_initial", 0) or 0)
+        pend_price = float(getattr(pend, "price_open", 0) or price)
+        pend_sym = str(getattr(pend, "symbol", active_symbol))
+        pend_loss = calc(pend_dir, pend_sym, pend_vol, pend_price, pend_sl)
+        if pend_loss is None or not isfinite(float(pend_loss)):
+            return {"ok": False, "message": "Cannot compute pending order SL risk"}
+        pending_risk += max(0.0, -float(pend_loss)) * 1.05
 
     total_portfolio_risk_usd = round(open_risk + pending_risk + new_risk, 2)
     total_portfolio_risk_pct = round((total_portfolio_risk_usd / max(1.0, equity)) * 100.0, 2)
