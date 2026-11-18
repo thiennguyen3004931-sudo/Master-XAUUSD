@@ -293,6 +293,9 @@ class ExecutionRiskTest(unittest.TestCase):
                 return SimpleNamespace(retcode=self.code)
         for code in (10012, 10031):
             with self.subTest(code=code):
+                # Distinct mocked broker scenarios, not a retry of a prior
+                # ambiguous request; reset synthetic test state explicitly.
+                engine._write_uncertain_entry_state({})
                 mt5 = TransportIssueBroker(code)
                 result = engine.execute_order(mt5, "XAUUSD.G", {
                     "side": "SELL", "volume": 0.02,
