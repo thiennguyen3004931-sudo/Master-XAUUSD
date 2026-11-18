@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from xauusd_v6_trade_rules import (
-    evaluate_entry, structural_stop, trail_stop, peak_profit_stop, atr
+    evaluate_entry, structural_stop, trail_stop, peak_profit_stop, atr, evaluate_position_management_step
 )
 
 
@@ -61,6 +61,43 @@ class TradeRulesTest(unittest.TestCase):
         self.assertEqual(peak_profit_stop("BUY", 4000, 4030, 4000.25, 4035, 10), 4025)
         self.assertIsNone(peak_profit_stop("BUY", 4000, 4020, 4018, 4035, 10))
         self.assertIsNone(peak_profit_stop("SELL", 4000, 3970, 3974, 3965, 10))
+
+    def test_position_management_buy_sell_extreme_lock_preserves_tp(self):
+        """Closed-candle position management only tightens SL; never exits by signal."""
+        for side, entry, current, sl, tp, extreme, expected in [
+            ("BUY", 4000.0, 4020.0, 3993.2, 4040.0, 4025.0, 4015.0),
+            ("SELL", 4000.0, 3980.0, 4006.8, 3960.0, 3975.0, 3985.0),
+        ]:
+            with self.subTest(side=side):
+                result = evaluate_position_management_step(
+                    side=side, entry=entry, current_price=current,
+                    current_sl=sl, current_tp=tp, initial_r=6.8,
+                    favorable_extreme=extreme, confirmed_m5=[],
+                    confirmed_m15=[], config={"enablePeakLock": True},
+                )
+                self.assertTrue(result["shouldModifySl"], result)
+                self.assertEqual(result["newSl"], expected)
+                self.assertEqual(result["newTp"], tp)
+                self.assertFalse(result["tpModified"])
+                self.assertEqual(result["actionCode"], "EXTREME_10_USD_LOCK")
+                self.assertFalse(any("close" in key.lower() for key in result))
+
+    def test_position_management_never_widens_stop_or_changes_tp(self):
+        for side, entry, current, sl, tp, extreme in [
+            ("BUY", 4000.0, 4020.0, 4018.5, 4040.0, 4025.0),
+            ("SELL", 4000.0, 3980.0, 3981.5, 3960.0, 3975.0),
+        ]:
+            with self.subTest(side=side):
+                result = evaluate_position_management_step(
+                    side=side, entry=entry, current_price=current,
+                    current_sl=sl, current_tp=tp, initial_r=6.8,
+                    favorable_extreme=extreme, confirmed_m5=[],
+                    confirmed_m15=[], config={"enablePeakLock": True},
+                )
+                self.assertFalse(result["shouldModifySl"], result)
+                self.assertEqual(result["newSl"], sl)
+                self.assertEqual(result["newTp"], tp)
+                self.assertFalse(result["tpModified"])
 
     def test_score_is_not_probabilistic_winrate(self):
         m5, m15, h1, h4 = self.fixtures()
