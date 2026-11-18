@@ -192,6 +192,29 @@ class TradeRulesTest(unittest.TestCase):
         self.assertFalse(missing["active"])
         self.assertTrue(missing["expired"])
 
+    def test_wait_pullback_rejects_invalid_or_unbounded_timestamps(self):
+        from xauusd_v6_trade_rules import evaluate_wait_pullback_expiry
+        now = 1795000000000
+        for state, current in [
+            ({}, now),
+            ({"createdAtTs": "bad"}, now),
+            ({"createdAtTs": now, "expiresAtTs": "bad"}, now),
+            ({"createdAtTs": now + 1}, now),
+            ({"createdAtTs": now, "expiresAtTs": now + 3600001}, now),
+            ({"createdAtTs": now, "expiresAtTs": now - 1}, now),
+            ({"createdAtTs": now}, None),
+        ]:
+            with self.subTest(state=state, current=current):
+                result = evaluate_wait_pullback_expiry(state, current)
+                self.assertFalse(result["active"], result)
+                self.assertTrue(result["expired"], result)
+                self.assertEqual(result["status"], "WAIT_PULLBACK_INVALID")
+        valid = evaluate_wait_pullback_expiry(
+            {"createdAtTs": now, "expiresAtTs": now + 3600000}, now + 1800000
+        )
+        self.assertTrue(valid["active"])
+        self.assertEqual(valid["remainingMs"], 1800000)
+
     def test_score_is_not_probabilistic_winrate(self):
         m5, m15, h1, h4 = self.fixtures()
         plan = evaluate_entry(m5, m15, h1, h4, 4018.5, 4018.7, "BOT_1_TREND", 95)
