@@ -962,9 +962,9 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
 
         with patch.object(engine, "_execute_order_serialized", side_effect=fake_serialized):
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                a = pool.submit(engine.execute_order, None, "XAUUSD.G", {})
+                a = pool.submit(engine.execute_order, SafeMockBroker(), "XAUUSD.G", {})
                 self.assertTrue(started.wait(timeout=5))
-                b = pool.submit(engine.execute_order, None, "XAUUSD.G", {})
+                b = pool.submit(engine.execute_order, SafeMockBroker(), "XAUUSD.G", {})
                 results = [a.result(timeout=10), b.result(timeout=10)]
         self.assertEqual(stats["calls"], 2)
         self.assertEqual(stats["max_active"], 1)
@@ -1433,6 +1433,10 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertFalse(res_pending["reconciled"])
         self.assertTrue(res_pending["reconcileFreezeDca"])
 
+        # Independent mock scenarios: explicitly reset the prior synthetic
+        # uncertainty marker, as if broker reconciliation was completed.
+        # Production code does not automatically clear an uncertain entry.
+        engine._write_uncertain_entry_state({})
         res_delayed = engine.execute_order(RecMT5(pos_delay_reads=1, pos_ticket=9002), "XAUUSD.G", dict(cfg))
         self.assertTrue(res_delayed["ok"])
         self.assertTrue(res_delayed["reconciled"])
