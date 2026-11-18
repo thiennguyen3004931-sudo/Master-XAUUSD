@@ -2703,7 +2703,7 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         ts0 = 1800700000000
         position = {
             "ticket": 507001, "tsMs": ts0 + 150_000,
-            "exitTsMs": ts0 + 600_000,
+            "exitTsMs": ts0 + 300_000,
             "entry": 4000.0, "exit": 4000.0, "sl": 3993.0, "tp": 4030.0,
             "initialR": 7.0, "finalSl": 3993.0, "beReachedTs": 0,
             "exitType": "OPEN_AT_END", "pts": 0.0, "netPts": 0.0,
@@ -2713,7 +2713,6 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         }
         bars = [
             [4000.0, 4001.0, 3000.0, 4000.0, ts0],
-            [4000.0, 4001.0, 3999.0, 4000.0, ts0 + 300_000],
         ]
         sc = engine._build_portfolio_scenario_comparison(
             [], [position], 0.05, 350.0, 100.0,
@@ -2724,6 +2723,8 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertFalse(mark["intrabarStopOutRiskObserved"])
         self.assertEqual(sc["intrabarMarginRiskSnapshots"], 0)
         self.assertIsNone(sc["intrabarMinMarginLevelPct"])
+        self.assertEqual(sc["endingBalanceUsd"], 350.0)
+        self.assertFalse(sc["stopOutLiquidationSimulated"])
 
     def test_T60_corrupted_config_on_startup_never_defaults_to_002_and_blocks_new_orders(self):
         """T60 (Section VI, Task 8 & Task 9): Simulated power-loss / corrupted config file marks config unverified, returns fixedLot=null (not 0.02), and blocks /api/v1/mt5/order until repaired."""
