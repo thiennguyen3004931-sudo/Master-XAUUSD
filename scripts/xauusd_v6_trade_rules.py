@@ -660,9 +660,17 @@ def evaluate_wait_pullback_expiry(wait_state, current_ts_ms):
     """Check whether a stored WAIT_PULLBACK setup is still valid or has expired (Section IV)."""
     if not isinstance(wait_state, dict):
         return {"active": False, "expired": True, "reason": "Missing WAIT_PULLBACK state"}
-    created_ts = int(wait_state.get("createdAtTs") or 0)
-    expires_ts = int(wait_state.get("expiresAtTs") or (created_ts + WAIT_PULLBACK_MAX_AGE_MS))
-    cur_ts = int(current_ts_ms or 0)
+    try:
+        created_ts = int(wait_state.get("createdAtTs"))
+        cur_ts = int(current_ts_ms)
+        raw_expires = wait_state.get("expiresAtTs")
+        expires_ts = int(raw_expires) if raw_expires is not None else created_ts + WAIT_PULLBACK_MAX_AGE_MS
+    except (TypeError, ValueError, OverflowError):
+        return {"active": False, "expired": True, "status": "WAIT_PULLBACK_INVALID", "reason": "Invalid WAIT_PULLBACK timestamps"}
+    if (created_ts <= 0 or cur_ts <= 0 or cur_ts < created_ts
+            or expires_ts <= created_ts
+            or expires_ts > created_ts + WAIT_PULLBACK_MAX_AGE_MS):
+        return {"active": False, "expired": True, "status": "WAIT_PULLBACK_INVALID", "reason": "Invalid WAIT_PULLBACK timestamp bounds"}
     if cur_ts > expires_ts:
         return {"active": False, "expired": True, "status": "WAIT_PULLBACK_EXPIRED", "reason": "WAIT_PULLBACK setup expired"}
     return {"active": True, "expired": False, "status": "WAIT_PULLBACK_ACTIVE", "remainingMs": expires_ts - cur_ts}
