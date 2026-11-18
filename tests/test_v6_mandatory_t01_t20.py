@@ -847,6 +847,43 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertFalse(res2.get("submitted"))
         self.assertTrue(res2["dailyRiskState"]["dailyLimitBreached"])
 
+    def test_T66_absent_history_api_blocks_new_orders_even_with_saved_state(self):
+        """T66: Missing MT5 deal-history API may never authorize order_send."""
+        mt5 = SafeMockBroker(equity=4000.0)
+        mt5.history_deals_get = None  # Simulate absent broker history capability.
+        cfg = {
+            "side": "BUY", "volume": 0.01, "slDistance": 6.8,
+            "tpDistance": 16.0, "maxDailyLossPercent": 3.0,
+            "dailyRealizedLossUsd": 0.0,
+            "requireDealHistoryForNewOrders": False,
+        }
+        # Even an explicitly supplied zero-loss value cannot replace broker history.
+        first = engine.execute_order(mt5, "XAUUSD.G", cfg)
+        self.assertFalse(first["ok"])
+        self.assertEqual(first.get("status"), "BLOCKED_DAILY_HISTORY_UNVERIFIED")
+        self.assertFalse(first.get("submitted"))
+        self.assertEqual(mt5.sent, [])
+
+        # An already-persisted account/day record cannot be treated as current
+        # broker confirmation when history is unavailable.
+        account = mt5.account_info()
+        state_key_day = __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc).strftime("%Y-%m-%d")
+        state_key = f"{account.login}|{account.server}|{state_key_day}"
+        engine._update_json_state(
+            engine.DAILY_RISK_STATE_FILE,
+            lambda state: {**state, state_key: {
+                "dayStartBalanceUsd": 4000.0,
+                "dailyRealizedLossUsd": 0.0,
+                "dailyLimitBreached": False,
+            }},
+        )
+        second = engine.execute_order(mt5, "XAUUSD.G", cfg)
+        self.assertFalse(second["ok"])
+        self.assertEqual(second.get("status"), "BLOCKED_DAILY_HISTORY_UNVERIFIED")
+        self.assertFalse(second.get("submitted"))
+        self.assertEqual(mt5.sent, [])
+
     def test_T25_quote_movement_pushing_sl_above_8_usd_blocks_at_execute_order(self):
         """T25 (Section 1.4 & 5): Quote thay đổi ngay trước order_send làm SL vượt 8 giá thì bị chặn (WAIT_PULLBACK)."""
         mt5 = SafeMockBroker(equity=4000.0)
