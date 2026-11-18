@@ -1859,14 +1859,26 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
     trade_mode = int(getattr(account, "trade_mode", 0) or 0)
     real_mode_const = int(getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2))
     if trade_mode == real_mode_const:
-        if not (
-            cfg_o.get("liveAuthorized") is True
-            and cfg_o.get("liveArmed") is True
-            and cfg_o.get("explicitLiveGateConfirmed") is True
-        ):
+        # Do not treat three client flags alone as authorization for REAL orders.
+        # Verify terminal connectivity/permissions and explicit account binding.
+        if not all(str(cfg_o.get(k) or "").strip() for k in ("login", "server", "accountMode")):
             return {
-                "ok": False,
-                "message": "LIVE order blocked: REAL account requires explicit multi-gate LIVE ARM authorization (fail-closed)"
+                "ok": False, "submitted": False,
+                "status": "BLOCKED_LIVE_ACCOUNT_BINDING",
+                "message": "LIVE order blocked: explicit login, server, accountMode binding required",
+            }
+        if str(cfg_o["accountMode"]).strip().upper() not in ("LIVE", "REAL"):
+            return {
+                "ok": False, "submitted": False,
+                "status": "BLOCKED_LIVE_ACCOUNT_BINDING",
+                "message": "LIVE order blocked: configured account mode is not LIVE/REAL",
+            }
+        live_ok, live_reason = verify_live_execution_gate(mt5, account, term_info, cfg_o)
+        if not live_ok:
+            return {
+                "ok": False, "submitted": False,
+                "status": "BLOCKED_LIVE_EXECUTION_GATE",
+                "message": f"LIVE order blocked: {live_reason}",
             }
 
     # Gate 2: Symbol & Fresh Pre-Send Quote Verification
