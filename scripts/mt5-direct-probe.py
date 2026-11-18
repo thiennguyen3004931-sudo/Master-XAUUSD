@@ -59,6 +59,7 @@ RUNTIME_DIR = Path(__file__).resolve().parent.parent / ".runtime"
 MANAGER_STATE_FILE = RUNTIME_DIR / "v6-position-manager-state.json"
 DAILY_RISK_STATE_FILE = RUNTIME_DIR / "v6-daily-risk-state.json"
 REGIME_STATE_FILE = RUNTIME_DIR / "v6-regime-state.json"
+UNCERTAIN_ENTRY_STATE_FILE = RUNTIME_DIR / "v6-uncertain-entry-state.json"
 
 
 def ensure_mt5_installed():
@@ -1795,14 +1796,75 @@ def _reconcile_filled_order(mt5, active_symbol, req_side, req_vol, req_price, re
     return readback_pos, order_ticket, deal_ticket
 
 
-def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V6"):
-    """Lock the complete risk assessment and submission to prevent entry races.
+def _read_uncertain_entry_state():
+    """Reject corrupt/unreadable state instead of silently treating it as empty."""
+    with _cross_process_file_lock(UNCERTAIN_ENTRY_STATE_FILE):
+        if not UNCERTAIN_ENTRY_STATE_FILE.exists():
+            return {}
+        state = json.loads(UNCERTAIN_ENTRY_STATE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(state, dict):
+            raise ValueError("Uncertain entry state is not an object")
+        return state
 
-    Existing SL/TP management uses separate code paths and is not blocked.
+
+def _write_uncertain_entry_state(state):
+    with _cross_process_file_lock(UNCERTAIN_ENTRY_STATE_FILE):
+        _save_json_state_unlocked(UNCERTAIN_ENTRY_STATE_FILE, state)
+
+
+def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V6"):
+    """Serialize entry, persist pre-submission intent, and freeze uncertain exposure.
+
+    A pending marker is written BEFORE entering the broker execution gateway.
+    Crash/timeout/ambiguous fill keeps it latched across restarts until verified
+    human/broker reconciliation. Existing SL/TP management is unaffected.
     """
     try:
         with _strict_new_order_lock():
-            return _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag)
+            try:
+                account = mt5.account_info()
+                if account is None:
+                    return {"ok": False, "submitted": False, "status": "BLOCKED_ACCOUNT_UNVERIFIED"}
+                login = int(getattr(account, "login", 0) or 0)
+                server = str(getattr(account, "server", "") or "").strip()
+                if login <= 0 or not server:
+                    return {"ok": False, "submitted": False, "status": "BLOCKED_ACCOUNT_UNVERIFIED"}
+                key = f"{login}|{server}"
+                state = _read_uncertain_entry_state()
+                if key in state:
+                    return {
+                        "ok": False, "submitted": False,
+                        "status": "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY",
+                        "message": "A prior entry attempt may have reached broker; verify positions/orders before clearing the persistent freeze",
+                    }
+                state[key] = {
+                    "status": "ENTRY_IN_FLIGHT",
+                    "accountLogin": login,
+                    "server": server,
+                    "createdAtUtc": int(time.time()),
+                }
+                _write_uncertain_entry_state(state)
+            except (OSError, ValueError, TypeError) as exc:
+                return {
+                    "ok": False, "submitted": False,
+                    "status": "BLOCKED_ENTRY_STATE_UNAVAILABLE",
+                    "message": f"Cannot verify/persist broker entry intent (fail-closed): {exc}",
+                }
+
+            # An exception or process crash intentionally leaves the durable
+            # in-flight marker in place; never auto-retry a possibly sent order.
+            result = _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag)
+            if result.get("uncertain"):
+                return result
+            try:
+                state = _read_uncertain_entry_state()
+                state.pop(key, None)
+                _write_uncertain_entry_state(state)
+            except (OSError, ValueError, TypeError):
+                # No further new orders may proceed without verified reconciliation.
+                result = dict(result)
+                result["entryStateFreezeUnverified"] = True
+            return result
     except _EntryExecutionLockUnavailable as exc:
         return {
             "ok": False, "submitted": False,
