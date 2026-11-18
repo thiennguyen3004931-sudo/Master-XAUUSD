@@ -43,7 +43,12 @@ class MockBroker:
         return SimpleNamespace(ask=self.asks, bid=self.bids, time=int(time.time()))
 
     def account_info(self):
-        return SimpleNamespace(equity=4000.0)
+        return SimpleNamespace(equity=4000.0, balance=4000.0, login=5201362,
+                               server="MOCK-DEMO", trade_mode=0)
+
+    def history_deals_get(self, from_ts, to_ts):
+        # Verified empty history is distinct from missing/unavailable history API.
+        return []
 
     def order_calc_profit(self, kind, symbol, lot, entry, stop):
         if kind == 0:

@@ -394,11 +394,13 @@ def compute_and_persist_daily_loss_state(
                 # Balance operation (Deposit / Withdrawal)
                 net_cashflow_usd += float(getattr(d, "profit", 0.0) or 0.0)
     else:
-        if cfg_d.get("requireDealHistoryForNewOrders") is True and "dailyRealizedLossUsd" not in cfg_d and not persisted:
-            return {
-                "ok": False,
-                "reason": "Broker deal history API unavailable and no verified daily loss state provided (fail-closed)",
-            }
+        # A saved loss latch or client-supplied number is not proof that today's
+        # broker history is complete. Never authorize a new trade without the
+        # broker's history API, irrespective of optional configuration flags.
+        return {
+            "ok": False,
+            "reason": "MT5 deal history API unavailable; daily loss cannot be verified (fail-closed)",
+        }
 
     realized_loss_from_deals = max(0.0, -realized_trading_net_pnl)
     cfg_supplied_loss = float(cfg_d.get("dailyRealizedLossUsd") or 0.0)
