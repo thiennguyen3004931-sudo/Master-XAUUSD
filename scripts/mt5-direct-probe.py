@@ -3486,14 +3486,14 @@ def _build_portfolio_scenario_comparison(
                 close_time = int(bar[4]) + 300_000
                 bid_close = float(bar[3])
                 if close_time > 0 and isfinite(bid_close) and bid_close > 0:
-                    m5_marks.append((close_time, bid_close))
+                    m5_marks.append((close_time, bid_close, float(bar[1]), float(bar[2])))
             except (IndexError, TypeError, ValueError):
                 continue
         m5_marks.sort(key=lambda row: row[0])
         trade_event_times = {ts for p in positions for ts in (p["entryTs"], p["exitTs"])}
         if trade_event_times:
             first_event, last_event = min(trade_event_times), max(trade_event_times)
-            m5_event_times = {ts for ts, _ in m5_marks if first_event <= ts <= last_event}
+            m5_event_times = {row[0] for row in m5_marks if first_event <= row[0] <= last_event}
         else:
             m5_event_times = set()
         event_times = sorted(trade_event_times | m5_event_times)
@@ -3502,6 +3502,9 @@ def _build_portfolio_scenario_comparison(
         last_mark_bid = None
         fresh_m5_snapshots = 0
         stale_m5_snapshots = 0
+        intrabar_stress_snapshots = 0
+        intrabar_stopout_risk_snapshots = 0
+        intrabar_min_margin_level_pct = None
         spread_for_marks = max(0.0, float(market_spread_pts or 0.0))
         balance = float(starting_balance)
         peak_balance = balance
@@ -3521,7 +3524,7 @@ def _build_portfolio_scenario_comparison(
 
         for t_ev in event_times:
             while mark_index < len(m5_marks) and m5_marks[mark_index][0] <= t_ev:
-                last_mark_time, last_mark_bid = m5_marks[mark_index]
+                last_mark_time, last_mark_bid = m5_marks[mark_index][0:2]
                 mark_index += 1
             # 1) Settle positions closing at t_ev (only settled positions update Balance; open-at-end positions stay in unrealized/floating)
             for p in positions:
@@ -3573,6 +3576,44 @@ def _build_portfolio_scenario_comparison(
                             floating_pnl += pts_f * p_open["volume"] * float(usd_per_price_per_lot)
             floating_pnl = round(floating_pnl, 2)
             equity = round(balance + floating_pnl, 2)
+            # Diagnostic ONLY: use adverse extrema from a FULLY CLOSED M5 bar
+            # for positions open throughout that bar. Never value an earlier
+            # event with an unclosed bar and never claim broker liquidation.
+            intrabar_margin_level = None
+            intrabar_stopout_risk = False
+            if used_margin > 0 and last_mark_time == t_ev and mark_index > 0:
+                bar_close_ts, _, bar_high, bar_low = m5_marks[mark_index - 1]
+                bar_open_ts = bar_close_ts - 300_000
+                if (isfinite(bar_high) and isfinite(bar_low) and bar_high >= bar_low > 0):
+                    full_bar_positions = [
+                        p for p in positions
+                        if p["entryTs"] <= bar_open_ts and p["exitTs"] >= bar_close_ts
+                    ]
+                    # Report only if every margin-bearing exposure has been
+                    # present for this entire bar; mixed entry/exit bars need
+                    # higher-resolution data and must stay unverified.
+                    if full_bar_positions and len(full_bar_positions) == len(open_now):
+                        adverse_floating = 0.0
+                        for p in full_bar_positions:
+                            adverse_exit = bar_low if p["side"] == "BUY" else bar_high + spread_for_marks
+                            adverse_pts = ((adverse_exit - p["entryPrice"]) if p["side"] == "BUY"
+                                           else (p["entryPrice"] - adverse_exit))
+                            adverse_floating += (
+                                adverse_pts * p["volume"] * float(usd_per_price_per_lot)
+                                - p["commissionUsd"] - p["slippageUsd"]
+                            )
+                        stress_equity = balance + adverse_floating
+                        intrabar_margin_level = round(100.0 * stress_equity / used_margin, 2)
+                        intrabar_stopout_risk = intrabar_margin_level <= float(stop_out_level_pct)
+                        intrabar_stress_snapshots += 1
+                        if intrabar_stopout_risk:
+                            intrabar_stopout_risk_snapshots += 1
+                        if intrabar_min_margin_level_pct is None:
+                            intrabar_min_margin_level_pct = intrabar_margin_level
+                        else:
+                            intrabar_min_margin_level_pct = min(
+                                intrabar_min_margin_level_pct, intrabar_margin_level
+                            )
             free_margin = round(equity - used_margin, 2)
             margin_level = round((equity / used_margin) * 100.0, 2) if used_margin > 0 else 0.0
             if used_margin > 0:
@@ -3613,6 +3654,8 @@ def _build_portfolio_scenario_comparison(
                 "markBid": round(mark_bid, 5) if mark_bid is not None else None,
                 "markAsk": round(mark_ask, 5) if mark_ask is not None else None,
                 "markAgeMs": mark_age_ms,
+                "intrabarAdverseMarginLevelPct": intrabar_margin_level,
+                "intrabarStopOutRiskObserved": intrabar_stopout_risk,
             })
 
         settled_positions = [p for p in positions if not p.get("isOpenAtEnd", False)]
@@ -3680,6 +3723,10 @@ def _build_portfolio_scenario_comparison(
             "equityMarkingResolution": "CLOSED_M5" if last_mark_time is not None else "POSITION_EVENTS_PROXY",
             "m5FreshPriceCoveragePct": pricing_coverage,
             "m5StalePriceSnapshots": stale_m5_snapshots,
+            "intrabarMarginRiskSnapshots": intrabar_stress_snapshots,
+            "intrabarStopOutRiskSnapshots": intrabar_stopout_risk_snapshots,
+            "intrabarMinMarginLevelPct": intrabar_min_margin_level_pct,
+            "intrabarMarginRiskIsDiagnosticOnly": True,
             "marginEventsAreObservationsOnly": True,
             "stopOutLiquidationSimulated": False,
         }
