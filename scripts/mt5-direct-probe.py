@@ -3688,9 +3688,19 @@ def _build_portfolio_scenario_comparison(
             free_margin = round(equity - used_margin, 2)
             margin_level = round((equity / used_margin) * 100.0, 2) if used_margin > 0 else 0.0
 
-            # Capture the trigger BEFORE simulated forced liquidation.
-            # Post-liquidation margin can recover and hide the initial breach.
+            # Capture the full risk state BEFORE simulated liquidation.
+            # Otherwise worst free margin, used margin and margin level can be
+            # falsely improved by the very liquidation those extrema describe.
             pre_liquidation_margin_level = margin_level if used_margin > 0 else None
+            pre_liquidation_used_margin = used_margin
+            pre_liquidation_free_margin = free_margin
+            max_used_margin = max(max_used_margin, pre_liquidation_used_margin)
+            min_free_margin = min(min_free_margin, pre_liquidation_free_margin)
+            if pre_liquidation_margin_level is not None:
+                min_margin_level_pct = (
+                    pre_liquidation_margin_level if min_margin_level_pct == 0.0
+                    else min(min_margin_level_pct, pre_liquidation_margin_level)
+                )
             stop_out_triggered_here = bool(
                 simulate_stop_out and used_margin > 0
                 and margin_level <= float(stop_out_level_pct)
@@ -3788,6 +3798,8 @@ def _build_portfolio_scenario_comparison(
                 "intrabarAdverseMarginLevelPct": intrabar_margin_level,
                 "intrabarStopOutRiskObserved": intrabar_stopout_risk,
                 "preLiquidationMarginLevelPct": pre_liquidation_margin_level,
+                "preLiquidationUsedMarginUsd": pre_liquidation_used_margin,
+                "preLiquidationFreeMarginUsd": pre_liquidation_free_margin,
                 "simulatedStopOutTriggeredHere": stop_out_triggered_here,
             })
 
@@ -3877,6 +3889,7 @@ def _build_portfolio_scenario_comparison(
             "marginCallBreachedSnapshots": margin_call_breach_snapshots,
             "stopOutBreachedSnapshots": stop_out_breach_snapshots,
             "stopOutTriggerEvents": stop_out_trigger_events,
+            "riskExtremaIncludePreLiquidation": True,
             "maxConsecutiveLosses": max_streak,
             "dcaRejectedCounts": dca_rej_totals,
             "positions": positions,

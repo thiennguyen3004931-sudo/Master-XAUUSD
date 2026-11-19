@@ -3129,6 +3129,7 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertTrue(comp_obs["scenarioWithPositiveDca"]["marginEventsAreObservationsOnly"])
         self.assertEqual(comp_obs["scenarioWithPositiveDca"]["stopOutLiquidatedCount"], 0)
         self.assertEqual(comp_obs["scenarioWithPositiveDca"]["stopOutTriggerEvents"], 0)
+        self.assertTrue(comp_obs["scenarioWithPositiveDca"]["riskExtremaIncludePreLiquidation"])
         self.assertFalse(any(
             snapshot["simulatedStopOutTriggeredHere"]
             for snapshot in comp_obs["scenarioWithPositiveDca"]["timelineSnapshots"]
@@ -3150,6 +3151,30 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertEqual(sc_b["stopOutTriggerEvents"], len(triggers))
         self.assertTrue(all(snap["preLiquidationMarginLevelPct"] is not None for snap in triggers))
         self.assertTrue(all(snap["preLiquidationMarginLevelPct"] <= 50.0 for snap in triggers))
+        # A liquidated position releases margin at this snapshot; recording
+        # only post-liquidation exposure would understate worst stress.
+        self.assertTrue(sc_b["riskExtremaIncludePreLiquidation"])
+        self.assertTrue(any(
+            snap["preLiquidationUsedMarginUsd"] > snap["usedMarginUsd"]
+            for snap in triggers
+        ))
+        self.assertTrue(any(
+            snap["preLiquidationFreeMarginUsd"] < snap["freeMarginUsd"]
+            for snap in triggers
+        ))
+        self.assertGreaterEqual(
+            sc_b["maxMarginUsageUsd"],
+            max(snap["preLiquidationUsedMarginUsd"] for snap in sc_b["timelineSnapshots"]),
+        )
+        self.assertLessEqual(
+            sc_b["minFreeMarginUsd"],
+            min(snap["preLiquidationFreeMarginUsd"] for snap in sc_b["timelineSnapshots"]),
+        )
+        self.assertLessEqual(
+            sc_b["minMarginLevelPct"],
+            min(snap["preLiquidationMarginLevelPct"] for snap in sc_b["timelineSnapshots"]
+                if snap["preLiquidationMarginLevelPct"] is not None),
+        )
         liq_pos = next(p for p in sc_b["positions"] if p["exitType"] == "STOP_OUT_LIQUIDATED")
         self.assertEqual(liq_pos["ticket"], 20001)  # Largest loss (-180 USD) liquidated first
         # Forced liquidation changes the outcome: never retain the planned
