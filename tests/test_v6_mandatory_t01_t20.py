@@ -3044,6 +3044,34 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         )
         self.assertFalse(no_loosen["shouldModifySl"])
 
+    def test_stop_out_configuration_must_be_explicit_and_supported(self):
+        """Invalid simulation options never masquerade as verified liquidation."""
+        for invalid in ("false", "true", 1, 0, None, [], {}):
+            with self.subTest(flag=repr(invalid)):
+                if invalid is None:
+                    cfg = {"simulateStopOut": None}
+                else:
+                    cfg = {"simulateStopOut": invalid}
+                result = engine.run_historical_backtest_on_mt5(object(), "XAUUSD.G", cfg)
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["status"], "INVALID_STOP_OUT_SIMULATION_CONFIG")
+
+        invalid_rule = engine.run_historical_backtest_on_mt5(
+            object(), "XAUUSD.G",
+            {"simulateStopOut": True, "stopOutLiquidationRule": "UNKNOWN"},
+        )
+        self.assertFalse(invalid_rule["ok"])
+        self.assertEqual(invalid_rule["status"], "INVALID_STOP_OUT_SIMULATION_CONFIG")
+
+        for invalid_flag, rule in [("false", "FIFO"), (1, "FIFO"),
+                                   (True, "UNKNOWN")]:
+            with self.subTest(flag=repr(invalid_flag), rule=rule):
+                with self.assertRaises(ValueError):
+                    engine._build_portfolio_scenario_comparison(
+                        [], [], 0.01, 1000.0, 100.0,
+                        simulate_stop_out=invalid_flag, liquidation_rule=rule,
+                    )
+
     def test_T65_m3_bt05_stop_out_forced_liquidation_vs_observation_only(self):
         """T65 (M3 / BT-05 Issue #52): Without simulateStopOut=True, stopOutLiquidationSimulated is False; with simulateStopOut=True, breaches <= 50% liquidate largest-loss position first and update Balance/Equity/UsedMargin."""
         epoch = 1794180000000

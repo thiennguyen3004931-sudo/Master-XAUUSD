@@ -3438,6 +3438,10 @@ def _build_portfolio_scenario_comparison(
     Free Margin, Margin Level, Max Drawdown (including intra-trade floating Equity drawdown from DCA),
     base-closes-before-DCA and DCA-closes-before-base, and Margin Call / Stop-Out events.
     """
+    if type(simulate_stop_out) is not bool:
+        raise ValueError("simulate_stop_out must be an explicit boolean")
+    if simulate_stop_out and str(liquidation_rule).upper() not in ("FIFO", "LARGEST_LOSS_FIRST"):
+        raise ValueError("Unsupported broker stop-out liquidation rule")
     all_trade_records = list(closed_trades or []) + list(open_positions_at_end or [])
 
     def _run_timeline(include_dca):
@@ -3873,6 +3877,17 @@ def run_historical_backtest_on_mt5(mt5, active_symbol, cfg):
     - Labels DCA as `CHƯA ĐÁNH GIÁ DCA` (never fabricates DCA profit via multipliers).
     """
     cfg_b = cfg or {}
+    # Do not treat truthy strings (e.g. "false") as verified permission to
+    # simulate broker liquidation or silently switch liquidation ordering.
+    simulate_stop_out = cfg_b.get("simulateStopOut", False)
+    liquidation_rule = str(cfg_b.get("stopOutLiquidationRule") or "LARGEST_LOSS_FIRST").upper()
+    if type(simulate_stop_out) is not bool or (
+        simulate_stop_out and liquidation_rule not in ("FIFO", "LARGEST_LOSS_FIRST")
+    ):
+        return {
+            "ok": False, "status": "INVALID_STOP_OUT_SIMULATION_CONFIG",
+            "message": "Stop-out simulation requires a boolean flag and an explicit supported liquidation rule",
+        }
     m5_all = cfg_b.get("m5Bars") or fetch_tf_candles(mt5, active_symbol, getattr(mt5, "TIMEFRAME_M5", 5), 9000)
     m15_all = cfg_b.get("m15Bars") or fetch_tf_candles(mt5, active_symbol, getattr(mt5, "TIMEFRAME_M15", 15), 3000)
     h1_all = cfg_b.get("h1Bars") or fetch_tf_candles(mt5, active_symbol, getattr(mt5, "TIMEFRAME_H1", 60), 800)
@@ -4521,8 +4536,8 @@ def run_historical_backtest_on_mt5(mt5, active_symbol, cfg):
                 stop_out_level_pct=float(cfg_b.get("stopOutLevelPct") or 50.0),
                 market_m5_bars=m5_all,
                 market_spread_pts=spread_pts,
-                simulate_stop_out=bool(cfg_b.get("simulateStopOut", False)),
-                liquidation_rule=str(cfg_b.get("stopOutLiquidationRule") or "LARGEST_LOSS_FIRST"),
+                simulate_stop_out=simulate_stop_out,
+                liquidation_rule=liquidation_rule,
             ),
             "status": ("DCA_SIMULATED_WITH_FIXED_LOT" if bool(cfg_b.get("enablePositiveDca", False)) else "DCA_NOT_EVALUATED"),
         },
