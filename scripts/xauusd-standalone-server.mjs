@@ -1696,7 +1696,12 @@ function writeBridgeEnvAndArmFiles(cfg) {
 }
 
 function getLanIps() {
-  const nets = os.networkInterfaces();
+  let nets = {};
+  try {
+    nets = os.networkInterfaces();
+  } catch {
+    // LAN discovery is optional. Keep the local dashboard available.
+  }
   const lan = [];
   const tailscale = [];
   for (const [name, list] of Object.entries(nets)) {
