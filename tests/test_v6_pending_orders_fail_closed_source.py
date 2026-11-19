@@ -21,11 +21,11 @@ class PendingOrdersFailClosedRegression(unittest.TestCase):
         self.assertIn("if not callable(orders_get):", gate)
         self.assertIn('"BLOCKED_PENDING_ORDERS_UNVERIFIED"', gate)
         self.assertIn("pending_orders = orders_get()", gate)
-        self.assertIn("if pending_orders is None:", gate)
+        self.assertIn("if not isinstance(pending_orders, (list, tuple)):", gate)
         self.assertIn("for pend in pending_orders:", gate)
         self.assertNotIn('if callable(getattr(mt5, "orders_get", None)):', gate)
         self.assertLess(gate.index("if not callable(orders_get):"), gate.index("pending_orders = orders_get()"))
-        self.assertLess(gate.index("if pending_orders is None:"), gate.index("for pend in pending_orders:"))
+        self.assertLess(gate.index("if not isinstance(pending_orders, (list, tuple)):"), gate.index("for pend in pending_orders:"))
 
 
 if __name__ == "__main__":
