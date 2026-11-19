@@ -3589,6 +3589,8 @@ def _build_portfolio_scenario_comparison(
         # Record the pre-liquidation breach: closing a position can restore
         # margin before the post-event counters are sampled.
         stop_out_trigger_events = 0
+        stop_out_price_unverified_snapshots = 0
+        stop_out_unverified_potential_breaches = 0
         margin_call_active = False
         stop_out_active = False
         timeline_snapshots = []
@@ -3701,8 +3703,27 @@ def _build_portfolio_scenario_comparison(
                     pre_liquidation_margin_level if min_margin_level_pct == 0.0
                     else min(min_margin_level_pct, pre_liquidation_margin_level)
                 )
+            # A forced-liquidation price may only come from the M5 bar that
+            # actually CLOSED at this event. A stale M5 mark or position-event
+            # proxy is insufficient evidence to simulate an executed stop-out.
+            stop_out_closed_m5_usable = bool(
+                price_source == "CLOSED_M5_BID_ASK"
+                and last_mark_time == t_ev
+                and mark_bid is not None and isfinite(mark_bid)
+                and mark_ask is not None and isfinite(mark_ask)
+            )
+            stop_out_price_unverified_here = bool(
+                simulate_stop_out and used_margin > 0 and not stop_out_closed_m5_usable
+            )
+            stop_out_unverified_breach_here = bool(
+                stop_out_price_unverified_here and margin_level <= float(stop_out_level_pct)
+            )
+            if stop_out_price_unverified_here:
+                stop_out_price_unverified_snapshots += 1
+            if stop_out_unverified_breach_here:
+                stop_out_unverified_potential_breaches += 1
             stop_out_triggered_here = bool(
-                simulate_stop_out and used_margin > 0
+                simulate_stop_out and used_margin > 0 and stop_out_closed_m5_usable
                 and margin_level <= float(stop_out_level_pct)
             )
             if stop_out_triggered_here:
@@ -3711,12 +3732,9 @@ def _build_portfolio_scenario_comparison(
             # real intrabar liquidation sequence or execution price.
             if stop_out_triggered_here:
                 def _pos_float_pnl(po):
-                    if mark_bid is not None:
-                        c_px = mark_bid if po["side"] == "BUY" else mark_ask
-                        pts_x = (c_px - po["entryPrice"]) if po["side"] == "BUY" else (po["entryPrice"] - c_px)
-                        return pts_x * po["volume"] * float(usd_per_price_per_lot) - po["commissionUsd"] - po["slippageUsd"] - po["swapUsd"]
-                    r_px = event_price_map.get(t_ev) or po["entryPrice"]
-                    pts_x = (r_px - po["entryPrice"]) if po["side"] == "BUY" else (po["entryPrice"] - r_px)
+                    # Only the closed-M5 executable Bid/Ask is admissible.
+                    c_px = mark_bid if po["side"] == "BUY" else mark_ask
+                    pts_x = (c_px - po["entryPrice"]) if po["side"] == "BUY" else (po["entryPrice"] - c_px)
                     return pts_x * po["volume"] * float(usd_per_price_per_lot) - po["commissionUsd"] - po["slippageUsd"] - po["swapUsd"]
 
                 if str(liquidation_rule).upper() == "FIFO":
@@ -3727,7 +3745,7 @@ def _build_portfolio_scenario_comparison(
                 for liq_p in liq_candidates:
                     if used_margin <= 0 or margin_level > float(stop_out_level_pct):
                         break
-                    liq_px = (mark_bid if liq_p["side"] == "BUY" else mark_ask) if mark_bid is not None else (event_price_map.get(t_ev) or liq_p["entryPrice"])
+                    liq_px = mark_bid if liq_p["side"] == "BUY" else mark_ask
                     liq_pts = (liq_px - liq_p["entryPrice"]) if liq_p["side"] == "BUY" else (liq_p["entryPrice"] - liq_px)
                     liq_net_usd = round(_pos_float_pnl(liq_p), 2)
                     liq_p["exitTs"] = t_ev
@@ -3801,6 +3819,9 @@ def _build_portfolio_scenario_comparison(
                 "preLiquidationUsedMarginUsd": pre_liquidation_used_margin,
                 "preLiquidationFreeMarginUsd": pre_liquidation_free_margin,
                 "simulatedStopOutTriggeredHere": stop_out_triggered_here,
+                "stopOutClosedM5PriceUsable": stop_out_closed_m5_usable,
+                "stopOutPriceUnverifiedHere": stop_out_price_unverified_here,
+                "stopOutUnverifiedPotentialBreachHere": stop_out_unverified_breach_here,
             })
 
         settled_positions = [p for p in positions if not p.get("isOpenAtEnd", False)]
@@ -3889,6 +3910,11 @@ def _build_portfolio_scenario_comparison(
             "marginCallBreachedSnapshots": margin_call_breach_snapshots,
             "stopOutBreachedSnapshots": stop_out_breach_snapshots,
             "stopOutTriggerEvents": stop_out_trigger_events,
+            "stopOutPriceUnverifiedSnapshots": stop_out_price_unverified_snapshots,
+            "stopOutUnverifiedPotentialBreaches": stop_out_unverified_potential_breaches,
+            "stopOutSimulationPriceCoverageComplete": (
+                stop_out_price_unverified_snapshots == 0 if simulate_stop_out else None
+            ),
             "riskExtremaIncludePreLiquidation": True,
             "maxConsecutiveLosses": max_streak,
             "dcaRejectedCounts": dca_rej_totals,
