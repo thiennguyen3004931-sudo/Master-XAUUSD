@@ -669,6 +669,21 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertIn("portfolio", result["message"].lower())
         self.assertEqual(mt5.sent, [])
 
+    def test_malformed_position_inventory_blocks_submission(self):
+        from unittest.mock import patch
+
+        for snapshot in ({}, "", False, 0):
+            for side in ("BUY", "SELL"):
+                with self.subTest(snapshot=repr(snapshot), side=side):
+                    broker = MockBroker()
+                    with patch.object(broker, "positions_get", return_value=snapshot):
+                        result = engine.execute_order(broker, "XAUUSD.G", {
+                            "side": side, "volume": 0.02, "slDistance": 6.8, "tpDistance": 16,
+                        })
+                    self.assertEqual(result["status"], "BLOCKED_PORTFOLIO_RISK_UNVERIFIED")
+                    self.assertFalse(result["submitted"])
+                    self.assertEqual(broker.sent, [])
+
     def test_portfolio_readback_exception_fails_closed(self):
         class BrokenPortfolioBroker(MockBroker):
             def positions_get(self, *args, **kwargs):
