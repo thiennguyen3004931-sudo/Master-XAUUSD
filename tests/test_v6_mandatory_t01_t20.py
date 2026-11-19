@@ -3126,6 +3126,39 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertTrue(any(snap["stopOutUnverifiedPotentialBreachHere"]
                             for snap in scenario["timelineSnapshots"]))
 
+    def test_stop_out_rejects_stale_m5_mark_when_later_position_enters(self):
+        """A stale M5 close cannot justify a new forced-liquidation event."""
+        epoch = 1794180000000
+        base = {
+            "ticket": 93111, "tsMs": epoch + 300000,
+            "exitTsMs": epoch + 1800000,
+            "entry": 4000.0, "exit": 4000.0,
+            "sl": 3980.0, "tp": 4030.0, "initialR": 20.0,
+            "finalSl": 3980.0, "exitType": "OPEN_AT_DATASET_END",
+            "isOpenAtEnd": True, "pts": 0.0, "rMultiple": 0.0,
+            "volume": 0.10, "marginUsd": 400.0, "side": "BUY",
+        }
+        late = {
+            **base, "ticket": 93112, "tsMs": epoch + 1500000,
+            "volume": 0.05, "marginUsd": 900.0,
+        }
+        one_mark = [[4000.0, 4000.0, 4000.0, 4000.0, epoch]]
+        comparison = engine._build_portfolio_scenario_comparison(
+            [], [base, late], 0.10, 500.0, 100.0,
+            market_m5_bars=one_mark, stop_out_level_pct=50.0,
+            simulate_stop_out=True,
+        )
+        scenario = comparison["scenarioWithPositiveDca"]
+        self.assertEqual(scenario["stopOutLiquidatedCount"], 0)
+        self.assertFalse(scenario["stopOutSimulationPriceCoverageComplete"])
+        late_snap = next(snap for snap in scenario["timelineSnapshots"]
+                         if snap["ts"] == epoch + 1500000)
+        self.assertEqual(late_snap["priceSource"], "STALE_M5_BID_ASK_UNVERIFIED")
+        self.assertFalse(late_snap["stopOutClosedM5PriceUsable"])
+        self.assertTrue(late_snap["stopOutUnverifiedPotentialBreachHere"])
+        self.assertFalse(late_snap["simulatedStopOutTriggeredHere"])
+        self.assertTrue(scenario["scenarioAccountingReconciled"])
+
     def test_T65_m3_bt05_stop_out_forced_liquidation_vs_observation_only(self):
         """T65 (M3 / BT-05 Issue #52): Without simulateStopOut=True, stopOutLiquidationSimulated is False; with simulateStopOut=True, breaches <= 50% liquidate largest-loss position first and update Balance/Equity/UsedMargin."""
         epoch = 1794180000000
