@@ -197,8 +197,10 @@ def verify_live_execution_gate(mt5, account, terminal, cfg):
     """
     if account is None or terminal is None:
         return False, "Missing account or terminal info for LIVE gate"
-    if getattr(terminal, "connected", True) is False:
-        return False, "Terminal disconnected; LIVE gate rejected"
+    # LIVE connectivity must be explicitly reported as true; missing or
+    # ambiguous terminal state is not proof of a connected broker session.
+    if getattr(terminal, "connected", None) is not True:
+        return False, "Terminal connectivity unverified; LIVE gate rejected"
     if not bool(getattr(terminal, "trade_allowed", False)) or not bool(getattr(account, "trade_expert", False)):
         return False, "Algo/Expert trading disabled in MT5; LIVE gate rejected"
     ok_bind, bind_err = verify_mt5_account_binding(mt5, cfg, account=account, terminal=terminal)
@@ -210,10 +212,23 @@ def verify_live_execution_gate(mt5, account, terminal, cfg):
         and cfg.get("explicitLiveGateConfirmed") is True
     ):
         return False, "Explicit multi-gate LIVE authorization not granted (fail-closed)"
-    # Verify session binding if armedAccountLogin / armedServer are provided
+    # When supplied, both ARM identifiers must match the connected broker
+    # session. Never ignore armedServer or raise on malformed ARM inputs.
     armed_login = str(cfg.get("armedAccountLogin") or "").strip()
-    if armed_login and int(getattr(account, "login", 0) or 0) != int(armed_login):
-        return False, f"ARM session login #{armed_login} does not match connected account #{getattr(account, 'login', 0)}"
+    if armed_login:
+        if not armed_login.isdigit():
+            return False, "ARM session login is invalid"
+        try:
+            actual_login = int(getattr(account, "login", None))
+        except (TypeError, ValueError, OverflowError):
+            return False, "ARM broker login unverified"
+        if actual_login != int(armed_login):
+            return False, "ARM session login does not match connected broker account"
+    armed_server = str(cfg.get("armedServer") or "").strip()
+    if armed_server:
+        actual_server = str(getattr(account, "server", "") or "").strip()
+        if not actual_server or actual_server.casefold() != armed_server.casefold():
+            return False, "ARM session server does not match connected broker server"
     return True, None
 
 
