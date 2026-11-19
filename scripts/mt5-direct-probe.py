@@ -2159,9 +2159,6 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
             if (old_type not in (0, 1) or not old_symbol or
                 not all(isfinite(v) and v > 0 for v in (old_sl, old_volume, old_entry))):
                 raise ValueError("Invalid open-position inventory")
-            if (old_type == 0 and old_sl >= old_entry) or (old_type == 1 and old_sl <= old_entry):
-                # Stop levels already in profit are legitimate protective SLs.
-                pass
             old_profit = float(calc(old_type, old_symbol, old_volume, old_entry, old_sl))
             if not isfinite(old_profit):
                 raise ValueError("Invalid broker SL risk")
