@@ -2142,15 +2142,24 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
         pending_orders = orders_get()
     except Exception:
         pending_orders = None
-    if pending_orders is None:
+    if not isinstance(pending_orders, (list, tuple)):
         return {"ok": False, "submitted": False, "status": "BLOCKED_PENDING_ORDERS_UNVERIFIED",
-                "message": "Cannot verify broker pending orders; new order blocked"}
+                "message": "Broker pending orders inventory has invalid shape"}
     for pend in pending_orders:
         pend_sl = float(getattr(pend, "sl", 0) or 0)
         if pend_sl <= 0:
             return {"ok": False, "message": "A pending order has no SL; new orders blocked"}
-        pend_type_raw = int(getattr(pend, "type", 0) or 0)
-        pend_dir = 0 if pend_type_raw in (0, 2, 4, 6) else 1
+        try:
+            pend_type_raw = int(getattr(pend, "type", None))
+        except (TypeError, ValueError, OverflowError):
+            pend_type_raw = -1
+        # MT5 pending types: BUY_LIMIT/SELL_LIMIT (2/3), BUY_STOP/SELL_STOP
+        # (4/5), BUY_STOP_LIMIT/SELL_STOP_LIMIT (6/7). Unknown types must
+        # not be silently priced as SELL.
+        if pend_type_raw not in (2, 3, 4, 5, 6, 7):
+            return {"ok": False, "submitted": False, "status": "BLOCKED_PENDING_ORDERS_UNVERIFIED",
+                    "message": "Broker pending order type unrecognized"}
+        pend_dir = 0 if pend_type_raw in (2, 4, 6) else 1
         pend_vol = float(getattr(pend, "volume_current", 0) or getattr(pend, "volume_initial", 0) or 0)
         pend_price = float(getattr(pend, "price_open", 0) or price)
         pend_sym = str(getattr(pend, "symbol", active_symbol))
