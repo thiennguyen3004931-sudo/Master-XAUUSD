@@ -3044,6 +3044,30 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         )
         self.assertFalse(no_loosen["shouldModifySl"])
 
+    def test_stop_out_margin_thresholds_must_be_finite_and_positive(self):
+        """Reject invalid margin thresholds before querying a live terminal."""
+        invalid = (None, float("nan"), float("inf"), float("-inf"),
+                   0, -1, "bad", "")
+        for threshold in invalid:
+            with self.subTest(level=repr(threshold)):
+                for field in ("marginCallLevelPct", "stopOutLevelPct"):
+                    result = engine.run_historical_backtest_on_mt5(
+                        object(), "XAUUSD.G",
+                        {"simulateStopOut": True, field: threshold},
+                    )
+                    self.assertFalse(result.get("ok"), result)
+                    self.assertEqual(result.get("status"), "INVALID_MARGIN_THRESHOLD_CONFIG")
+
+        for threshold in invalid:
+            with self.subTest(direct=repr(threshold)):
+                with self.assertRaises(ValueError):
+                    engine._build_portfolio_scenario_comparison(
+                        [], [], 0.01, 1000.0, 100.0,
+                        margin_call_level_pct=100.0,
+                        stop_out_level_pct=threshold,
+                        simulate_stop_out=True,
+                    )
+
     def test_stop_out_configuration_must_be_explicit_and_supported(self):
         """Invalid simulation options never masquerade as verified liquidation."""
         for invalid in ("false", "true", 1, 0, None, [], {}):
