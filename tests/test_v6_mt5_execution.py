@@ -202,6 +202,55 @@ class ExecutionRiskTest(unittest.TestCase):
                 self.assertFalse(accepted, scenario)
                 self.assertTrue(reason, scenario)
 
+    def test_sl_risk_and_portfolio_broker_errors_fail_closed(self):
+        """Broker calculation failure is a blocked entry, not a sent order."""
+        scenarios = ("new-exception", "new-none", "new-nan",
+                     "portfolio-exception", "portfolio-malformed",
+                     "balance-nan")
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                broker = MockBroker()
+                original_calc = broker.order_calc_profit
+                if scenario.startswith("portfolio"):
+                    broker.positions = [SimpleNamespace(
+                        type=0, symbol="XAUUSD.G", volume=0.02,
+                        price_open=4000.0, sl=3993.0,
+                    )]
+                    if scenario == "portfolio-malformed":
+                        broker.positions[0].volume = "not-a-volume"
+                if scenario == "balance-nan":
+                    original_account_info = broker.account_info
+                    def corrupt_account_info():
+                        account = original_account_info()
+                        account.balance = float("nan")
+                        return account
+                    broker.account_info = corrupt_account_info
+                elif scenario == "new-exception":
+                    def broken_calc(*args):
+                        raise RuntimeError("mock broker calculation timeout")
+                    broker.order_calc_profit = broken_calc
+                elif scenario == "new-none":
+                    broker.order_calc_profit = lambda *args: None
+                elif scenario == "new-nan":
+                    broker.order_calc_profit = lambda *args: float("nan")
+                elif scenario == "portfolio-exception":
+                    def broken_portfolio_calc(kind, symbol, lot, entry, sl):
+                        if entry == 4000.0:
+                            raise RuntimeError("mock portfolio calc failed")
+                        return original_calc(kind, symbol, lot, entry, sl)
+                    broker.order_calc_profit = broken_portfolio_calc
+
+                result = engine.execute_order(broker, "XAUUSD.G", {
+                    "side": "BUY", "volume": 0.02,
+                    "slDistance": 6.8, "tpDistance": 16.0,
+                })
+                self.assertFalse(result.get("ok"), result)
+                self.assertEqual(broker.sent, [])
+                expected = ("BLOCKED_ACCOUNT_RISK_UNVERIFIED" if scenario == "balance-nan"
+                            else "BLOCKED_PORTFOLIO_RISK_UNVERIFIED" if scenario.startswith("portfolio")
+                            else "BLOCKED_SL_RISK_UNVERIFIED")
+                self.assertEqual(result.get("status"), expected, result)
+
     def test_above_risk_budget_emits_warning_without_blocking_fixed_lot(self):
         mt5 = MockBroker()
         result = engine.execute_order(mt5, "XAUUSD.G", {
