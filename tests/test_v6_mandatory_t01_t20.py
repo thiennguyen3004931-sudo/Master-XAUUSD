@@ -3096,6 +3096,36 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
                         simulate_stop_out=invalid_flag, liquidation_rule=rule,
                     )
 
+    def test_stop_out_never_liquidates_on_unverified_event_price_proxy(self):
+        """A missing M5 market mark must not create fictional broker exits."""
+        epoch = 1794180000000
+        t_open = {
+            "ticket": 93101, "tsMs": epoch, "exitTsMs": epoch + 300000,
+            "entry": 4000.0, "exit": 3980.0, "sl": 3980.0,
+            "tp": 4030.0, "initialR": 20.0, "finalSl": 3980.0,
+            "beReachedTs": 0, "exitType": "OPEN_AT_DATASET_END",
+            "isOpenAtEnd": True, "pts": -20.0, "rMultiple": -1.0,
+            "volume": 0.10, "marginUsd": 400.0, "side": "BUY",
+        }
+        comparison = engine._build_portfolio_scenario_comparison(
+            [], [t_open], 0.10, 100.0, 100.0,
+            stop_out_level_pct=50.0, market_m5_bars=[],
+            simulate_stop_out=True,
+        )
+        scenario = comparison["scenarioWithPositiveDca"]
+        self.assertTrue(scenario["stopOutLiquidationSimulated"])
+        self.assertFalse(scenario["brokerStopOutExecutionVerified"])
+        self.assertFalse(scenario["stopOutSimulationPriceCoverageComplete"])
+        self.assertEqual(scenario["stopOutLiquidatedCount"], 0)
+        self.assertEqual(scenario["stopOutTriggerEvents"], 0)
+        self.assertGreater(scenario["stopOutPriceUnverifiedSnapshots"], 0)
+        self.assertGreater(scenario["stopOutUnverifiedPotentialBreaches"], 0)
+        self.assertTrue(scenario["scenarioAccountingReconciled"])
+        self.assertTrue(all(not snap["simulatedStopOutTriggeredHere"]
+                            for snap in scenario["timelineSnapshots"]))
+        self.assertTrue(any(snap["stopOutUnverifiedPotentialBreachHere"]
+                            for snap in scenario["timelineSnapshots"]))
+
     def test_T65_m3_bt05_stop_out_forced_liquidation_vs_observation_only(self):
         """T65 (M3 / BT-05 Issue #52): Without simulateStopOut=True, stopOutLiquidationSimulated is False; with simulateStopOut=True, breaches <= 50% liquidate largest-loss position first and update Balance/Equity/UsedMargin."""
         epoch = 1794180000000
