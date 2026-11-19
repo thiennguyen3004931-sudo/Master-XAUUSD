@@ -1,0 +1,145 @@
+name: Phase7C Web Quality Self-Hosted CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "scripts/test-phase7c-web-account-switch-source.ps1"
+      - ".github/workflows/phase7c-web-quality-self-hosted-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "scripts/test-phase7c-web-account-switch-source.ps1"
+      - ".github/workflows/phase7c-web-quality-self-hosted-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Scope long-path support to CI git processes, including checkout cleanup.
+env:
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: core.longpaths
+  GIT_CONFIG_VALUE_0: "true"
+
+concurrency:
+  group: web-quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-quality:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Source/UI checks must not execute PR code on the private MT5 Windows machine.
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify checkout
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($actual -ne $env:EXPECTED_HEAD) { throw "CHECKED_OUT_HEAD_MISMATCH" }
+          Write-Host "WEB_QUALITY_HEAD=$actual"
+          Write-Host "WEB_QUALITY_RUNNER=$env:RUNNER_NAME"
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Frozen install
+        run: pnpm install --frozen-lockfile --prefer-offline --network-concurrency=4 --fetch-retries=4 --fetch-retry-maxtimeout=30000
+      - name: Web lint
+        run: pnpm --filter @xauusd/web lint
+      - name: Build API dependencies
+        run: pnpm --filter @xauusd/api... build
+      - name: Build and typecheck Web dependencies
+        run: pnpm --filter @xauusd/web... build
+      - name: Web source and UI safety contracts
+        run: |
+          $files = @(
+            "scripts/test-phase7c-web-account-semantic-source.mjs",
+            "scripts/test-phase7c-account-switch-compact-ui-source.mjs",
+            "scripts/test-phase7c-control-center-v2-compact-ui-source.mjs",
+            "scripts/test-phase7c-auto-active-ui-authorization-semantics.mjs",
+            "scripts/test-phase7c-signal-ui-v3-operator-flow.mjs",
+            "scripts/test-phase7c-mobile-readonly-m1.mjs",
+            "scripts/test-phase7c-mobile-m4a-source-contract.mjs",
+            "scripts/test-phase7c-strategy-entry-conditions-web-contract.mjs",
+            "scripts/test-phase7c-web-vi-localization.mjs",
+            "scripts/test-phase7c-web-safety-contract.mjs"
+          )
+          foreach ($file in $files) {
+            node $file
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Web transport and canonical lot behavior
+        run: |
+          $files = @(
+            "scripts/test-phase7c-web-mutation-single-transport.ts",
+            "scripts/test-phase7c-web-lot-canonical-ui.ts",
+            "scripts/test-phase7c-web-auto-account-start.ts"
+          )
+          foreach ($file in $files) {
+            pnpm --filter @xauusd/api exec tsx "../../$file"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Lot and Fixed TP preservation regressions
+        run: >-
+          node --test
+          scripts/phase7c-account-risk-fixed-tp-preservation.test.mjs
+          scripts/phase7c-fixed-tp-api-web.test.mjs
+          scripts/phase7c-lot-settings.test.mjs
+          scripts/phase7c-lot-range-120.test.mjs
+      - name: Mobile gateway regressions
+        run: |
+          $files = @(Get-ChildItem apps/mobile-gateway/test/*.test.mjs | ForEach-Object { $_.FullName })
+          if ($files.Count -eq 0) { throw "MOBILE_GATEWAY_TESTS_MISSING" }
+          node --test @files
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Mobile client regressions
+        run: pnpm --filter @xauusd/risk-engine exec vitest run --root ../.. scripts/test-phase7c-mobile-m4-client.test.ts
+      - name: Windows Web safety contracts in both shells
+        run: |
+          $files = @(
+            "scripts/test-phase7c-web-ui-safe-deploy-source.ps1",
+            "scripts/test-phase7b-web-production-runtime-source.ps1",
+            "scripts/test-phase7c-web-client-localization-runtime-source.ps1",
+            "scripts/test-phase7c-web-live-arm-demo-auto-source.ps1",
+            "scripts/test-phase7c-web-account-switch-source.ps1"
+          )
+          foreach ($file in $files) {
+            foreach ($shell in @("pwsh", "powershell.exe")) {
+              & $shell -NoProfile -ExecutionPolicy Bypass -File $file
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+          }
+      - name: Diff hygiene and tracked worktree
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if ($env:BASE_SHA -match '^[0-9a-f]{40}$' -and $env:BASE_SHA -notmatch '^0+$') {
+            git diff --check "${env:BASE_SHA}...HEAD"
+          } else {
+            git show --format= --check HEAD
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $status = git status --porcelain --untracked-files=no
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($status) { throw "TRACKED_WORKTREE_DIRTY: $status" }
+          Write-Host "WEB_QUALITY=PASS"

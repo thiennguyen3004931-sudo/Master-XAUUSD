@@ -1,0 +1,28 @@
+name: Phase7C SEMI Canonical Mode UI
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/src/api.ts"
+      - "apps/web/src/phase7c-types.ts"
+      - "apps/web/src/phase7c-execution-control.ts"
+      - "apps/web/src/pages/Phase7CControlCenterPage.tsx"
+      - "apps/api/src/services/phase7c-semi-trend-management-plan.service.ts"
+      - "apps/api/src/services/phase7c-semi-trend-management-plan.test.ts"
+      - "scripts/phase7c-telegram-mode-logic.mjs"
+      - "scripts/run-phase7c-telegram-mode-controller.mjs"
+      - "scripts/test-phase7c-semi-canonical-mode-ui.mjs"
+      - ".github/workflows/phase7c-semi-canonical-mode-ui-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semi-canonical-mode-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify SEMI canonical mode UI and Trend management semantics
+        run: node scripts/test-phase7c-semi-canonical-mode-ui.mjs

@@ -1,0 +1,79 @@
+name: Phase7C Trend Singleton Ownership CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-trend-single-writer-entry
+    paths:
+      - "scripts/run-phase7c-trend-controller.mjs"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/phase7c-runtime-singleton-lock.mjs"
+      - "scripts/phase7c-atomic-state-write.mjs"
+      - "scripts/phase7c-atomic-state-write.test.mjs"
+      - "scripts/phase7c-trend-singleton-ownership.test.mjs"
+      - ".github/workflows/phase7c-trend-singleton-ownership-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/run-phase7c-trend-controller.mjs"
+      - "scripts/run-phase7b-demo-controller.ts"
+      - "scripts/phase7c-runtime-singleton-lock.mjs"
+      - "scripts/phase7c-atomic-state-write.mjs"
+      - "scripts/phase7c-atomic-state-write.test.mjs"
+      - "scripts/phase7c-trend-singleton-ownership.test.mjs"
+      - ".github/workflows/phase7c-trend-singleton-ownership-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  singleton-contract-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trend singleton ownership regression
+        run: node --test scripts/phase7c-trend-singleton-ownership.test.mjs
+
+      - name: Existing shared execution lock regression
+        run: node --test scripts/phase7c-execution-lock.test.mjs
+
+      - name: Windows-safe atomic state persistence regression
+        run: node --test scripts/phase7c-atomic-state-write.test.mjs
+
+      - name: Windows-safe atomic state persistence regression
+        run: node --test scripts/phase7c-atomic-state-write.test.mjs
+
+      - name: Source syntax checks
+        run: |
+          node --check scripts/run-phase7c-trend-controller.mjs
+          node --check scripts/phase7c-runtime-singleton-lock.mjs
+          node --check scripts/phase7c-atomic-state-write.mjs
+          node --check scripts/phase7c-atomic-state-write.mjs
+
+      - name: Diff hygiene
+        run: git diff --check
+
+  singleton-contract-windows:
+    runs-on: windows-latest
+    timeout-minutes: 7
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trend singleton ownership regression
+        run: node --test scripts/phase7c-trend-singleton-ownership.test.mjs
+
+      - name: Existing shared execution lock regression
+        run: node --test scripts/phase7c-execution-lock.test.mjs
+
+      - name: Source syntax checks
+        run: |
+          node --check scripts/run-phase7c-trend-controller.mjs
+          node --check scripts/phase7c-runtime-singleton-lock.mjs
+
+      - name: Diff hygiene
+        run: git diff --check

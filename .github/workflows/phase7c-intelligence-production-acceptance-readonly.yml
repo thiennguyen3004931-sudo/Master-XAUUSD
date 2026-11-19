@@ -1,0 +1,103 @@
+name: Phase7C Intelligence Production Acceptance Read-Only
+
+on:
+  pull_request:
+    paths:
+      - "scripts/test-phase7c-intelligence-production-acceptance-workflow-source.ps1"
+      - ".github/workflows/phase7c-intelligence-production-acceptance-readonly.yml"
+      - "scripts/test-phase7c-p3-production-acceptance-source.ps1"
+      - "scripts/test-phase7c-p4-production-acceptance-source.ps1"
+      - "scripts/test-phase7c-p5-production-acceptance-source.ps1"
+      - "scripts/verify-phase7c-p3-production-acceptance-local.ps1"
+      - "scripts/verify-phase7c-p4-production-acceptance-local.ps1"
+      - "scripts/verify-phase7c-p5-production-acceptance-local.ps1"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/test-phase7c-intelligence-production-acceptance-workflow-source.ps1"
+      - ".github/workflows/phase7c-intelligence-production-acceptance-readonly.yml"
+      - "scripts/test-phase7c-p3-production-acceptance-source.ps1"
+      - "scripts/test-phase7c-p4-production-acceptance-source.ps1"
+      - "scripts/test-phase7c-p5-production-acceptance-source.ps1"
+      - "scripts/verify-phase7c-p3-production-acceptance-local.ps1"
+      - "scripts/verify-phase7c-p4-production-acceptance-local.ps1"
+      - "scripts/verify-phase7c-p5-production-acceptance-local.ps1"
+
+permissions:
+  contents: read
+
+env:
+  EXPECTED_PRODUCTION_COMMIT: 8514fafffea7e7cde6a3bddfbb3cd23474bc20f7
+  PRODUCTION_ROOT: F:\Project\XAUUSD_AI_MASTER\xauusd-ai-master
+  API_BASE_URL: http://127.0.0.1:3711
+
+jobs:
+  validate:
+    name: intelligence-readonly-acceptance-validate
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+
+      - name: Workflow read-only source contract
+        shell: powershell
+        run: .\scripts\test-phase7c-intelligence-production-acceptance-workflow-source.ps1 -ProjectRoot $PWD
+
+      - name: P3 production acceptance verifier source contract
+        shell: powershell
+        run: .\scripts\test-phase7c-p3-production-acceptance-source.ps1 -ProjectRoot $PWD
+
+      - name: P4 production acceptance verifier source contract
+        shell: powershell
+        run: .\scripts\test-phase7c-p4-production-acceptance-source.ps1 -ProjectRoot $PWD
+
+      - name: P5 production acceptance verifier source contract
+        shell: powershell
+        run: .\scripts\test-phase7c-p5-production-acceptance-source.ps1 -ProjectRoot $PWD
+
+  production-acceptance:
+    name: intelligence-readonly-production-acceptance
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact merged source
+        uses: actions/checkout@v4
+
+      - name: Run P3 read-only production acceptance
+        shell: powershell
+        run: |
+          .\scripts\verify-phase7c-p3-production-acceptance-local.ps1 `
+            -ProjectRoot $env:PRODUCTION_ROOT `
+            -ExpectedCommit $env:EXPECTED_PRODUCTION_COMMIT `
+            -ApiBaseUrl $env:API_BASE_URL
+
+      - name: Run P4 read-only production acceptance
+        shell: powershell
+        run: |
+          .\scripts\verify-phase7c-p4-production-acceptance-local.ps1 `
+            -ProjectRoot $env:PRODUCTION_ROOT `
+            -ExpectedCommit $env:EXPECTED_PRODUCTION_COMMIT `
+            -ApiBaseUrl $env:API_BASE_URL
+
+      - name: Run P5 read-only production acceptance
+        shell: powershell
+        run: |
+          .\scripts\verify-phase7c-p5-production-acceptance-local.ps1 `
+            -ProjectRoot $env:PRODUCTION_ROOT `
+            -ExpectedCommit $env:EXPECTED_PRODUCTION_COMMIT `
+            -ApiBaseUrl $env:API_BASE_URL
+
+      - name: Safety boundary
+        shell: powershell
+        run: |
+          Write-Host "INTELLIGENCE_PRODUCTION_ACCEPTANCE_HTTP_METHODS=GET_ONLY"
+          Write-Host "INTELLIGENCE_PRODUCTION_MUTATION=NONE"
+          Write-Host "INTELLIGENCE_MODE_MUTATION=NONE"
+          Write-Host "INTELLIGENCE_ARM_MUTATION=NONE"
+          Write-Host "INTELLIGENCE_ORDER_MUTATION=NONE"
+          Write-Host "INTELLIGENCE_POSITION_MUTATION=NONE"
+          Write-Host "INTELLIGENCE_LIVE_TEST_ORDER=NONE"

@@ -1,0 +1,21 @@
+name: Phase7C Lifecycle Broker Ownership Ready
+
+on:
+  pull_request:
+    paths:
+      - "apps/api/src/services/phase7c-lifecycle.service.ts"
+      - "scripts/test-phase7c-lifecycle-broker-ownership-ready.mjs"
+      - ".github/workflows/phase7c-lifecycle-broker-ownership-ready-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle-broker-ownership-ready:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify broker-owned lifecycle readiness semantics
+        run: node scripts/test-phase7c-lifecycle-broker-ownership-ready.mjs

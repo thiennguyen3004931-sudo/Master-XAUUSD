@@ -1,0 +1,76 @@
+name: Phase7C MT5 Health Lock Contention CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/mt5-broker/bridge/mt5_bridge/mt5_gateway.py"
+      - "packages/mt5-broker/bridge/mt5_bridge/guarded_gateway.py"
+      - "packages/mt5-broker/bridge/tests/test_health_lock_contention.py"
+      - "packages/mt5-broker/bridge/tests/test_order_idempotency_failure_boundary.py"
+      - ".github/workflows/phase7c-mt5-health-lock-contention-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mt5-health-lock-contention-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  health-lock-contention:
+    name: mt5-health-lock-contention-windows
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install isolated model dependency
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check "pydantic>=2,<3"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: MT5 health and candle lock-contention regression
+        shell: pwsh
+        run: |
+          Push-Location packages/mt5-broker/bridge
+          try {
+            python -m unittest discover -s tests -p test_health_lock_contention.py -v
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Compile bridge source
+        shell: pwsh
+        run: |
+          python -m compileall -q packages/mt5-broker/bridge/mt5_bridge packages/mt5-broker/bridge/tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Full fake-MT5 bridge regression including order replay failures
+        shell: pwsh
+        run: |
+          Push-Location packages/mt5-broker/bridge
+          try {
+            python -m unittest discover -s tests -p 'test_*.py' -v
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Diff hygiene
+        shell: pwsh
+        run: git diff --check

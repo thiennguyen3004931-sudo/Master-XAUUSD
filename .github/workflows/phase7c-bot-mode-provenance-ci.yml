@@ -1,0 +1,61 @@
+name: Phase7C Bot Mode Provenance CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/api/src/routes/phase7c.route.ts"
+      - "apps/api/src/services/phase7c-bot-mode.service.ts"
+      - "apps/api/src/services/phase7c-lifecycle.service.ts"
+      - "apps/web/src/api.ts"
+      - "apps/web/src/pages/Phase7CControlCenterPage.tsx"
+      - "scripts/activate-phase7c-local.ps1"
+      - "scripts/phase7c-telegram-mode-logic.mjs"
+      - "scripts/run-phase7c-telegram-mode-controller.mjs"
+      - "scripts/test-phase7c-activation-preserves-bot-mode.mjs"
+      - "scripts/test-phase7c-bot-mode-provenance.ts"
+      - "scripts/test-phase7c-bot-mode-provenance-writers.mjs"
+      - "scripts/test-phase7c-web-only-auto-control.ts"
+      - ".github/workflows/phase7c-bot-mode-provenance-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  provenance-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bot mode provenance filesystem regression
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/test-phase7c-bot-mode-provenance.ts
+
+      - name: Bot mode provenance writer audit
+        run: node scripts/test-phase7c-bot-mode-provenance-writers.mjs
+
+      - name: Activation preserves persistent bot mode
+        run: node scripts/test-phase7c-activation-preserves-bot-mode.mjs
+
+      - name: Web-only AUTO control regression
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/test-phase7c-web-only-auto-control.ts
+
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build

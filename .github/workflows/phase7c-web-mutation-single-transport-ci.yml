@@ -1,0 +1,49 @@
+name: Phase7C Web Mutation Single Transport CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-web-mutation-single-transport
+    paths:
+      - "apps/web/src/local-control-request.ts"
+      - "apps/web/src/phase7c-execution-control.ts"
+      - "apps/web/src/ui/Phase7CAccountSwitchCard.tsx"
+      - "apps/api/src/services/phase7c-account-switch.service.ts"
+      - "apps/api/src/services/phase7c-live-arm-control.service.ts"
+      - "scripts/test-phase7c-web-mutation-single-transport.ts"
+      - ".github/workflows/phase7c-web-mutation-single-transport-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/web/src/local-control-request.ts"
+      - "apps/web/src/phase7c-execution-control.ts"
+      - "apps/web/src/ui/Phase7CAccountSwitchCard.tsx"
+      - "apps/api/src/services/phase7c-account-switch.service.ts"
+      - "apps/api/src/services/phase7c-live-arm-control.service.ts"
+      - "scripts/test-phase7c-web-mutation-single-transport.ts"
+      - ".github/workflows/phase7c-web-mutation-single-transport-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  mutation-single-transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Mutation transport behavior contract
+        run: pnpm --filter @xauusd/api exec tsx ../../scripts/test-phase7c-web-mutation-single-transport.ts
+      - name: Build Web
+        run: pnpm --filter @xauusd/web build
+      - name: Build API dependency graph
+        run: pnpm --filter @xauusd/api... build

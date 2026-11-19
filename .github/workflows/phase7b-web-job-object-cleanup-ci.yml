@@ -1,0 +1,37 @@
+name: Phase7B Web Job Object Cleanup CI
+
+on:
+  push:
+    branches:
+      - fix/phase7b-web-job-object-cleanup
+    paths:
+      - "scripts/run-phase7b-web-autostart.ps1"
+      - "scripts/lib/phase7b-windows-job-object.ps1"
+      - "scripts/test-phase7b-web-job-object-cleanup-local.ps1"
+      - "docs/superpowers/plans/2026-08-28-phase7b-web-job-object-cleanup.md"
+      - ".github/workflows/phase7b-web-job-object-cleanup-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/run-phase7b-web-autostart.ps1"
+      - "scripts/lib/phase7b-windows-job-object.ps1"
+      - "scripts/test-phase7b-web-job-object-cleanup-local.ps1"
+      - "docs/superpowers/plans/2026-08-28-phase7b-web-job-object-cleanup.md"
+      - ".github/workflows/phase7b-web-job-object-cleanup-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  job-object-cleanup-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Forced supervisor cleanup - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7b-web-job-object-cleanup-local.ps1
+      - name: Forced supervisor cleanup - Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7b-web-job-object-cleanup-local.ps1

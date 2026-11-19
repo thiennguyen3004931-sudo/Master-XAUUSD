@@ -1,0 +1,38 @@
+name: Phase7C MT5 Telemetry Read-Only Retry CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/api/src/services/mt5.service.ts"
+      - "scripts/test-phase7c-mt5-telemetry-readonly-retry-source.mjs"
+      - ".github/workflows/phase7c-mt5-telemetry-readonly-retry-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    name: mt5-telemetry-readonly-retry-source-contract
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Run telemetry retry source contract
+        shell: powershell
+        run: node --test scripts/test-phase7c-mt5-telemetry-readonly-retry-source.mjs
+
+      - name: Safety boundary
+        shell: powershell
+        run: |
+          Write-Host "MT5_TELEMETRY_RETRY_READ_ONLY=TRUE"
+          Write-Host "MT5_TELEMETRY_RETRY_RUNTIME_MUTATION=NONE"
+          Write-Host "MT5_TELEMETRY_RETRY_MODE_MUTATION=NONE"
+          Write-Host "MT5_TELEMETRY_RETRY_ARM_MUTATION=NONE"
+          Write-Host "MT5_TELEMETRY_RETRY_ORDER_MUTATION=NONE"
+          Write-Host "MT5_TELEMETRY_RETRY_POSITION_MUTATION=NONE"
+          Write-Host "MT5_TELEMETRY_RETRY_LIVE_TEST_ORDER=NONE"

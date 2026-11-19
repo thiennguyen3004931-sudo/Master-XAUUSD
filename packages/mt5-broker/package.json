@@ -1,0 +1,40 @@
+{
+  "name": "@xauusd/mt5-broker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "bridge",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "bridge:test": "python -m unittest discover -s bridge/tests -p test_*.py",
+    "bridge:compile": "python -m compileall -q bridge/mt5_bridge bridge/tests"
+  },
+  "dependencies": {
+    "@xauusd/execution-engine": "workspace:*",
+    "@xauusd/types": "workspace:*",
+    "@xauusd/market-data": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  }
+}

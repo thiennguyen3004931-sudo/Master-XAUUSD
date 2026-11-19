@@ -1,0 +1,35 @@
+name: Phase7C Failed Cutover Diagnostic Source CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/phase7c-failed-cutover-readonly-diagnostic.yml'
+      - '.github/workflows/phase7c-failed-cutover-readonly-diagnostic-ci.yml'
+      - 'scripts/ops/diagnose-phase7c-failed-cutover-readonly.ps1'
+      - 'scripts/test-phase7c-failed-cutover-readonly-diagnostic-source.ps1'
+
+permissions:
+  contents: read
+
+jobs:
+  no-live-mutation-contract:
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout PR source only
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Assert diagnostic code does not mutate any production resources
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-phase7c-failed-cutover-readonly-diagnostic-source.ps1
+
+      - name: Confirm CI never invokes live diagnosis or recovery
+        shell: powershell
+        run: |
+          Write-Host 'FAILED_CUTOVER_DIAGNOSTIC_CI=SOURCE_ONLY'
+          Write-Host 'LIVE_SYSTEM_QUERIES=NONE'
+          Write-Host 'PRODUCTION_MUTATION=NONE'

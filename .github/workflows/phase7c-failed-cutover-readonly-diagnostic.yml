@@ -1,0 +1,56 @@
+name: Phase7C Failed Cutover Read-Only Diagnostics
+
+# Operator-initiated ONLY. Never schedule against a LIVE bot.
+on:
+  workflow_dispatch:
+    inputs:
+      operator_confirmed_read_only:
+        description: 'I confirm GET-only diagnostics; no source or bot mutation'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase7c-failed-cutover-readonly-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.operator_confirmed_read_only == true }}
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout only diagnostic source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Static safety contract before production reads
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-phase7c-failed-cutover-readonly-diagnostic-source.ps1
+
+      - name: Collect sanitized port and lifecycle observations, never recovery
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receipt = Join-Path $env:RUNNER_TEMP 'phase7c-failed-cutover-diagnostic.json'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/ops/diagnose-phase7c-failed-cutover-readonly.ps1 `
+            -ExpectedSource '196a8420ff008548773f5d385cf5785a9f84e297' `
+            -ReceiptPath $receipt
+          if ($LASTEXITCODE -ne 0) { throw 'READ_ONLY_DIAGNOSTIC_EXECUTION_FAILED' }
+          if (-not (Test-Path -LiteralPath $receipt -PathType Leaf)) { throw 'SANITIZED_DIAGNOSTIC_RECEIPT_MISSING' }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'Read-only failure diagnostics collected; this is NOT production recovery or LIVE acceptance. Mode/ARM/trading/processes remain untouched.'
+
+      - name: Upload sanitized local evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-cutover-readonly-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase7c-failed-cutover-diagnostic.json
+          retention-days: 7
+          if-no-files-found: warn

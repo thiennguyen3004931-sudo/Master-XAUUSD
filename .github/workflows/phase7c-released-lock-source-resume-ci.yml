@@ -1,0 +1,34 @@
+name: Phase7C Released Lock Source Resume CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/transition-phase7c-stopped-lifecycle-released-lock-source-local.ps1"
+      - "scripts/test-phase7c-released-lock-source-resume.ps1"
+      - ".github/workflows/phase7c-released-lock-source-resume-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/transition-phase7c-stopped-lifecycle-released-lock-source-local.ps1"
+      - "scripts/test-phase7c-released-lock-source-resume.ps1"
+      - ".github/workflows/phase7c-released-lock-source-resume-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Released-lock source resume contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-released-lock-source-resume.ps1
+      - name: Released-lock source resume contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-released-lock-source-resume.ps1

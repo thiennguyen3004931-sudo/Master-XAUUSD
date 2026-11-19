@@ -1,0 +1,67 @@
+name: Phase7C Trade Notifier CI
+# Includes Recovery close canonical-before-Daily-P/L synchronization regression.
+
+on:
+  push:
+    branches:
+      - fix/phase7c-trade-notifier-*
+    paths:
+      - scripts/run-phase7b-telegram-notifier-local.ps1
+      - scripts/run-phase7b-telegram-notifier.mjs
+      - scripts/run-phase7c-executors-local.ps1
+      - scripts/test-phase7c-trade-notifier-source.ps1
+      - scripts/test-phase7c-trade-notifier-wrapper.ps1
+      - scripts/phase7c-trade-notifier-synthetic.test.mjs
+      - scripts/phase7c-recovery-close-daily-sync.test.mjs
+      - scripts/phase7c-sideway-production-telegram-sample.test.mjs
+      - scripts/send-phase7c-sideway-production-telegram-sample.mjs
+      - .github/workflows/phase7c-trade-notifier-ci.yml
+  pull_request:
+    paths:
+      - scripts/run-phase7b-telegram-notifier-local.ps1
+      - scripts/run-phase7b-telegram-notifier.mjs
+      - scripts/run-phase7c-executors-local.ps1
+      - scripts/test-phase7c-trade-notifier-source.ps1
+      - scripts/test-phase7c-trade-notifier-wrapper.ps1
+      - scripts/phase7c-trade-notifier-synthetic.test.mjs
+      - scripts/phase7c-recovery-close-daily-sync.test.mjs
+      - scripts/phase7c-sideway-production-telegram-sample.test.mjs
+      - scripts/send-phase7c-sideway-production-telegram-sample.mjs
+      - .github/workflows/phase7c-trade-notifier-ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: notifier-supervision-regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Supervisor, wrapper, and startup safety contract
+        shell: pwsh
+        run: ./scripts/test-phase7c-trade-notifier-source.ps1
+
+      - name: Notifier JavaScript syntax
+        run: node --check ./scripts/run-phase7b-telegram-notifier.mjs
+
+      - name: Wrapper LIVE and DEMO journal integration
+        shell: pwsh
+        run: ./scripts/test-phase7c-trade-notifier-wrapper.ps1
+
+      - name: Synthetic ENTRY-HOLD-BE-partial-EXIT lifecycle
+        run: node --test ./scripts/phase7c-trade-notifier-synthetic.test.mjs
+
+      - name: Recovery close Daily P/L canonical synchronization regression
+        run: node --test ./scripts/phase7c-recovery-close-daily-sync.test.mjs
+
+      - name: Production-format Sideway Telegram sample harness
+        run: node --test ./scripts/phase7c-sideway-production-telegram-sample.test.mjs

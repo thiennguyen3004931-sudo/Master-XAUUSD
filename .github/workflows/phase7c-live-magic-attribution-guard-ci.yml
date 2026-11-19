@@ -1,0 +1,77 @@
+name: Phase7C LIVE Magic Attribution Guard CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-live-magic-attribution-guard
+    paths:
+      - "packages/mt5-broker/bridge/.env.phase7b-live.example"
+      - "apps/api/src/services/phase7c-daily-recovery-view.service.ts"
+      - "apps/api/src/services/mt5-performance.service.ts"
+      - "scripts/lib/phase7c-account-mode.ps1"
+      - "scripts/run-phase7b-api-runtime-local.ps1"
+      - "scripts/test-phase7c-dual-account-mode-local.ps1"
+      - ".github/workflows/phase7c-live-magic-attribution-guard-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/mt5-broker/bridge/.env.phase7b-live.example"
+      - "apps/api/src/services/phase7c-daily-recovery-view.service.ts"
+      - "apps/api/src/services/mt5-performance.service.ts"
+      - "scripts/lib/phase7c-account-mode.ps1"
+      - "scripts/run-phase7b-api-runtime-local.ps1"
+      - "scripts/test-phase7c-dual-account-mode-local.ps1"
+      - ".github/workflows/phase7c-live-magic-attribution-guard-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  live-magic-contract-windows:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: LIVE magic contract with PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-dual-account-mode-local.ps1
+
+      - name: LIVE magic contract with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-phase7c-dual-account-mode-local.ps1
+
+  api-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build risk engine dependency graph
+        run: pnpm --filter @xauusd/risk-engine... build
+
+      - name: Build API
+        run: pnpm --filter @xauusd/api... build

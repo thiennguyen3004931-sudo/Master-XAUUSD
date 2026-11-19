@@ -1,0 +1,72 @@
+name: Phase7C One-Shot Web Recovery Evidence (READ ONLY)
+
+# Triggers once when this file first lands on main. No schedule and no runtime mutation.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/phase7c-one-shot-web-recovery-evidence-readonly.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase7c-one-shot-web-recovery-evidence-readonly
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 12
+    steps:
+      - name: Checkout CI worktree (not production root)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Assert strictly read-only source contract
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-phase7c-one-shot-web-evidence-readonly-source.ps1
+
+      - name: Read exact production source, paused/disarmed/flat broker proof
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receipt = Join-Path $env:RUNNER_TEMP 'phase7c-independent-bridge-precheck.json'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/ops/check-phase7c-web-recovery-eligibility-readonly.ps1 -ExpectedSource '196a8420ff008548773f5d385cf5785a9f84e297' -ReceiptPath $receipt
+          if ($LASTEXITCODE -ne 0) { throw 'BRIDGE_READONLY_PRECHECK_FAILED' }
+          if (-not (Test-Path -LiteralPath $receipt)) { throw 'BRIDGE_PRECHECK_RECEIPT_MISSING' }
+
+      - name: Read registered Web task action provenance, no task changes
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receipt = Join-Path $env:RUNNER_TEMP 'phase7c-web-task-action-evidence.json'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/ops/snapshot-phase7c-web-task-readonly.ps1 -ExpectedSource '196a8420ff008548773f5d385cf5785a9f84e297' -ReceiptPath $receipt
+          if ($LASTEXITCODE -ne 0) { throw 'WEB_TASK_READONLY_EVIDENCE_FAILED' }
+          if (-not (Test-Path -LiteralPath $receipt)) { throw 'WEB_TASK_EVIDENCE_RECEIPT_MISSING' }
+
+      - name: Upload sanitized non-operational evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase7c-one-shot-web-evidence-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/phase7c-independent-bridge-precheck.json
+            ${{ runner.temp }}/phase7c-web-task-action-evidence.json
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Declare no runtime mutation
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host 'PHASE7C_ONE_SHOT_EVIDENCE=READ_ONLY'
+          Write-Host 'PRODUCTION_SOURCE_MUTATION=NONE'
+          Write-Host 'WEB_TASK_START_STOP=NONE'
+          Write-Host 'ARM_BOT_MODE_MUTATION=NONE'
+          Write-Host 'MT5_TRADE_MUTATION=NONE'
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'READ ONLY: No Web restart. Inspect BOTH receipts; a PASS is not authority to restart.'

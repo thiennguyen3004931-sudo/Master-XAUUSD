@@ -1,0 +1,118 @@
+name: Phase7C Bridge Task Child Cleanup CI
+
+on:
+  push:
+    branches:
+      - fix/phase7c-bridge-task-child-cleanup
+    paths:
+      - "scripts/run-phase7c-account-bridge-task-runner-local.ps1"
+      - "scripts/lib/phase7b-windows-job-object.ps1"
+      - "scripts/test-phase7c-account-bridge-task-child-cleanup-source.ps1"
+      - "scripts/test-phase7b-web-job-object-cleanup-local.ps1"
+      - ".github/workflows/phase7c-bridge-task-child-cleanup-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/run-phase7c-account-bridge-task-runner-local.ps1"
+      - "scripts/lib/phase7b-windows-job-object.ps1"
+      - "scripts/test-phase7c-account-bridge-task-child-cleanup-source.ps1"
+      - "scripts/test-phase7b-web-job-object-cleanup-local.ps1"
+      - ".github/workflows/phase7c-bridge-task-child-cleanup-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bridge-task-child-cleanup-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bridge runner source contract - PowerShell 7
+        shell: pwsh
+        run: .\scripts\test-phase7c-account-bridge-task-child-cleanup-source.ps1
+      - name: Canonical Job Object forced cleanup fixture - PowerShell 7
+        if: always()
+        shell: pwsh
+        run: .\scripts\test-phase7b-web-job-object-cleanup-local.ps1
+      - name: Parse Bridge runner - PowerShell 7
+        if: always()
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\run-phase7c-account-bridge-task-runner-local.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host 'PHASE7C_ACCOUNT_BRIDGE_RUNNER_PARSE=PASS'
+      - name: Bridge runner source contract - Windows PowerShell 5.1
+        if: always()
+        shell: powershell
+        run: .\scripts\test-phase7c-account-bridge-task-child-cleanup-source.ps1
+      - name: Canonical Job Object forced cleanup fixture - Windows PowerShell 5.1
+        if: always()
+        shell: powershell
+        run: .\scripts\test-phase7b-web-job-object-cleanup-local.ps1
+      - name: Parse Bridge runner - Windows PowerShell 5.1
+        if: always()
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\run-phase7c-account-bridge-task-runner-local.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host 'PHASE7C_ACCOUNT_BRIDGE_RUNNER_PARSE=PASS'
+
+  scope-full-ci:
+    name: phase7c-bridge-child-cleanup-scope-full-ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and test broker, risk, and strategy dependencies
+        run: |
+          pnpm --filter @xauusd/mt5-broker... build
+          pnpm --filter @xauusd/risk-engine... build
+          pnpm --filter @xauusd/risk-engine typecheck
+          pnpm --filter @xauusd/risk-engine test
+          pnpm --filter @xauusd/strategy-engine... build
+          pnpm --filter @xauusd/strategy-engine typecheck
+          pnpm --filter @xauusd/strategy-engine test
+
+      - name: Phase7C execution regressions
+        run: |
+          node --test scripts/phase7c-sideway-logic.test.mjs
+          node --test scripts/phase7c-sideway-execution-guards.test.mjs
+          node --test scripts/phase7c-execution-lock.test.mjs
+          node --test scripts/phase7c-forward-report.test.mjs
+
+      - name: Build API and Web dependency graphs
+        run: |
+          pnpm --filter @xauusd/api... build
+          pnpm --filter @xauusd/web... build
+
+      - name: Diff hygiene
+        run: git diff --check

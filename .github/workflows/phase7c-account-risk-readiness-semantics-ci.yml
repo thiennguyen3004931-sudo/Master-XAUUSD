@@ -1,0 +1,57 @@
+name: Phase7C Account Risk Readiness Semantics CI
+
+on:
+  push:
+    branches:
+      - fix/account-risk-readiness-semantics
+    paths:
+      - "apps/web/src/pages/Phase7CAccountRiskPage.tsx"
+      - "apps/web/src/phase7c-live-arm-control-api.ts"
+      - "scripts/test-phase7c-account-risk-readiness-semantics.mjs"
+      - ".github/workflows/phase7c-account-risk-readiness-semantics-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/web/src/pages/Phase7CAccountRiskPage.tsx"
+      - "apps/web/src/phase7c-live-arm-control-api.ts"
+      - "scripts/test-phase7c-account-risk-readiness-semantics.mjs"
+      - ".github/workflows/phase7c-account-risk-readiness-semantics-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Account risk readiness semantics source contract
+        run: node scripts/test-phase7c-account-risk-readiness-semantics.mjs
+
+  web-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Web
+        run: pnpm --filter @xauusd/web build

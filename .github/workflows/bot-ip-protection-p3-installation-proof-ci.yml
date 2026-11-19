@@ -1,0 +1,59 @@
+name: BOT IP Protection P3 Installation Proof CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/installation-proof/**"
+      - "scripts/test-bot-ip-protection-p3-boundary.mjs"
+      - ".github/workflows/bot-ip-protection-p3-installation-proof-ci.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/installation-proof/**"
+      - "scripts/test-bot-ip-protection-p3-boundary.mjs"
+      - ".github/workflows/bot-ip-protection-p3-installation-proof-ci.yml"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: bot-ip-protection-p3-installation-proof-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  installation-proof:
+    name: installation-proof
+    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install workspace dependencies from committed lockfile
+        run: pnpm install --frozen-lockfile
+      - name: Build copy protocol dependency
+        run: pnpm --filter @xauusd/copy-protocol build
+      - name: Installation proof package tests
+        run: pnpm --filter @xauusd/installation-proof test
+      - name: Installation proof typecheck
+        run: pnpm --filter @xauusd/installation-proof typecheck
+      - name: Installation proof build
+        run: pnpm --filter @xauusd/installation-proof build
+      - name: P3 public boundary contract
+        run: node --test scripts/test-bot-ip-protection-p3-boundary.mjs
+      - name: Diff hygiene
+        run: git diff --check
