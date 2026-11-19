@@ -164,6 +164,44 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertEqual(result.get("status"), "BLOCKED_INVALID_PENDING_ORDER")
         self.assertEqual(broker.sent, [])
 
+    def test_live_gate_rejects_unverified_terminal_and_arm_session(self):
+        """No actual MT5 access: validate the pure REAL authorization gate."""
+        broker = MockBroker()
+        broker.ACCOUNT_TRADE_MODE_REAL = 2
+        broker.ACCOUNT_TRADE_MODE_DEMO = 0
+        cfg = {
+            "login": "5201362", "server": "TestBroker-Live",
+            "accountMode": "LIVE", "liveAuthorized": True,
+            "liveArmed": True, "explicitLiveGateConfirmed": True,
+            "armedAccountLogin": "5201362", "armedServer": "TestBroker-Live",
+        }
+        account = SimpleNamespace(
+            login=5201362, server="TestBroker-Live", trade_mode=2,
+            trade_expert=True,
+        )
+        terminal = SimpleNamespace(connected=True, trade_allowed=True)
+        good, error = engine.verify_live_execution_gate(broker, account, terminal, cfg)
+        self.assertTrue(good, error)
+        self.assertIsNone(error)
+
+        failing = [
+            ("missing-connected", account, SimpleNamespace(trade_allowed=True), cfg),
+            ("disconnected", account, SimpleNamespace(connected=False, trade_allowed=True), cfg),
+            ("none-connected", account, SimpleNamespace(connected=None, trade_allowed=True), cfg),
+            ("wrong-arm-server", account, terminal, {**cfg, "armedServer": "Other-Live"}),
+            ("wrong-arm-login", account, terminal, {**cfg, "armedAccountLogin": "5201363"}),
+            ("malformed-arm-login", account, terminal, {**cfg, "armedAccountLogin": "not-a-number"}),
+            ("missing-broker-server", SimpleNamespace(login=5201362, server="",
+                 trade_mode=2, trade_expert=True), terminal, cfg),
+        ]
+        for scenario, acct, term, configuration in failing:
+            with self.subTest(scenario=scenario):
+                accepted, reason = engine.verify_live_execution_gate(
+                    broker, acct, term, configuration,
+                )
+                self.assertFalse(accepted, scenario)
+                self.assertTrue(reason, scenario)
+
     def test_above_risk_budget_emits_warning_without_blocking_fixed_lot(self):
         mt5 = MockBroker()
         result = engine.execute_order(mt5, "XAUUSD.G", {
