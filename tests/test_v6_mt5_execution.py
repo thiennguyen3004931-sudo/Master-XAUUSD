@@ -251,6 +251,25 @@ class ExecutionRiskTest(unittest.TestCase):
                             else "BLOCKED_SL_RISK_UNVERIFIED")
                 self.assertEqual(result.get("status"), expected, result)
 
+    def test_adverse_new_order_sl_requires_negative_broker_profit(self):
+        """P0: an adverse BUY/SELL stop cannot be accepted as zero risk."""
+        for side in ("BUY", "SELL"):
+            for reported_pnl in (0.0, 5.0, float("inf"), float("-inf")):
+                with self.subTest(side=side, broker_pnl=reported_pnl):
+                    broker = MockBroker()
+                    broker.order_calc_profit = lambda *args: reported_pnl
+                    result = engine.execute_order(
+                        broker, "XAUUSD.G",
+                        {"side": side, "volume": 0.02, "slDistance": 6.8,
+                         "tpDistance": 16.0},
+                    )
+                    self.assertFalse(result.get("ok"), result)
+                    self.assertFalse(result.get("submitted", False), result)
+                    self.assertEqual(
+                        result.get("status"), "BLOCKED_SL_RISK_UNVERIFIED", result
+                    )
+                    self.assertEqual(broker.sent, [])
+
     def test_above_risk_budget_emits_warning_without_blocking_fixed_lot(self):
         mt5 = MockBroker()
         result = engine.execute_order(mt5, "XAUUSD.G", {
