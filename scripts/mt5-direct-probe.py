@@ -2079,12 +2079,24 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
     if not callable(calc):
         return {"ok": False, "message": "Broker risk-calculation API unavailable"}
     order_type = int(getattr(mt5, "ORDER_TYPE_BUY", 0) if is_buy else getattr(mt5, "ORDER_TYPE_SELL", 1))
-    expected_at_sl = calc(order_type, active_symbol, volume, price, sl)
-    if expected_at_sl is None or not isfinite(float(expected_at_sl)):
-        return {"ok": False, "message": "Broker cannot price the SL risk"}
-    equity = float(account.equity)
-    balance = float(getattr(account, "balance", equity) or equity)
-    new_risk = max(0.0, -float(expected_at_sl)) * 1.05
+    try:
+        expected_at_sl = float(calc(order_type, active_symbol, volume, price, sl))
+    except Exception:
+        return {"ok": False, "submitted": False, "status": "BLOCKED_SL_RISK_UNVERIFIED",
+                "message": "Broker cannot calculate new-order SL risk"}
+    if not isfinite(expected_at_sl):
+        return {"ok": False, "submitted": False, "status": "BLOCKED_SL_RISK_UNVERIFIED",
+                "message": "Broker returned invalid new-order SL risk"}
+    try:
+        equity = float(getattr(account, "equity", None))
+        balance = float(getattr(account, "balance", None))
+    except (TypeError, ValueError, OverflowError):
+        return {"ok": False, "submitted": False, "status": "BLOCKED_ACCOUNT_RISK_UNVERIFIED",
+                "message": "Broker account balance/equity unavailable"}
+    if not isfinite(equity) or equity <= 0 or not isfinite(balance) or balance <= 0:
+        return {"ok": False, "submitted": False, "status": "BLOCKED_ACCOUNT_RISK_UNVERIFIED",
+                "message": "Broker account balance/equity invalid"}
+    new_risk = max(0.0, -expected_at_sl) * 1.05
 
     # Section VII: FIXED_LOT + Risk Monitoring as WARNINGS ONLY (never auto-block on 1%/1.5%/3%/6% equity thresholds)
     risk_warnings = []
@@ -2138,14 +2150,25 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
         return {"ok": False, "message": "Cannot verify broker portfolio positions; new order blocked"}
     open_risk = 0.0
     for existing in existing_positions:
-        old_sl = float(getattr(existing, "sl", 0) or 0)
-        if old_sl <= 0:
-            return {"ok": False, "message": "An existing position has no SL; new orders blocked"}
-        old_type = int(existing.type)
-        old_profit = calc(old_type, str(existing.symbol), float(existing.volume), float(existing.price_open), old_sl)
-        if old_profit is None or not isfinite(float(old_profit)):
-            return {"ok": False, "message": "Cannot compute portfolio SL risk"}
-        open_risk += max(0.0, -float(old_profit)) * 1.05
+        try:
+            old_sl = float(getattr(existing, "sl", None))
+            old_type = int(getattr(existing, "type", None))
+            old_symbol = str(getattr(existing, "symbol", "") or "").strip()
+            old_volume = float(getattr(existing, "volume", None))
+            old_entry = float(getattr(existing, "price_open", None))
+            if (old_type not in (0, 1) or not old_symbol or
+                not all(isfinite(v) and v > 0 for v in (old_sl, old_volume, old_entry))):
+                raise ValueError("Invalid open-position inventory")
+            if (old_type == 0 and old_sl >= old_entry) or (old_type == 1 and old_sl <= old_entry):
+                # Stop levels already in profit are legitimate protective SLs.
+                pass
+            old_profit = float(calc(old_type, old_symbol, old_volume, old_entry, old_sl))
+            if not isfinite(old_profit):
+                raise ValueError("Invalid broker SL risk")
+        except Exception:
+            return {"ok": False, "submitted": False, "status": "BLOCKED_PORTFOLIO_RISK_UNVERIFIED",
+                    "message": "Cannot verify open-position inventory or SL risk"}
+        open_risk += max(0.0, -old_profit) * 1.05
 
     # Pending inventory is mandatory for every new entry, including offline mocks.
     # Never interpret an unavailable or malformed broker snapshot as no orders.
