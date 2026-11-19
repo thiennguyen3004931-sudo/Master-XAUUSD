@@ -3130,6 +3130,9 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertEqual(comp_obs["scenarioWithPositiveDca"]["stopOutLiquidatedCount"], 0)
         self.assertTrue(comp_obs["scenarioWithPositiveDca"]["scenarioAccountingReconciled"])
         self.assertEqual(comp_obs["scenarioWithPositiveDca"]["scenarioAccountingDeltaUsd"], 0.0)
+        self.assertTrue(comp_obs["scenarioWithPositiveDca"]["scenarioTimelineAccountingReconciled"])
+        self.assertEqual(comp_obs["scenarioWithPositiveDca"]["scenarioTimelineEquityMaxDeltaUsd"], 0.0)
+        self.assertEqual(comp_obs["scenarioWithPositiveDca"]["scenarioTimelineFreeMarginMaxDeltaUsd"], 0.0)
 
         # 2. Forced liquidation enabled (simulate_stop_out=True, LARGEST_LOSS_FIRST): liquidates Base (largest loss) at t=epoch+900_000 (close=3982.0)
         comp_liq = engine._build_portfolio_scenario_comparison([], [t_open], 0.10, 450.0, 100.0, stop_out_level_pct=50.0, market_m5_bars=m5_drop, simulate_stop_out=True, liquidation_rule="LARGEST_LOSS_FIRST")
@@ -3151,6 +3154,17 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertLess(sc_b["endingBalanceUsd"], 450.0)
         self.assertTrue(sc_b["scenarioAccountingReconciled"])
         self.assertEqual(sc_b["scenarioAccountingDeltaUsd"], 0.0)
+        self.assertTrue(sc_b["scenarioTimelineAccountingReconciled"])
+        self.assertEqual(sc_b["scenarioTimelineEquityMaxDeltaUsd"], 0.0)
+        self.assertEqual(sc_b["scenarioTimelineFreeMarginMaxDeltaUsd"], 0.0)
+        for snap in sc_b["timelineSnapshots"]:
+            with self.subTest(ts=snap["ts"]):
+                self.assertAlmostEqual(
+                    snap["equityUsd"], snap["balanceUsd"] + snap["floatingPnlUsd"], places=2,
+                )
+                self.assertAlmostEqual(
+                    snap["freeMarginUsd"], snap["equityUsd"] - snap["usedMarginUsd"], places=2,
+                )
         self.assertEqual(sc_b["scenarioMetricsScope"],
                          "COUNTERFACTUAL_PORTFOLIO_INCLUDING_DCA_AND_OPTIONAL_STOP_OUT")
         self.assertEqual(
