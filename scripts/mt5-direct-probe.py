@@ -3807,9 +3807,30 @@ def _build_portfolio_scenario_comparison(
         # Report a checkable accounting identity; liquidation is a scenario,
         # not a broker-verified event or a change to the base trade summary.
         equity_reconciliation_delta = round(ending_equity_usd - (balance + unrealized_end_usd), 2)
+        # Reconcile EVERY point of the portfolio time series, not just the
+        # final balance. An interim inconsistency can hide risk at stop-out.
+        max_timeline_equity_delta = round(max((
+            abs(float(snap["equityUsd"]) - (
+                float(snap["balanceUsd"]) + float(snap["floatingPnlUsd"])
+            )) for snap in timeline_snapshots
+        ), default=0.0), 2)
+        max_timeline_free_margin_delta = round(max((
+            abs(float(snap["freeMarginUsd"]) - (
+                float(snap["equityUsd"]) - float(snap["usedMarginUsd"])
+            )) for snap in timeline_snapshots
+        ), default=0.0), 2)
+        timeline_reconciled = (
+            isfinite(max_timeline_equity_delta)
+            and isfinite(max_timeline_free_margin_delta)
+            and max_timeline_equity_delta <= 0.01
+            and max_timeline_free_margin_delta <= 0.01
+        )
         return {
             "scenarioAccountingDeltaUsd": equity_reconciliation_delta,
-            "scenarioAccountingReconciled": abs(equity_reconciliation_delta) <= 0.01,
+            "scenarioAccountingReconciled": abs(equity_reconciliation_delta) <= 0.01 and timeline_reconciled,
+            "scenarioTimelineEquityMaxDeltaUsd": max_timeline_equity_delta,
+            "scenarioTimelineFreeMarginMaxDeltaUsd": max_timeline_free_margin_delta,
+            "scenarioTimelineAccountingReconciled": timeline_reconciled,
             "scenarioMetricsScope": "COUNTERFACTUAL_PORTFOLIO_INCLUDING_DCA_AND_OPTIONAL_STOP_OUT",
             "totalPositions": len(positions),
             "settledPositions": n_pos,
