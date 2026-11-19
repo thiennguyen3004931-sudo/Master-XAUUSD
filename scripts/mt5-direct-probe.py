@@ -3442,6 +3442,11 @@ def _build_portfolio_scenario_comparison(
         raise ValueError("simulate_stop_out must be an explicit boolean")
     if simulate_stop_out and str(liquidation_rule).upper() not in ("FIFO", "LARGEST_LOSS_FIRST"):
         raise ValueError("Unsupported broker stop-out liquidation rule")
+    for threshold in (margin_call_level_pct, stop_out_level_pct):
+        if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+            raise ValueError("Margin thresholds must be numeric")
+        if not isfinite(float(threshold)) or float(threshold) <= 0:
+            raise ValueError("Margin thresholds must be finite and positive")
     all_trade_records = list(closed_trades or []) + list(open_positions_at_end or [])
 
     def _run_timeline(include_dca):
@@ -3892,6 +3897,18 @@ def run_historical_backtest_on_mt5(mt5, active_symbol, cfg):
         return {
             "ok": False, "status": "INVALID_STOP_OUT_SIMULATION_CONFIG",
             "message": "Stop-out simulation requires a boolean flag and an explicit supported liquidation rule",
+        }
+    # Non-finite threshold values can silently disable every margin comparison.
+    # Reject invalid broker-derived inputs before touching historical MT5 data.
+    try:
+        margin_call_level_pct = float(cfg_b.get("marginCallLevelPct", 100.0))
+        stop_out_level_pct = float(cfg_b.get("stopOutLevelPct", 50.0))
+        if not all(isfinite(v) and v > 0 for v in (margin_call_level_pct, stop_out_level_pct)):
+            raise ValueError("Invalid margin threshold")
+    except (TypeError, ValueError, OverflowError):
+        return {
+            "ok": False, "status": "INVALID_MARGIN_THRESHOLD_CONFIG",
+            "message": "Backtest margin call and stop-out levels must be finite, positive numbers",
         }
     m5_all = cfg_b.get("m5Bars") or fetch_tf_candles(mt5, active_symbol, getattr(mt5, "TIMEFRAME_M5", 5), 9000)
     m15_all = cfg_b.get("m15Bars") or fetch_tf_candles(mt5, active_symbol, getattr(mt5, "TIMEFRAME_M15", 15), 3000)
@@ -4537,8 +4554,8 @@ def run_historical_backtest_on_mt5(mt5, active_symbol, cfg):
             **_build_portfolio_scenario_comparison(
                 closed_trades_out, open_positions_at_end, base_lot, starting_balance,
                 usd_per_price_per_lot,
-                margin_call_level_pct=float(cfg_b.get("marginCallLevelPct") or 100.0),
-                stop_out_level_pct=float(cfg_b.get("stopOutLevelPct") or 50.0),
+                margin_call_level_pct=margin_call_level_pct,
+                stop_out_level_pct=stop_out_level_pct,
                 market_m5_bars=m5_all,
                 market_spread_pts=spread_pts,
                 simulate_stop_out=simulate_stop_out,
