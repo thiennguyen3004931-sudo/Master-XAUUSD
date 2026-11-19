@@ -1778,10 +1778,14 @@ def _reconcile_filled_order(mt5, active_symbol, req_side, req_vol, req_price, re
     for attempt in range(max(1, int(max_retries))):
         if position_id > 0:
             readback_pos = _read_position_by_ticket(mt5, position_id)
-        if readback_pos is None and deal_ticket > 0 and callable(getattr(mt5, "history_deals_get", None)):
+        if readback_pos is None and order_ticket > 0 and callable(getattr(mt5, "history_deals_get", None)):
             try:
-                deals = mt5.history_deals_get(ticket=deal_ticket) or []
+                deals = mt5.history_deals_get(ticket=order_ticket) or []
                 for d in deals:
+                    if getattr(d, "order", None) != order_ticket:
+                        continue
+                    if deal_ticket and getattr(d, "ticket", None) != deal_ticket:
+                        continue
                     d_pos = int(getattr(d, "position_id", 0) or getattr(d, "position", 0) or 0)
                     if d_pos > 0:
                         readback_pos = _read_position_by_ticket(mt5, d_pos)

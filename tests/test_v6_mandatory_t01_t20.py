@@ -1404,8 +1404,8 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
             def order_send(self, req):
                 return SimpleNamespace(retcode=10009, order=7001, deal=8001, volume=req["volume"], price=req["price"])
             def history_deals_get(self, *args, **kwargs):
-                if kwargs.get("ticket") == 8001 and self.pos_ticket:
-                    return [SimpleNamespace(ticket=8001, position_id=self.pos_ticket, time=int(time.time()), type=0, profit=0.0)]
+                if kwargs.get("ticket") == 7001 and self.pos_ticket:
+                    return [SimpleNamespace(ticket=8001, order=7001, position_id=self.pos_ticket, time=int(time.time()), type=0, profit=0.0)]
                 return []
             def orders_get(self, **kwargs):
                 return []
@@ -1419,7 +1419,7 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
                 if t is not None and int(t) != int(self.pos_ticket):
                     return []
                 return [SimpleNamespace(
-                    ticket=self.pos_ticket, identifier=7001, symbol="XAUUSD.G", type=0,
+                    ticket=self.pos_ticket, identifier=self.pos_ticket, symbol="XAUUSD.G", type=0,
                     volume=self.partial_vol if self.partial_vol is not None else 0.05,
                     price_open=4050.20, sl=4043.40, tp=4062.00, magic=270715, comment="V6_TEST"
                 )]
