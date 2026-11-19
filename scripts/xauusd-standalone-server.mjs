@@ -1451,7 +1451,9 @@ function startV6BackgroundMonitor() {
         return;
       }
       if (snap.dailyRiskState?.dailyLimitBreached) {
-        autoBotState.lastRiskWarning = `CẢNH BÁO LỖ NGÀY: Đã vượt ngưỡng tham chiếu ($${snap.dailyRiskState.currentDailyLossUsd} / $${snap.dailyRiskState.dailyLossLimitUsd}) — Vẫn tiếp tục theo chính sách Fixed Lot.`;
+        autoBotState.lastRiskWarning = `Đã chạm giới hạn lỗ ngày (${snap.dailyRiskState.currentDailyLossUsd} / ${snap.dailyRiskState.dailyLossLimitUsd}). Tạm dừng mở lệnh mới và DCA.`;
+        autoBotState.lastLog = autoBotState.lastRiskWarning;
+        return;
       }
 
       // 1. Nếu đang có lệnh mở và người dùng BẬT chế độ DCA Dương Thuận Xu Hướng
