@@ -3708,6 +3708,11 @@ def _build_portfolio_scenario_comparison(
                     liq_p["exitReason"] = f"Forced Stop-Out liquidation ({liquidation_rule}) at Margin Level {margin_level:.2f}% <= {float(stop_out_level_pct):.1f}%"
                     liq_p["isOpenAtEnd"] = False
                     liq_p["pts"] = round(liq_pts, 2)
+                    # Recompute scenario R using the actual forced-exit net P/L,
+                    # not the original planned exit's stale R multiple.
+                    initial_risk_usd = (liq_p["initialR"] * liq_p["volume"]
+                                        * float(usd_per_price_per_lot))
+                    liq_p["rMultiple"] = round(liq_net_usd / initial_risk_usd, 3) if initial_risk_usd > 0 else 0.0
                     liq_p["realizedPnlUsd"] = liq_net_usd
                     liq_p["unrealizedPnlUsd"] = 0.0
                     liq_p["netPnlUsd"] = liq_net_usd

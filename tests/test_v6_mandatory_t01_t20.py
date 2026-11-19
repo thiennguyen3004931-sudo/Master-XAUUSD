@@ -3115,6 +3115,15 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertGreaterEqual(sc_b["stopOutLiquidatedCount"], 1)
         liq_pos = next(p for p in sc_b["positions"] if p["exitType"] == "STOP_OUT_LIQUIDATED")
         self.assertEqual(liq_pos["ticket"], 20001)  # Largest loss (-180 USD) liquidated first
+        # Forced liquidation changes the outcome: never retain the planned
+        # original R multiple or calculate scenario expectancy from stale R.
+        initial_risk_usd = liq_pos["initialR"] * liq_pos["volume"] * 100.0
+        expected_r = round(liq_pos["realizedPnlUsd"] / initial_risk_usd, 3)
+        self.assertEqual(liq_pos["rMultiple"], expected_r)
+        self.assertNotEqual(liq_pos["rMultiple"], -0.8)
+        settled = [p for p in sc_b["positions"] if not p["isOpenAtEnd"]]
+        expected_exp_r = round(sum(p["rMultiple"] for p in settled) / len(settled), 3)
+        self.assertEqual(sc_b["expectancyR"], expected_exp_r)
         self.assertLess(sc_b["endingBalanceUsd"], 450.0)
         self.assertTrue(sc_b["scenarioAccountingReconciled"])
         self.assertEqual(sc_b["scenarioAccountingDeltaUsd"], 0.0)
