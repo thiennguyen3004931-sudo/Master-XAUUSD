@@ -3790,7 +3790,13 @@ def _build_portfolio_scenario_comparison(
         else:
             ending_equity_usd = round(balance + unrealized_end_usd, 2)
         pricing_coverage = round(100.0 * fresh_m5_snapshots / len(timeline_snapshots), 2) if timeline_snapshots else 0.0
+        # Report a checkable accounting identity; liquidation is a scenario,
+        # not a broker-verified event or a change to the base trade summary.
+        equity_reconciliation_delta = round(ending_equity_usd - (balance + unrealized_end_usd), 2)
         return {
+            "scenarioAccountingDeltaUsd": equity_reconciliation_delta,
+            "scenarioAccountingReconciled": abs(equity_reconciliation_delta) <= 0.01,
+            "scenarioMetricsScope": "COUNTERFACTUAL_PORTFOLIO_INCLUDING_DCA_AND_OPTIONAL_STOP_OUT",
             "totalPositions": len(positions),
             "settledPositions": n_pos,
             "openAtEndPositions": len(open_end_positions),
@@ -4521,6 +4527,11 @@ def run_historical_backtest_on_mt5(mt5, active_symbol, cfg):
             "status": ("DCA_SIMULATED_WITH_FIXED_LOT" if bool(cfg_b.get("enablePositiveDca", False)) else "DCA_NOT_EVALUATED"),
         },
         "barsScanned": {"m5": len(m5_all), "m15": len(m15_all), "h1": len(h1_all), "h4": len(h4_all)},
+        # Top-level trade statistics exclude counterfactual DCA/stop-out events.
+        # The scenario results under dcaComparison carry their own wins/losses,
+        # realized P/L and accounting reconciliation.
+        "tradeSummaryScope": "BASE_STRATEGY_TRADES_EXCLUDES_DCA_AND_SIMULATED_STOP_OUT",
+        "stopOutScenarioMetricsLocation": "dcaComparison.scenarioWithPositiveDca",
         "tradeCount": full_metrics["closedTradeCount"],
         "openAtEndCount": len(open_positions_at_end),
         "wins": full_metrics["wins"],

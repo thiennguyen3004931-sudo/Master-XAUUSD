@@ -3076,6 +3076,8 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertFalse(comp_obs["scenarioWithPositiveDca"]["stopOutLiquidationSimulated"])
         self.assertTrue(comp_obs["scenarioWithPositiveDca"]["marginEventsAreObservationsOnly"])
         self.assertEqual(comp_obs["scenarioWithPositiveDca"]["stopOutLiquidatedCount"], 0)
+        self.assertTrue(comp_obs["scenarioWithPositiveDca"]["scenarioAccountingReconciled"])
+        self.assertEqual(comp_obs["scenarioWithPositiveDca"]["scenarioAccountingDeltaUsd"], 0.0)
 
         # 2. Forced liquidation enabled (simulate_stop_out=True, LARGEST_LOSS_FIRST): liquidates Base (largest loss) at t=epoch+900_000 (close=3982.0)
         comp_liq = engine._build_portfolio_scenario_comparison([], [t_open], 0.10, 450.0, 100.0, stop_out_level_pct=50.0, market_m5_bars=m5_drop, simulate_stop_out=True, liquidation_rule="LARGEST_LOSS_FIRST")
@@ -3086,6 +3088,15 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         liq_pos = next(p for p in sc_b["positions"] if p["exitType"] == "STOP_OUT_LIQUIDATED")
         self.assertEqual(liq_pos["ticket"], 20001)  # Largest loss (-180 USD) liquidated first
         self.assertLess(sc_b["endingBalanceUsd"], 450.0)
+        self.assertTrue(sc_b["scenarioAccountingReconciled"])
+        self.assertEqual(sc_b["scenarioAccountingDeltaUsd"], 0.0)
+        self.assertEqual(sc_b["scenarioMetricsScope"],
+                         "COUNTERFACTUAL_PORTFOLIO_INCLUDING_DCA_AND_OPTIONAL_STOP_OUT")
+        self.assertEqual(
+            sc_b["endingEquityUsd"],
+            round(sc_b["endingBalanceUsd"] + sc_b["unrealizedPnlUsd"], 2),
+        )
+        self.assertFalse(sc_b["brokerStopOutExecutionVerified"])
 
 if __name__ == "__main__":
     unittest.main()
