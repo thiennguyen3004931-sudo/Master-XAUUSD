@@ -132,6 +132,31 @@ class ExecutionRiskTest(unittest.TestCase):
                 self.assertEqual(result["status"], "BLOCKED_PENDING_ORDERS_UNVERIFIED")
                 self.assertEqual(mt5.sent, [])
 
+    def test_pending_orders_invalid_shape_or_type_fails_closed(self):
+        """Never treat empty string as empty inventory or unknown type as SELL."""
+        bad_snapshots = [
+            "",
+            {},
+            "unavailable",
+            [SimpleNamespace(type=99, sl=3990.0, price_open=3999.0,
+                             volume_current=0.02, symbol="XAUUSD.G")],
+            [SimpleNamespace(type=None, sl=3990.0, price_open=3999.0,
+                             volume_current=0.02, symbol="XAUUSD.G")],
+        ]
+        for pending in bad_snapshots:
+            with self.subTest(snapshot=repr(pending)):
+                broker = MockBroker()
+                broker.orders_get = lambda *args, **kwargs: pending
+                outcome = engine.execute_order(broker, "XAUUSD.G", {
+                    "side": "BUY", "volume": 0.02,
+                    "slDistance": 6.8, "tpDistance": 16,
+                })
+                self.assertFalse(outcome["ok"], outcome)
+                self.assertFalse(outcome.get("submitted", False))
+                self.assertEqual(outcome.get("status"),
+                                 "BLOCKED_PENDING_ORDERS_UNVERIFIED")
+                self.assertEqual(broker.sent, [])
+
     def test_above_risk_budget_emits_warning_without_blocking_fixed_lot(self):
         mt5 = MockBroker()
         result = engine.execute_order(mt5, "XAUUSD.G", {
