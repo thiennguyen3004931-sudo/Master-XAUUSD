@@ -373,8 +373,8 @@ def _position_state_keys(account_login, server, ticket, symbol=""):
 def _safe_read_positions(mt5, symbol=None):
     try:
         res = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
-        if res is None:
-            return [], False, "MT5 positions_get() returned None"
+        if not isinstance(res, (list, tuple)):
+            return [], False, "MT5 positions_get() returned invalid inventory"
         return list(res), True, None
     except Exception as exc:
         return [], False, f"MT5 positions_get() raised: {exc}" 
@@ -2166,12 +2166,10 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
         return {"ok": False, "submitted": False, "status": "BLOCKED_INSUFFICIENT_MARGIN",
                 "message": "Rejected: requested order exceeds 95% of verified free margin"}
 
-    try:
-        existing_positions = mt5.positions_get()
-    except Exception:
-        existing_positions = None
-    if existing_positions is None:
-        return {"ok": False, "message": "Cannot verify broker portfolio positions; new order blocked"}
+    existing_positions, positions_ok, _ = _safe_read_positions(mt5)
+    if not positions_ok:
+        return {"ok": False, "submitted": False, "status": "BLOCKED_PORTFOLIO_RISK_UNVERIFIED",
+                "message": "Cannot verify broker portfolio positions; new order blocked"}
     open_risk = 0.0
     for existing in existing_positions:
         try:
