@@ -1971,8 +1971,26 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
     if tick is None:
         return {"ok": False, "message": f"Không đọc được giá Bid/Ask cho {active_symbol}."}
 
-    digits = int(getattr(sym_info, "digits", 2))
-    point = float(getattr(sym_info, "point", 0.01) or 0.01)
+    # Do not silently substitute guessed symbol precision or stop levels
+    # for absent broker metadata: the final SL/TP distance gate depends on it.
+    try:
+        raw_digits = getattr(sym_info, "digits", None)
+        raw_point = getattr(sym_info, "point", None)
+        raw_stops_level = getattr(sym_info, "trade_stops_level", None)
+        if any(v is None or isinstance(v, bool)
+               for v in (raw_digits, raw_point, raw_stops_level)):
+            raise ValueError("missing or boolean symbol specification")
+        digits = int(raw_digits)
+        point = float(raw_point)
+        stops_level = float(raw_stops_level)
+        if not (float(raw_digits) == digits and 0 <= digits <= 16
+                and isfinite(point) and point > 0
+                and isfinite(stops_level) and stops_level >= 0
+                and stops_level.is_integer()):
+            raise ValueError("invalid symbol specification")
+    except (ValueError, TypeError, OverflowError):
+        return {"ok": False, "submitted": False, "status": "BLOCKED_BROKER_SYMBOL_SPEC_UNVERIFIED",
+                "message": "Broker point/digits/stops-level specification missing or invalid"}
     raw_vmin = getattr(sym_info, "volume_min", None)
     raw_vstep = getattr(sym_info, "volume_step", None)
     raw_vmax = getattr(sym_info, "volume_max", None)
@@ -1994,7 +2012,7 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
         return {"ok": False, "message": "Invalid executable quote price"}
 
     # Gate 3: Pure UTC Tick Freshness & Spread Gate
-    stops_gap = max(point, float(getattr(sym_info, "trade_stops_level", 0) or 0) * point)
+    stops_gap = max(point, stops_level * point)
     spread_points = (float(tick.ask) - float(tick.bid)) / point
     max_quote_age = float(cfg_o.get("maxQuoteAgeSeconds") or DEFAULT_MAX_QUOTE_AGE_SEC)
     fresh_ok, quote_age, fresh_err = verify_tick_freshness_utc(tick, max_age_sec=max_quote_age)

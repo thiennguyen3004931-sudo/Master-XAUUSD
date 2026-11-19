@@ -293,6 +293,59 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertGreater(mt5.sent[0]["tp"], mt5.sent[0]["price"])
         self.assertLess(mt5.sent[0]["sl"], mt5.sent[0]["price"])
 
+    def test_symbol_precision_and_broker_stops_must_be_verified(self):
+        """P0: never assume XAUUSD point/digits/SL-TP stop levels."""
+        from unittest.mock import patch
+
+        broken = (
+            ("point", None), ("point", 0), ("point", float("nan")),
+            ("point", float("inf")), ("point", -0.01),
+            ("digits", None), ("digits", -1), ("digits", 2.5),
+            ("trade_stops_level", None), ("trade_stops_level", -1),
+            ("trade_stops_level", float("nan")),
+            ("trade_stops_level", float("inf")),
+        )
+        for field, value in broken:
+            with self.subTest(field=field, value=repr(value)):
+                broker = MockBroker()
+                original = broker.symbol_info
+                def invalid_symbol(symbol):
+                    info = original(symbol)
+                    setattr(info, field, value)
+                    return info
+                with patch.object(broker, "symbol_info", side_effect=invalid_symbol):
+                    result = engine.execute_order(
+                        broker, "XAUUSD.G",
+                        {"side": "BUY", "volume": 0.02, "slDistance": 6.8,
+                         "tpDistance": 16.0},
+                    )
+                self.assertFalse(result.get("ok"), result)
+                self.assertEqual(
+                    result.get("status"), "BLOCKED_BROKER_SYMBOL_SPEC_UNVERIFIED", result,
+                )
+                self.assertFalse(result.get("submitted", False), result)
+                self.assertEqual(broker.sent, [])
+
+        for field in ("point", "digits", "trade_stops_level"):
+            with self.subTest(missing=field):
+                broker = MockBroker()
+                original = broker.symbol_info
+                def missing_symbol(symbol):
+                    info = original(symbol)
+                    delattr(info, field)
+                    return info
+                with patch.object(broker, "symbol_info", side_effect=missing_symbol):
+                    result = engine.execute_order(
+                        broker, "XAUUSD.G",
+                        {"side": "SELL", "volume": 0.02, "slDistance": 6.8,
+                         "tpDistance": 16.0},
+                    )
+                self.assertFalse(result.get("ok"), result)
+                self.assertEqual(
+                    result.get("status"), "BLOCKED_BROKER_SYMBOL_SPEC_UNVERIFIED", result,
+                )
+                self.assertEqual(broker.sent, [])
+
     def test_margin_data_or_calculation_failure_blocks_new_orders(self):
         """P0: missing, invalid or inaccessible broker margin cannot submit."""
         from unittest.mock import patch
