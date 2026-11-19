@@ -2087,6 +2087,12 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
     if not isfinite(expected_at_sl):
         return {"ok": False, "submitted": False, "status": "BLOCKED_SL_RISK_UNVERIFIED",
                 "message": "Broker returned invalid new-order SL risk"}
+    # The final entry stop is strictly adverse to the executable entry price.
+    # A zero/positive broker PnL at that stop contradicts the validated SL
+    # direction and would otherwise understate risk as $0 with FIXED_LOT.
+    if expected_at_sl >= 0:
+        return {"ok": False, "submitted": False, "status": "BLOCKED_SL_RISK_UNVERIFIED",
+                "message": "Broker returned non-loss PnL for an adverse new-order SL"}
     try:
         equity = float(getattr(account, "equity", None))
         balance = float(getattr(account, "balance", None))
