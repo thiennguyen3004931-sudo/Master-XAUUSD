@@ -3128,6 +3128,11 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertFalse(comp_obs["scenarioWithPositiveDca"]["stopOutLiquidationSimulated"])
         self.assertTrue(comp_obs["scenarioWithPositiveDca"]["marginEventsAreObservationsOnly"])
         self.assertEqual(comp_obs["scenarioWithPositiveDca"]["stopOutLiquidatedCount"], 0)
+        self.assertEqual(comp_obs["scenarioWithPositiveDca"]["stopOutTriggerEvents"], 0)
+        self.assertFalse(any(
+            snapshot["simulatedStopOutTriggeredHere"]
+            for snapshot in comp_obs["scenarioWithPositiveDca"]["timelineSnapshots"]
+        ))
         self.assertTrue(comp_obs["scenarioWithPositiveDca"]["scenarioAccountingReconciled"])
         self.assertEqual(comp_obs["scenarioWithPositiveDca"]["scenarioAccountingDeltaUsd"], 0.0)
         self.assertTrue(comp_obs["scenarioWithPositiveDca"]["scenarioTimelineAccountingReconciled"])
@@ -3140,6 +3145,11 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertTrue(sc_b["stopOutLiquidationSimulated"])
         self.assertFalse(sc_b["marginEventsAreObservationsOnly"])
         self.assertGreaterEqual(sc_b["stopOutLiquidatedCount"], 1)
+        self.assertGreaterEqual(sc_b["stopOutTriggerEvents"], 1)
+        triggers = [snap for snap in sc_b["timelineSnapshots"] if snap["simulatedStopOutTriggeredHere"]]
+        self.assertEqual(sc_b["stopOutTriggerEvents"], len(triggers))
+        self.assertTrue(all(snap["preLiquidationMarginLevelPct"] is not None for snap in triggers))
+        self.assertTrue(all(snap["preLiquidationMarginLevelPct"] <= 50.0 for snap in triggers))
         liq_pos = next(p for p in sc_b["positions"] if p["exitType"] == "STOP_OUT_LIQUIDATED")
         self.assertEqual(liq_pos["ticket"], 20001)  # Largest loss (-180 USD) liquidated first
         # Forced liquidation changes the outcome: never retain the planned

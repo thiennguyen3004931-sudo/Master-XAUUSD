@@ -3586,6 +3586,9 @@ def _build_portfolio_scenario_comparison(
         stop_out_count = 0
         margin_call_breach_snapshots = 0
         stop_out_breach_snapshots = 0
+        # Record the pre-liquidation breach: closing a position can restore
+        # margin before the post-event counters are sampled.
+        stop_out_trigger_events = 0
         margin_call_active = False
         stop_out_active = False
         timeline_snapshots = []
@@ -3685,8 +3688,18 @@ def _build_portfolio_scenario_comparison(
             free_margin = round(equity - used_margin, 2)
             margin_level = round((equity / used_margin) * 100.0, 2) if used_margin > 0 else 0.0
 
-            # BT-05 (Issue #52): Forced liquidation ONLY when explicitly enabled with verified broker stop-out rule
-            if simulate_stop_out and used_margin > 0 and margin_level <= float(stop_out_level_pct):
+            # Capture the trigger BEFORE simulated forced liquidation.
+            # Post-liquidation margin can recover and hide the initial breach.
+            pre_liquidation_margin_level = margin_level if used_margin > 0 else None
+            stop_out_triggered_here = bool(
+                simulate_stop_out and used_margin > 0
+                and margin_level <= float(stop_out_level_pct)
+            )
+            if stop_out_triggered_here:
+                stop_out_trigger_events += 1
+            # Scenario only. A closed M5 mark does not prove the broker's
+            # real intrabar liquidation sequence or execution price.
+            if stop_out_triggered_here:
                 def _pos_float_pnl(po):
                     if mark_bid is not None:
                         c_px = mark_bid if po["side"] == "BUY" else mark_ask
@@ -3774,6 +3787,8 @@ def _build_portfolio_scenario_comparison(
                 "markAgeMs": mark_age_ms,
                 "intrabarAdverseMarginLevelPct": intrabar_margin_level,
                 "intrabarStopOutRiskObserved": intrabar_stopout_risk,
+                "preLiquidationMarginLevelPct": pre_liquidation_margin_level,
+                "simulatedStopOutTriggeredHere": stop_out_triggered_here,
             })
 
         settled_positions = [p for p in positions if not p.get("isOpenAtEnd", False)]
@@ -3861,6 +3876,7 @@ def _build_portfolio_scenario_comparison(
             "stopOutEvents": stop_out_count,
             "marginCallBreachedSnapshots": margin_call_breach_snapshots,
             "stopOutBreachedSnapshots": stop_out_breach_snapshots,
+            "stopOutTriggerEvents": stop_out_trigger_events,
             "maxConsecutiveLosses": max_streak,
             "dcaRejectedCounts": dca_rej_totals,
             "positions": positions,
