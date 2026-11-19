@@ -111,6 +111,59 @@ class ExecutionRiskTest(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self._tmp_rt, ignore_errors=True)
+    def test_pending_inventory_bypass_and_malformed_data_never_submit(self):
+        """Offline execution must not submit on unverified broker pending orders."""
+        good_order = lambda **overrides: SimpleNamespace(**{
+            **{"type": 2, "sl": 3983.0, "volume_current": 0.02,
+               "price_open": 3990.0, "symbol": "XAUUSD.G"}, **overrides,
+        })
+        invalid_books = [
+            ("missing-api", None, "BLOCKED_ORDERS_UNAVAILABLE"),
+            ("none-response", lambda: None, "BLOCKED_ORDERS_UNAVAILABLE"),
+            ("string", lambda: "no orders", "BLOCKED_ORDERS_UNAVAILABLE"),
+            ("dict", lambda: {}, "BLOCKED_ORDERS_UNAVAILABLE"),
+            ("market-type", lambda: [good_order(type=0)], "BLOCKED_INVALID_PENDING_ORDER"),
+            ("unknown-type", lambda: [good_order(type=99)], "BLOCKED_INVALID_PENDING_ORDER"),
+            ("non-number-type", lambda: [good_order(type="broken")], "BLOCKED_INVALID_PENDING_ORDER"),
+            ("bad-sl", lambda: [good_order(sl="oops")], "BLOCKED_INVALID_PENDING_ORDER"),
+            ("bad-volume", lambda: [good_order(volume_current="broken")], "BLOCKED_INVALID_PENDING_ORDER"),
+            ("negative-volume", lambda: [good_order(volume_current=-0.02)], "BLOCKED_INVALID_PENDING_ORDER"),
+            ("nan-price", lambda: [good_order(price_open=float("nan"))], "BLOCKED_INVALID_PENDING_ORDER"),
+            ("missing-symbol", lambda: [good_order(symbol="")], "BLOCKED_INVALID_PENDING_ORDER"),
+            ("wrong-side-sl", lambda: [good_order(sl=4010.0)], "BLOCKED_INVALID_PENDING_ORDER"),
+        ]
+        for scenario, getter, expected_status in invalid_books:
+            with self.subTest(scenario=scenario):
+                broker = MockBroker()
+                broker.orders_get = getter
+                result = engine.execute_order(broker, "XAUUSD.G", {
+                    "side": "BUY", "volume": 0.02, "slDistance": 6.8,
+                    "tpDistance": 16.0, "allowMissingOrdersGetForLegacyMock": True,
+                })
+                self.assertFalse(result.get("ok"), result)
+                self.assertEqual(result.get("status"), expected_status, result)
+                self.assertFalse(result.get("submitted", False), result)
+                self.assertEqual(broker.sent, [])
+
+    def test_pending_risk_calculation_failure_blocks_send(self):
+        broker = MockBroker()
+        broker.orders_get = lambda: [SimpleNamespace(
+            type=2, sl=3983.0, volume_current=0.02,
+            price_open=3990.0, symbol="XAUUSD.G",
+        )]
+        original_calc = broker.order_calc_profit
+        def broken_pending_calc(kind, symbol, lot, entry, stop):
+            if entry == 3990.0:
+                raise ValueError("bad broker pending calculation")
+            return original_calc(kind, symbol, lot, entry, stop)
+        broker.order_calc_profit = broken_pending_calc
+        result = engine.execute_order(broker, "XAUUSD.G", {
+            "side": "BUY", "volume": 0.02, "slDistance": 6.8, "tpDistance": 16.0,
+        })
+        self.assertFalse(result.get("ok"), result)
+        self.assertEqual(result.get("status"), "BLOCKED_INVALID_PENDING_ORDER")
+        self.assertEqual(broker.sent, [])
+
     def test_above_risk_budget_emits_warning_without_blocking_fixed_lot(self):
         mt5 = MockBroker()
         result = engine.execute_order(mt5, "XAUUSD.G", {

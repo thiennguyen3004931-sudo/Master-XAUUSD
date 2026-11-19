@@ -2132,49 +2132,49 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
             return {"ok": False, "message": "Cannot compute portfolio SL risk"}
         open_risk += max(0.0, -float(old_profit)) * 1.05
 
+    # Pending inventory is mandatory for every new entry, including offline mocks.
+    # Never interpret an unavailable or malformed broker snapshot as no orders.
     pending_risk = 0.0
     orders_get_fn = getattr(mt5, "orders_get", None)
     if not callable(orders_get_fn):
-        if cfg_o.get("allowMissingOrdersGetForLegacyMock") is not True:
-            return {
-                "ok": False, "submitted": False, "status": "BLOCKED_ORDERS_UNAVAILABLE",
-                "message": "Cannot verify broker pending orders (orders_get unavailable); new order blocked",
-            }
-        pending_orders = []
-    else:
-        try:
-            pending_orders = orders_get_fn()
-        except Exception:
-            pending_orders = None
-        if pending_orders is None:
-            return {
-                "ok": False, "submitted": False, "status": "BLOCKED_ORDERS_UNAVAILABLE",
-                "message": "Cannot verify broker pending orders; new order blocked",
-            }
+        return {"ok": False, "submitted": False, "status": "BLOCKED_ORDERS_UNAVAILABLE",
+                "message": "Cannot verify broker pending orders: API unavailable"}
+    try:
+        pending_orders = orders_get_fn()
+    except Exception:
+        pending_orders = None
+    if not isinstance(pending_orders, (list, tuple)):
+        return {"ok": False, "submitted": False, "status": "BLOCKED_ORDERS_UNAVAILABLE",
+                "message": "Cannot verify broker pending orders: invalid inventory"}
     for pend in pending_orders:
-        pend_sl = float(getattr(pend, "sl", 0) or 0)
-        if not isfinite(pend_sl) or pend_sl <= 0:
-            return {"ok": False, "submitted": False, "status": "BLOCKED_INVALID_PENDING_ORDER", "message": "A pending order has no valid SL; new orders blocked"}
-        raw_pend_type = getattr(pend, "type", None)
-        if raw_pend_type is None or int(raw_pend_type) not in (0, 1, 2, 3, 4, 5, 6, 7):
-            return {"ok": False, "submitted": False, "status": "BLOCKED_INVALID_PENDING_ORDER", "message": "A pending order has unknown order type; new orders blocked"}
-        pend_type_raw = int(raw_pend_type)
-        pend_dir = 0 if pend_type_raw in (0, 2, 4, 6) else 1
-        pend_vol = float(getattr(pend, "volume_current", 0) or getattr(pend, "volume_initial", 0) or 0)
-        if not isfinite(pend_vol) or pend_vol <= 0:
-            return {"ok": False, "submitted": False, "status": "BLOCKED_INVALID_PENDING_ORDER", "message": "A pending order has invalid volume; new orders blocked"}
-        pend_price = float(getattr(pend, "price_open", 0) or 0)
-        if not isfinite(pend_price) or pend_price <= 0:
-            return {"ok": False, "submitted": False, "status": "BLOCKED_INVALID_PENDING_ORDER", "message": "A pending order is missing valid price_open; new orders blocked"}
-        if (pend_dir == 0 and pend_sl >= pend_price) or (pend_dir == 1 and pend_sl <= pend_price):
-            return {"ok": False, "submitted": False, "status": "BLOCKED_INVALID_PENDING_ORDER", "message": "A pending order has SL on the wrong side of price_open; new orders blocked"}
-        pend_sym = str(getattr(pend, "symbol", "") or "").strip()
-        if not pend_sym:
-            return {"ok": False, "submitted": False, "status": "BLOCKED_INVALID_PENDING_ORDER", "message": "A pending order is missing symbol; new orders blocked"}
-        pend_loss = calc(pend_dir, pend_sym, pend_vol, pend_price, pend_sl)
-        if pend_loss is None or not isfinite(float(pend_loss)):
-            return {"ok": False, "submitted": False, "status": "BLOCKED_INVALID_PENDING_ORDER", "message": "Cannot compute pending order SL risk"}
-        pending_risk += max(0.0, -float(pend_loss)) * 1.05
+        try:
+            pend_type_raw = int(getattr(pend, "type", None))
+            # Only pending MT5 types are valid: BUY/SELL LIMIT, STOP, STOP LIMIT.
+            # Market BUY/SELL (0/1) and unknown types are not pending orders.
+            if pend_type_raw not in (2, 3, 4, 5, 6, 7):
+                raise ValueError("Unknown pending order type")
+            pend_dir = 0 if pend_type_raw in (2, 4, 6) else 1
+            pend_sl = float(getattr(pend, "sl", None))
+            pend_vol_raw = getattr(pend, "volume_current", None)
+            if pend_vol_raw is None:
+                pend_vol_raw = getattr(pend, "volume_initial", None)
+            pend_vol = float(pend_vol_raw)
+            pend_price = float(getattr(pend, "price_open", None))
+            pend_sym = str(getattr(pend, "symbol", "") or "").strip()
+            if not (
+                isfinite(pend_sl) and isfinite(pend_vol) and isfinite(pend_price)
+                and pend_sl > 0 and pend_vol > 0 and pend_price > 0 and pend_sym
+            ):
+                raise ValueError("Incomplete pending order")
+            if (pend_dir == 0 and pend_sl >= pend_price) or (pend_dir == 1 and pend_sl <= pend_price):
+                raise ValueError("Pending SL is on wrong side")
+            pend_loss = calc(pend_dir, pend_sym, pend_vol, pend_price, pend_sl)
+            if pend_loss is None or not isfinite(float(pend_loss)):
+                raise ValueError("Cannot price pending SL risk")
+            pending_risk += max(0.0, -float(pend_loss)) * 1.05
+        except Exception:
+            return {"ok": False, "submitted": False, "status": "BLOCKED_INVALID_PENDING_ORDER",
+                    "message": "Pending order inventory or risk is invalid; new order blocked"}
 
     total_portfolio_risk_usd = round(open_risk + pending_risk + new_risk, 2)
     total_portfolio_risk_pct = round((total_portfolio_risk_usd / max(1.0, equity)) * 100.0, 2)
