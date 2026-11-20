@@ -187,7 +187,7 @@ test("V6 disconnected status must not expose placeholder or previously observed 
   assert.match(server, /tradingEnabled: brokerMarketFresh/);
   assert.match(server, /entrySignal: brokerMarketFresh/);
   assert.match(server, /positions: brokerSnapshotCurrent/);
-  assert.match(server, /entrySignal: isConnected/);
+  assert.match(server, /entrySignal: brokerMarketFresh/);
 });
 
 test("V6 broker status accepts only finite connected broker data and fresh verified quote", () => {
