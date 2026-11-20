@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { getV6ExecutionSizingDisclosure } from "../scripts/v6-execution-sizing-disclosure.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const server = readFileSync(resolve(root, "scripts/xauusd-standalone-server.mjs"), "utf8");
@@ -122,4 +123,40 @@ test("P0 LIVE ARM is revoked when MT5 probe is missing, disconnected or identity
   assert.match(gate, /!actualLogin \|\| actualLogin !== liveArmSessionState\.accountLogin/);
   assert.match(gate, /!actualMode \|\| \(configuredMode && actualMode !== configuredMode\)/);
   assert.match(gate, /return getCanonicalLiveArmState\(null\)/);
+});
+
+test("V6 status accurately discloses Fixed Lot, not Phase7C shadow Auto Lot (#76)", () => {
+  const source = server.slice(
+    server.indexOf("function buildStatusPayload(probe)"),
+    server.indexOf("export async function handleApiRequest("),
+  );
+  assert.match(source, /executionSizing:\s*getV6ExecutionSizingDisclosure\(/);
+  assert.match(source, /fixedLot:\s*getCanonicalFixedLot\(\)/);
+  assert.match(source, /configVerified:\s*configIntegrityState\.verified === true/);
+
+  // An AUTO-labelled strategy is still Fixed Lot at the actual V6 order gate.
+  assert.match(server, /volume:\s*getCanonicalFixedLot\(\)/);
+  const configured = getV6ExecutionSizingDisclosure({ fixedLot: 0.03, configVerified: true });
+  assert.equal(configured.executionFamily, "V6_STANDALONE");
+  assert.equal(configured.orderSizingMode, "FIXED_LOT");
+  assert.equal(configured.configuredLot, 0.03);
+  assert.equal(configured.automaticCapitalSizingActiveOnV6, false);
+  assert.equal(configured.phase7cAutoLotComparisonIsShadowOnly, true);
+  assert.equal(configured.brokerVolumeValidatedForNextOrder, false);
+  assert.equal(configured.riskPolicy.perTradePercent, "WARNING_ONLY");
+  assert.equal(configured.riskPolicy.dailyLossForNewOrders, "HARD_GATE");
+  assert.equal(configured.riskPolicy.freeMarginForNewOrders, "HARD_GATE");
+});
+
+test("V6 disclosure never invents a verified lot for corrupt or missing settings", () => {
+  for (const fixedLot of [undefined, null, NaN, Infinity, -0.02, 0, "0.02", true]) {
+    const disclosure = getV6ExecutionSizingDisclosure({ fixedLot, configVerified: true });
+    assert.equal(disclosure.configuredLotValidInLocalConfig, false);
+    assert.equal(disclosure.configuredLot, null);
+    assert.equal(disclosure.automaticCapitalSizingActiveOnV6, false);
+  }
+  const unverified = getV6ExecutionSizingDisclosure({ fixedLot: 0.02, configVerified: false });
+  assert.equal(unverified.configuredLotValidInLocalConfig, false);
+  assert.equal(unverified.configuredLot, null);
+  assert.equal(unverified.verificationScope, "SOURCE_POLICY_NOT_DEPLOYED_RUNTIME_OR_BROKER_PROOF");
 });
