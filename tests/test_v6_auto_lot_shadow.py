@@ -197,16 +197,16 @@ class AutoLotShadowTest(unittest.TestCase):
         self.assertEqual(result["status"], "BLOCKED_DCA_POLICY_UNVERIFIED")
 
     def test_no_orders_arm_mutation_or_runtime_config_side_effects(self):
-        source = (Path(__file__).resolve().parents[1] / "scripts/v6_auto_lot_shadow.py").read_text()
+        source = (Path(__file__).resolve().parents[1] / "scripts/v6_auto_lot_shadow.py").read_text(encoding="utf-8")
         self.assertNotIn("order_send(", source)
         self.assertNotIn("arm_live", source)
         self.assertNotIn("MetaTrader5", source)
         self.assertNotIn("write_text(", source)
-        live_gateway = (Path(__file__).resolve().parents[1] / "scripts/mt5-direct-probe.py").read_text()
-        standalone = (Path(__file__).resolve().parents[1] / "scripts/xauusd-standalone-server.mjs").read_text()
+        live_gateway = (Path(__file__).resolve().parents[1] / "scripts/mt5-direct-probe.py").read_text(encoding="utf-8")
+        standalone = (Path(__file__).resolve().parents[1] / "scripts/xauusd-standalone-server.mjs").read_text(encoding="utf-8")
         self.assertNotIn("v6_auto_lot_shadow", live_gateway)
         self.assertNotIn("v6_auto_lot_shadow", standalone)
-        self.assertIn('orderSizingMode: "FIXED_LOT"', (Path(__file__).resolve().parents[1] / "scripts/v6-execution-sizing-disclosure.mjs").read_text())
+        self.assertIn('orderSizingMode: "FIXED_LOT"', (Path(__file__).resolve().parents[1] / "scripts/v6-execution-sizing-disclosure.mjs").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
