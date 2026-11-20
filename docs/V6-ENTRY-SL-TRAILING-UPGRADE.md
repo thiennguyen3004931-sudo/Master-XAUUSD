@@ -11,9 +11,17 @@
 
 ## 3. Fixed Lot & Cảnh Báo Rủi Ro
 - **Chế độ mặc định:** `FIXED_LOT` do người dùng cấu hình (không tự động nhân/giảm theo Balance, Equity hay khoảng cách SL).
-- **Ngưỡng cảnh báo (không chặn lệnh):** `1%` Equity/lệnh, `1.5%` tổng rủi ro danh mục, `3%` lỗ ngày, `6%` drawdown chỉ hiển thị cảnh báo & thống kê.
+- **Ngưỡng cảnh báo (không chặn theo riêng tỷ lệ %):** tỷ lệ rủi ro trên lệnh, tổng danh mục và drawdown có thể sinh cảnh báo nhưng không phải tất cả đều là cổng từ chối lệnh. **Khác biệt quan trọng:** kiểm tra lỗ ngày đã có cổng chặn lệnh mới dựa trên lịch sử broker/giới hạn dự kiến; free margin không hợp lệ hoặc không đủ cũng chặn lệnh. Không suy diễn mọi tỷ lệ phần trăm hiển thị là hard cap.
 - **Điều kiện vẫn chặn mở lệnh:** Thiếu Free Margin, Fixed Lot không hợp lệ theo broker, thiếu SL/TP hợp lệ, chưa ARM LIVE, sai tài khoản/server/mode, tick/dữ liệu cũ hoặc không đồng bộ UTC, `WAIT_PULLBACK`, tín hiệu xung đột hoặc PAUSE/Emergency Stop.
 - **DCA dương:** Mặc định tắt; chỉ bật khi người dùng cho phép và vị thế đã đạt BE + đi thuận chiều; hỗ trợ `FIXED_DCA_LOT` (không martingale, không DCA âm).
+
+
+### 3.1 Kiểm tra đúng nguồn phân bổ Lot trước LIVE (Issue #76)
+
+- V6 Standalone gửi lệnh qua `scripts/xauusd-standalone-server.mjs` và dùng `getCanonicalFixedLot()` cho nhánh Auto. Mã Python hiện báo `sizingMode = FIXED_LOT`; các ngưỡng tỷ lệ trên lệnh/danh mục là **cảnh báo** ở gateway này. Không mô tả đây là phân bổ Lot tự động theo Equity.
+- Bộ so sánh `apps/api/src/services/phase7c-auto-lot.service.ts` có `mode = AUTO_LOT_SHADOW_BACKTEST` và `liveUnlockAvailable = false`. Thiết lập Auto Lot trong màn hình thử nghiệm không chứng minh V6 đang giao dịch bằng Auto Lot.
+- Kết quả status V6 có thêm `executionSizing` (chỉ đọc): `executionFamily`, `orderSizingMode`, `configuredLot`, `automaticCapitalSizingActiveOnV6`, `riskPolicy`, `verificationScope`. Khi cấu hình Lot lỗi/chưa xác minh, `configuredLot = null`. Trường này **không xác nhận** phiên bản đang triển khai trên Windows, broker lot step, lệnh thực tế hoặc cho phép LIVE.
+- Việc đưa Auto Lot thật vào V6 cần một thay đổi riêng, được đánh giá chính sách rủi ro và kiểm thử ngoại tuyến trước. Không bật bằng cách sửa cờ hiển thị và không tự thay đổi `BOT_MODE`, ARM, lệnh MT5 hay cấu hình địa phương.
 
 ## 4. Chọn Bot, SL/TP & Quản lý Vị thế Thống nhất
 - **Trạng thái thị trường:** `TREND_UP`, `TREND_DOWN`, `RANGE`, `TRANSITION`, `UNKNOWN` (cập nhật theo nến M15 đóng mới).
