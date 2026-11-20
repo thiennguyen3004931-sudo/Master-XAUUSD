@@ -67,10 +67,11 @@ def assumptions(side="BUY", **overrides):
 
 class AutoLotShadowTest(unittest.TestCase):
     def account(self, **kw):
-        return SimpleNamespace(**dict(
+        defaults = dict(
             equity=4000.0, margin_free=4000.0,
-            login=12345, server="MOCK-DEMO", **kw,
-        ))
+            login=12345, server="MOCK-DEMO",
+        )
+        return SimpleNamespace(**{**defaults, **kw})
 
     def evaluate(self, broker=None, account=None, side="BUY", risk=0.8, **kwargs):
         entry, stop, extras = assumptions(side, **kwargs)
