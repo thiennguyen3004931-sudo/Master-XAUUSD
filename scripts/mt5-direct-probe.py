@@ -924,9 +924,66 @@ def calc_ema(values, period):
     return round(ema_val, 2)
 
 
+def _verified_display_candles(bars, minimum):
+    """Require real OHLC bars including a forming bar, leaving enough closed bars to analyze."""
+    if not isinstance(bars, (list, tuple)) or len(bars) < minimum:
+        return False
+    try:
+        for bar in bars[-minimum:]:
+            if not isinstance(bar, (list, tuple)) or len(bar) < 4:
+                return False
+            op, hi, lo, cl = map(float, bar[:4])
+            if not all(isfinite(v) and v > 0 for v in (op, hi, lo, cl)):
+                return False
+            if hi < max(op, cl) or lo > min(op, cl) or lo > hi:
+                return False
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
+def _unavailable_mtf_display(reason):
+    """Informational display only: never synthesize market levels or actionable proposals."""
+    return {
+        "updatedAt": int(time.time() * 1000),
+        "status": "DATA_UNAVAILABLE",
+        "dataStatus": "UNVERIFIED_MARKET_EVIDENCE",
+        "waitingForMt5": True,
+        "allowed": False,
+        "currentPrice": None,
+        "marketRegime": "UNKNOWN",
+        "reason": reason,
+        "h4": {"timeframe": "H4", "bias": "WAITING_FOR_MT5", "isBull": False,
+               "ema34": None, "ema89": None, "swingHigh": None, "swingLow": None,
+               "summary": "H4: thiếu nến đóng đã xác minh từ MT5."},
+        "h1": {"timeframe": "H1", "bias": "WAITING_FOR_MT5", "isBull": False,
+               "ema34": None, "demandZone": None, "supplyZone": None,
+               "summary": "H1: thiếu nến đóng đã xác minh từ MT5."},
+        "m15": {"timeframe": "M15", "patternName": "WAITING_FOR_MT5 (NO_TRADE)",
+                "signalSide": "NEUTRAL", "setupScore": None, "confidence": None,
+                "atr": None, "summary": "M15: không tạo tín hiệu khi giá hoặc nến chưa xác minh."},
+        "scenario15m": {"direction": "NEUTRAL", "marketRegime": "UNKNOWN",
+                        "title": "DATA_UNAVAILABLE — NO_TRADE",
+                        "recommendedBot": "NO_TRADE", "entryZone": None,
+                        "stopLoss": None, "beTrigger": None, "tp1": None, "tp2": None,
+                        "tpSource": "UNVERIFIED", "dcaCondition": "BLOCKED_NO_BROKER_EVIDENCE",
+                        "invalidation": reason},
+    }
+
+
 def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_analysis, current_price, entry_signal=None):
-    p = round(float(current_price or 4678.96), 2)
-    es = entry_signal or {}
+    """Display-only MTF summary. Missing broker evidence is explicitly non-actionable."""
+    if not isinstance(current_price, (int, float)) or not isfinite(current_price) or current_price <= 0:
+        return _unavailable_mtf_display("MT5 quote missing, stale or invalid")
+    # The final bar in each timeframe is still forming and must not count as closed.
+    if not (_verified_display_candles(candles_h4, 11) and
+            _verified_display_candles(candles_h1, 11) and
+            _verified_display_candles(candles_m15, 16)):
+        return _unavailable_mtf_display("Insufficient verified closed H4/H1/M15 candles")
+
+    p = round(float(current_price), 2)
+    es = entry_signal if isinstance(entry_signal, dict) else {}
+    live_analysis = live_analysis if isinstance(live_analysis, dict) else {}
     market_regime = str(es.get("marketRegime") or "UNKNOWN")
 
     if candles_h4 and len(candles_h4) >= 10:
@@ -995,8 +1052,29 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
     elif m15_side == "NEUTRAL":
         m15_pat = "12. Trạng thái Trung Tính / Chuyển Tiếp (Đứng ngoài NO_TRADE)"
 
-    m15_score = int(es.get("setupScore") or live_analysis.get("setupScore") or live_analysis.get("confidence") or 85)
-    m15_atr = float(live_analysis.get("atr") or 4.5)
+    score_candidate = es.get("setupScore") or live_analysis.get("setupScore") or live_analysis.get("confidence")
+    try:
+        score_candidate = float(score_candidate) if score_candidate is not None else 0.0
+        m15_score = max(0, min(100, int(score_candidate))) if isfinite(score_candidate) else 0
+    except (TypeError, ValueError, OverflowError):
+        m15_score = 0
+
+    # Derive ATR solely from actual closed M15 candles when upstream analytics omit it.
+    try:
+        atr_candidate = float(live_analysis.get("atr") or 0)
+    except (TypeError, ValueError, OverflowError):
+        atr_candidate = 0.0
+    if not isfinite(atr_candidate) or atr_candidate <= 0:
+        closed_m15 = closed(candles_m15)
+        true_ranges = []
+        for i in range(max(1, len(closed_m15) - 14), len(closed_m15)):
+            h, l, prev_close = (float(closed_m15[i][1]), float(closed_m15[i][2]),
+                                float(closed_m15[i - 1][3]))
+            true_ranges.append(max(h - l, abs(h - prev_close), abs(l - prev_close)))
+        atr_candidate = sum(true_ranges) / len(true_ranges) if true_ranges else 0.0
+    if not isfinite(atr_candidate) or atr_candidate <= 0:
+        return _unavailable_mtf_display("M15 ATR cannot be derived from verified candles")
+    m15_atr = round(atr_candidate, 4)
 
     is_buy_plan = (m15_side != "SELL")
     entry_low = round(p - 1.2 if is_buy_plan else p - 0.5, 2)
@@ -5186,7 +5264,7 @@ def main():
         "quoteAgeSeconds": round(sig_age, 2),
         "liveAnalysis": live_analysis,
         "entrySignal": entry_signal,
-        "mtfAnalysis": analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles, live_analysis, bid if bid > 0 else (candles[-1][3] if candles else 4678.96), entry_signal),
+        "mtfAnalysis": analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles, live_analysis, bid if fresh_sig_ok and bid > 0 else None, entry_signal),
         "candles": candles,
         "openPositions": open_positions,
         "recentTrades": recent_trades,
