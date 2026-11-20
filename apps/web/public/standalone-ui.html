@@ -1528,8 +1528,8 @@ Hướng dẫn lấy nhanh trong 30 giây trên Telegram:
                   </select>
                 </div>
                 <div class="field">
-                  <label>Vốn ban đầu (#5201362 USD)</label>
-                  <input type="number" id="btBalance" value="4131.83" min="500" step="100" onchange="recalcBacktest()" />
+                  <label>Vốn backtest giả định (USD, không phải số dư MT5)</label>
+                  <input type="number" id="btBalance" value="10000" min="500" step="100" onchange="recalcBacktest()" />
                 </div>
                 <div class="field">
                   <label>Lot cơ sở (Đồng bộ ô Lot)</label>
@@ -3551,7 +3551,7 @@ Branch : main
 
     function rebuildDynamicProposalsFromData(markPendingForReview = false) {
       const curLot = Math.max(0.01, Number(document.getElementById("tradeLot")?.value || window.__userLockedLot || 0.05));
-      const balance = Math.max(500, Number(window.__latestAccountBalance || 4131.83));
+      const balance = Math.max(500, Number(Number(document.getElementById("btBalance")?.value || 10000)));
       const sAuto = computeDynamicStatsForBot(() => true, curLot, balance);
       const dataTag = !sAuto.hasData
         ? "CHƯA CÓ DỮ LIỆU KIỂM CHỨNG TRÊN MT5 (Hãy bấm Thu thập dữ liệu MT5 & Chạy Backtest thực tế)"
@@ -3572,7 +3572,7 @@ Branch : main
       if (!tbody) return;
 
       const curLot = Math.max(0.01, Number(document.getElementById("tradeLot")?.value || window.__userLockedLot || 0.05));
-      const balance = Math.max(500, Number(window.__latestAccountBalance || 4131.83));
+      const balance = Math.max(500, Number(Number(document.getElementById("btBalance")?.value || 10000)));
       const src = getActiveBacktestSourceList();
       const subEl = document.getElementById("evalTableSubtitle");
 
@@ -3690,7 +3690,7 @@ Branch : main
       const u3 = document.getElementById("upg3")?.checked ?? true;
       const spikeDist = Number(document.getElementById("tradeSpikeTrail")?.value || 10.0);
       const curLot = Math.max(0.01, Number(document.getElementById("btLot")?.value || window.__userLockedLot || 0.05));
-      const balance = Math.max(500, Number(document.getElementById("btBalance")?.value || 4131.83));
+      const balance = Math.max(500, Number(document.getElementById("btBalance")?.value || 10000));
 
       if (subEl) subEl.textContent = "Đang chạy lại mô phỏng bar-by-bar trực tiếp từ dữ liệu giá MT5 theo đúng cấu hình hiện tại...";
       if (evalSubEl) evalSubEl.textContent = "Đang chạy lại mô phỏng từ dữ liệu nến MT5...";
@@ -3751,7 +3751,7 @@ Branch : main
       const days = Number(document.getElementById("btDays")?.value || 90);
       const strategy = document.getElementById("btStrategy")?.value || "AUTO_REGIME";
       const sizing = document.getElementById("btSizing")?.value || "FIXED_LOT";
-      const balance = Math.max(500, Number(document.getElementById("btBalance")?.value || 4131.83));
+      const balance = Math.max(500, Number(document.getElementById("btBalance")?.value || 10000));
       const lotInputVal = Math.max(0.01, Number(document.getElementById("btLot")?.value || window.__userLockedLot || 0.05));
       const riskPct = Math.min(1.0, Number(document.getElementById("tradeRiskPct")?.value || 0.8));
 
@@ -4047,7 +4047,7 @@ Branch : main
         recalcBacktest();
       }
       const curLot = Number(document.getElementById("tradeLot")?.value || window.__userLockedLot || 0.05).toFixed(2);
-      const balance = Number(document.getElementById("btBalance")?.value || 4131.83);
+      const balance = Number(document.getElementById("btBalance")?.value || 10000);
       let totalPnl = 0;
       const rowsHtml = currentComputedBacktestTrades.map(tr => {
         totalPnl += tr.netPnlUsd;
