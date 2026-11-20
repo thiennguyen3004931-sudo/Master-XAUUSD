@@ -1072,15 +1072,27 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
         return _unavailable_mtf_display("M15 ATR cannot be derived from verified candles")
     m15_atr = round(atr_candidate, 4)
 
-    is_buy_plan = (m15_side != "SELL")
-    entry_low = round(p - 1.2 if is_buy_plan else p - 0.5, 2)
-    entry_high = round(p + 0.5 if is_buy_plan else p + 1.2, 2)
-    plan_sl_dist = max(MIN_STRUCTURAL_SL_DIST, min(MAX_STRUCTURAL_SL_DIST, round(m15_atr * 1.25, 2)))
-    sl_price = round(float(es.get("sl") or (p - plan_sl_dist if is_buy_plan else p + plan_sl_dist)), 2)
-    actual_r = round(abs(p - sl_price), 2) or 6.8
-    be_price = round(p + actual_r if is_buy_plan else p - actual_r, 2)
-    tp1_price = round(p + round(actual_r * 1.6, 2) if is_buy_plan else p - round(actual_r * 1.6, 2), 2)
-    tp2_price = round(float(es.get("tp") or (p + round(actual_r * 2.2, 2) if is_buy_plan else p - round(actual_r * 2.2, 2))), 2)
+    # Display a trade plan only if a separate canonical entry decision supplied
+    # verified SL/TP on the correct side of the actual broker price.
+    try:
+        canonical_sl = float(es.get("sl"))
+        canonical_tp = float(es.get("tp"))
+    except (TypeError, ValueError, OverflowError):
+        canonical_sl, canonical_tp = None, None
+    signal_verified = (
+        es.get("allowed") is True and es.get("side") in ("BUY", "SELL") and
+        canonical_sl is not None and canonical_tp is not None and
+        isfinite(canonical_sl) and isfinite(canonical_tp) and
+        ((canonical_sl < p < canonical_tp) if es["side"] == "BUY"
+         else (canonical_tp < p < canonical_sl))
+    )
+    entry_zone = f"{p:.2f}" if signal_verified else None
+    sl_price = round(canonical_sl, 2) if signal_verified else None
+    tp2_price = round(canonical_tp, 2) if signal_verified else None
+    actual_r = round(abs(p - sl_price), 2) if signal_verified else None
+    is_buy_plan = es.get("side") == "BUY"
+    be_price = round(p + actual_r if is_buy_plan else p - actual_r, 2) if signal_verified else None
+    tp1_price = round(p + actual_r * 1.6 if is_buy_plan else p - actual_r * 1.6, 2) if signal_verified else None
 
     now_sec = int(time.time())
     next_15m_boundary = ((now_sec // 900) + 1) * 900
@@ -1097,6 +1109,10 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
     return {
         "updatedAt": int(time.time() * 1000),
         "nextUpdateInSec": rem_sec,
+        "status": "BROKER_CANDLE_BASIS",
+        "dataStatus": "BROKER_CANDLE_BASIS",
+        "waitingForMt5": False,
+        "allowed": bool(signal_verified),
         "currentPrice": p,
         "marketRegime": market_regime,
         "h4": {
@@ -1129,21 +1145,19 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
             "summary": f"Trạng thái: {market_regime} · Mẫu nến: {m15_pat} (Điểm setup: {m15_score}/100) · Hướng: {m15_side} · ATR(M15): ${m15_atr}."
         },
         "scenario15m": {
-            "direction": m15_side,
+            "direction": m15_side if signal_verified else "NEUTRAL",
             "marketRegime": market_regime,
-            "title": (
-                f"TRẠNG THÁI {market_regime}: ĐỨNG NGOÀI (NO_TRADE)"
-                if m15_side == "NEUTRAL"
-                else f"TRẠNG THÁI {market_regime}: THEO DÕI {m15_side} (SL 6–8 GIÁ & KIỂM TRA CẢN GẦN)"
-            ),
-            "recommendedBot": rec_bot_map.get(market_regime, "Bot 1: Tự Động Theo Trạng Thái Thị Trường"),
-            "entryZone": f"{entry_low} – {entry_high}",
+            "title": (f"TRẠNG THÁI {market_regime}: THEO DÕI {m15_side} (Có SL/TP từ bộ vào lệnh)"
+                      if signal_verified else "KHÔNG CÓ TÍN HIỆU ĐỦ ĐIỀU KIỆN — NO_TRADE"),
+            "recommendedBot": rec_bot_map.get(market_regime, "NO_TRADE") if signal_verified else "NO_TRADE",
+            "entryZone": entry_zone,
             "stopLoss": sl_price,
             "beTrigger": be_price,
             "tp1": tp1_price,
             "tp2": tp2_price,
-            "tpSource": es.get("tpSource", "FALLBACK_FIXED_RR_OPEN_AIR"),
-            "dcaCondition": f"Chỉ nhồi DCA Dương khi lệnh đầu ({p}) ĐÃ KÉO SL VỀ BE 1R ({be_price}), đang Dương, không có cảnh báo đối soát, tổng rủi ro <= 1.5% và có nến M15 mới đóng cùng chiều.",
+            "tpSource": es.get("tpSource") if signal_verified else "UNVERIFIED",
+            "dcaCondition": (f"DCA chỉ được đánh giá sau khi tín hiệu thực khớp và đã kéo BE 1R ({be_price}); tuân thủ cổng rủi ro riêng."
+                             if signal_verified else "BLOCKED_NO_VERIFIED_SIGNAL"),
             "invalidation": f"Nếu SL cấu trúc > 8.0 giá -> WAIT_PULLBACK; nếu vướng cản gần H1/H4 không đủ R:R ròng -> NO_TRADE."
         }
     }
