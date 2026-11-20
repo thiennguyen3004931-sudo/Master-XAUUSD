@@ -96,7 +96,10 @@ def main():
             result["checks"]["terminalConnected"] and gold_sym and positions is not None and orders is not None
         )
         result["ok"] = result["mt5ReadOnlyVerified"]
-        result["status"] = "BROKER_READONLY_OBSERVED" if result["ok"] else "BLOCKED"\n        # Probe of the MT5 Python session is not proof of the active V6\n        # gateway process, its ARM state, deployed SHA or loss controls.\n        # Therefore LIVE authorization remains explicitly blocked.
+        result["status"] = "BROKER_READONLY_OBSERVED" if result["ok"] else "BLOCKED"
+        # Probe of the MT5 Python session is not proof of the active V6
+        # gateway process, its ARM state, deployed SHA or loss controls.
+        # Therefore LIVE authorization remains explicitly blocked.
     finally:
         mt5.shutdown()
 
