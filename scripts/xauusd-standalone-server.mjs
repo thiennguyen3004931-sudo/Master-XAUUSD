@@ -1780,7 +1780,9 @@ function buildStatusPayload(probe) {
   readSavedTunnelUrl();
   const brokerEvidence = getV6BrokerStatusEvidence(probe);
   const isConnected = brokerEvidence.connected;
-  if (isConnected) {
+  const brokerSnapshotCurrent = brokerEvidence.dataStatus === "BROKER_REPORTED_SNAPSHOT";
+  const brokerMarketFresh = brokerSnapshotCurrent && brokerEvidence.quote !== null;
+  if (brokerSnapshotCurrent) {
     if (probe.accountMode === "LIVE" || probe.accountMode === "DEMO") {
       currentAccountConfig.accountMode = probe.accountMode;
     }
@@ -1789,7 +1791,7 @@ function buildStatusPayload(probe) {
     }
   }
   const armGate = getCanonicalLiveArmState(probe);
-  const mtfAnalysis = isConnected && brokerEvidence.quote !== null && probe?.mtfAnalysis
+  const mtfAnalysis = brokerMarketFresh && probe?.mtfAnalysis
     ? probe.mtfAnalysis : buildFallbackMtfAnalysis(null);
   const ips = getLanIps();
   return {
@@ -1856,9 +1858,11 @@ function buildStatusPayload(probe) {
     health: {
       status: isConnected ? "ok" : "waiting_mt5",
       connected: isConnected,
-      tradingEnabled: isConnected && (probe?.accountMode === "DEMO" || armGate.liveArmed),
-      terminalTradeAllowed: probe?.terminalTradeAllowed ?? false,
-      expertTradeAllowed: probe?.expertTradeAllowed ?? false,
+      tradingEnabled: brokerMarketFresh &&
+        brokerEvidence.accountDataStatus === "BROKER_VALUES_PRESENT" &&
+        (probe?.accountMode === "DEMO" || armGate.liveArmed),
+      terminalTradeAllowed: brokerSnapshotCurrent && probe?.terminalTradeAllowed === true,
+      expertTradeAllowed: brokerSnapshotCurrent && probe?.expertTradeAllowed === true,
       accountLogin: brokerEvidence.accountLogin,
       accountName: brokerEvidence.accountName || "",
       accountMode: brokerEvidence.accountMode || "unknown",
@@ -1878,13 +1882,13 @@ function buildStatusPayload(probe) {
       timestamp: brokerEvidence.brokerObservedAtMs,
     },
     quote: brokerEvidence.quote,
-    liveAnalysis: isConnected ? (probe?.liveAnalysis || null) : null,
-    entrySignal: isConnected
+    liveAnalysis: brokerMarketFresh ? (probe?.liveAnalysis || null) : null,
+    entrySignal: brokerMarketFresh
       ? (probe?.entrySignal || { allowed: false, side: "WAIT", reason: "MT5 signal unavailable" })
-      : { allowed: false, side: "WAIT", reason: "MT5 not connected" },
-    candles: isConnected && Array.isArray(probe.candles) ? probe.candles : [],
-    positions: isConnected && Array.isArray(probe.openPositions) ? probe.openPositions : [],
-    recentTrades: isConnected && Array.isArray(probe.recentTrades) ? probe.recentTrades : [],
+      : { allowed: false, side: "WAIT", reason: "MT5 broker snapshot or quote not verified" },
+    candles: brokerMarketFresh && Array.isArray(probe.candles) ? probe.candles : [],
+    positions: brokerSnapshotCurrent && Array.isArray(probe.openPositions) ? probe.openPositions : [],
+    recentTrades: brokerSnapshotCurrent && Array.isArray(probe.recentTrades) ? probe.recentTrades : [],
   };
 }
 
