@@ -2380,7 +2380,7 @@ Branch : main
       renderPatternAtlas();
     }
 
-    window.__liveMatchedPatternId = "BEAR_PENNANT";
+    window.__liveMatchedPatternId = null;
     window.__selectedInspectPatternId = null;
 
     function inferLivePatternIdFromMarket(data, prefSide, parsedCandles) {
@@ -2419,7 +2419,8 @@ Branch : main
       const container = document.getElementById("atlasContainer");
       if (!container) return;
       const liveModeActive = (typeof isLiveChartMode !== "undefined") ? isLiveChartMode : true;
-      const activeId = (liveModeActive && window.__liveMatchedPatternId)
+      const mt5PatternVerified = liveModeActive && Boolean(window.__liveMatchedPatternId);
+      const activeId = (mt5PatternVerified && window.__liveMatchedPatternId)
         ? window.__liveMatchedPatternId
         : (SCENARIOS[currentScenarioIdx]?.patternId || "BEAR_PENNANT");
       const inspectId = window.__selectedInspectPatternId || activeId;
@@ -2447,7 +2448,7 @@ Branch : main
             <div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
                 <span class="badge ${badgeCls}">${p.dir === "BULLISH" ? "TĂNG (BUY)" : p.dir === "BEARISH" ? "GIẢM (SELL)" : "ĐI NGANG"}</span>
-                <span style="font-size:10.5px;color:${isCurrent ? strokeCol : 'var(--text-muted)'};font-weight:${isCurrent ? '700' : '500'};font-family:var(--font-mono)">${isCurrent ? '● Đang khớp MT5 · Win+BE ' + dynWin : 'Win+BE ' + dynWin}</span>
+                <span style="font-size:10.5px;color:${isCurrent ? strokeCol : 'var(--text-muted)'};font-weight:${isCurrent ? '700' : '500'};font-family:var(--font-mono)">${isCurrent ? (mt5PatternVerified ? '● Đang khớp MT5 · Win+BE ' : '● Mẫu minh họa · Win+BE ') + dynWin : 'Win+BE ' + dynWin}</span>
               </div>
               <div style="font-weight:600;font-size:11.8px;color:var(--text-primary);margin-bottom:6px">${p.name}</div>
               <svg viewBox="0 0 140 76" style="width:100%;height:58px;background:#090d16;border-radius:6px;border:1px solid var(--border);margin-bottom:6px">
@@ -3130,7 +3131,9 @@ Branch : main
       }
 
       // Đồng bộ tức thì Mẫu hình thời gian thực (12 Mẫu hình) theo đúng chiều ưu tiên prefSide (SELL/BUY)
-      window.__liveMatchedPatternId = inferLivePatternIdFromMarket(data, prefSide, parsedCandles);
+      window.__liveMatchedPatternId = parsedCandles.length >= 4 &&
+        data.mtfAnalysis?.dataStatus === "BROKER_CANDLE_BASIS"
+        ? inferLivePatternIdFromMarket(data, prefSide, parsedCandles) : null;
       window.__liveCurrentPrefSide = prefSide;
       renderPatternAtlas();
 
