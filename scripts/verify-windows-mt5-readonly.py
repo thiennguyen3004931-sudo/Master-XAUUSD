@@ -35,7 +35,11 @@ def main():
         "botRoot": str(root),
         "deployedCommitSha": git_sha,
         "mt5ReadOnlyVerified": False,
-        "liveArmed": None,  # Not checked by this read-only broker probe; do not assert DISARMED\n        "liveAuthorization": "NOT_GRANTED",\n        "readinessClassification": "LIVE_BLOCKED",\n        "operatingProcessVerified": False,\n        "riskControlsVerified": False,
+        "liveArmed": None,  # Not checked by this read-only broker probe; do not assert DISARMED
+        "liveAuthorization": "NOT_GRANTED",
+        "readinessClassification": "LIVE_BLOCKED",
+        "operatingProcessVerified": False,
+        "riskControlsVerified": False,
         "checks": {},
         "ownerActionRequired": [],
     }
