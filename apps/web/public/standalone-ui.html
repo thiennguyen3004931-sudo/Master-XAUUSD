@@ -915,7 +915,7 @@
                 <div style="padding:8px 10px;background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.28);border-radius:7px;display:flex;flex-direction:column;gap:7px">
                   <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
                     <span style="font-size:11.5px;font-weight:600;color:var(--up)">2. Quản lý Khối lượng Lot &amp; Tự phân bổ theo % Vốn ($4,131.83)</span>
-                    <span class="badge badge-up" id="lotLiveSummaryBadge">Đang áp dụng: 0.05 Lot (0.8% Vốn ≈ $33)</span>
+                    <span class="badge badge-warn" id="lotLiveSummaryBadge">V6: Lot cố định · Chờ xác minh số dư MT5 để tính % rủi ro</span>
                   </div>
                   <div class="form-grid-3">
                     <div class="field">
@@ -2807,9 +2807,10 @@ Branch : main
       const allocMode = document.getElementById("lotAllocMode")?.value || "AUTO_RISK_PCT";
       const riskPct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
       const slDist = Number(document.getElementById("tradeSlDist")?.value || 6.8);
-      const bal = window.__latestAccountBalance || 4131.83;
+      const bal = Number.isFinite(window.__latestAccountBalance) && window.__latestAccountBalance > 0
+        ? window.__latestAccountBalance : null;
       const riskUsd = Math.round(cleanLot * slDist * 100);
-      const actualPct = ((riskUsd / bal) * 100).toFixed(2);
+      const actualPct = bal !== null ? ((riskUsd / bal) * 100).toFixed(2) : "Chưa có dữ liệu";
 
       try {
         localStorage.setItem("xauusd_locked_lot", String(cleanLot));
@@ -2820,8 +2821,8 @@ Branch : main
       const badge = document.getElementById("lotLiveSummaryBadge");
       if (badge) {
         badge.textContent = allocMode === "AUTO_RISK_PCT"
-          ? `Đang áp dụng: ${cleanLot.toFixed(2)} Lot (${riskPct}% Vốn ≈ $${riskUsd} rủi ro)`
-          : `Đang áp dụng: ${cleanLot.toFixed(2)} Lot cố định (≈ ${actualPct}% Vốn / $${riskUsd})`;
+          ? `V6 đang dùng Fixed Lot ${cleanLot.toFixed(2)}; % vốn trên UI chỉ là đề xuất, không phải Auto Lot LIVE.`
+          : `V6 Fixed Lot ${cleanLot.toFixed(2)} · Ước tính rủi ro ${actualPct === "Chưa có dữ liệu" ? "chưa xác minh số dư MT5" : actualPct + "% vốn"}`;
       }
 
       const jCell = document.getElementById("journalReadyLotCell");
@@ -2829,7 +2830,7 @@ Branch : main
 
       const evalBadge = document.getElementById("evalLotHeaderBadge");
       if (evalBadge) {
-        evalBadge.textContent = `Đang tính theo: ${cleanLot.toFixed(2)} Lot (${allocMode === "AUTO_RISK_PCT" ? riskPct + "% Vốn" : "Cố định"})`;
+        evalBadge.textContent = `V6 Lot cố định: ${cleanLot.toFixed(2)}; % vốn (nếu chọn) chỉ là ước tính giao diện.`;
       }
 
       const btLotEl = document.getElementById("btLot");
@@ -2842,10 +2843,19 @@ Branch : main
     }
 
     function computeLotFromRiskPct(pctVal) {
-      const bal = window.__latestAccountBalance || 4131.83;
-      const slDist = Math.max(2.0, Number(document.getElementById("tradeSlDist")?.value || 6.8));
-      const riskUsd = bal * (Number(pctVal || 0.8) / 100.0);
-      return Math.max(0.01, Math.round((riskUsd / (slDist * 100.0)) * 100) / 100);
+      const bal = window.__latestAccountBalance;
+      const pct = Number(pctVal);
+      if (!Number.isFinite(bal) || bal <= 0 || !Number.isFinite(pct) || pct <= 0) return null;
+      const slDist = Number(document.getElementById("tradeSlDist")?.value);
+      if (!Number.isFinite(slDist) || slDist <= 0) return null;
+      const rawLot = Math.floor((bal * pct / 100) / (slDist * 100) * 100) / 100;
+      // Do not upscale a below-minimum proposed lot into a broker-risk violation.
+      return rawLot >= 0.01 ? rawLot : null;
+    }
+
+    function showUnverifiedAutoLotWarning() {
+      const badge = document.getElementById("lotLiveSummaryBadge");
+      if (badge) badge.textContent = "Không tính/ghi Lot theo %: số dư MT5 hoặc mức Lot hợp lệ chưa được xác minh. V6 vẫn sử dụng Fixed Lot.";
     }
 
     function onChangeLotAllocMode() {
@@ -2853,6 +2863,7 @@ Branch : main
       if (mode === "AUTO_RISK_PCT") {
         const pct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
         const calcLot = computeLotFromRiskPct(pct);
+        if (calcLot === null) { showUnverifiedAutoLotWarning(); return; }
         const lotEl = document.getElementById("tradeLot");
         if (lotEl) lotEl.value = calcLot.toFixed(2);
         syncLotDisplayEverywhere(calcLot);
@@ -2869,6 +2880,7 @@ Branch : main
       if (modeEl) modeEl.value = "AUTO_RISK_PCT";
       const pct = Math.max(0.1, Number(document.getElementById("tradeRiskPct")?.value || 0.8));
       const calcLot = computeLotFromRiskPct(pct);
+      if (calcLot === null) { showUnverifiedAutoLotWarning(); return; }
       const lotEl = document.getElementById("tradeLot");
       if (lotEl) lotEl.value = calcLot.toFixed(2);
       syncLotDisplayEverywhere(calcLot);
@@ -2890,6 +2902,7 @@ Branch : main
       if (mode === "AUTO_RISK_PCT") {
         const pct = Number(document.getElementById("tradeRiskPct")?.value || 0.8);
         const calcLot = computeLotFromRiskPct(pct);
+        if (calcLot === null) { showUnverifiedAutoLotWarning(); return; }
         const lotEl = document.getElementById("tradeLot");
         if (lotEl) lotEl.value = calcLot.toFixed(2);
         syncLotDisplayEverywhere(calcLot);
