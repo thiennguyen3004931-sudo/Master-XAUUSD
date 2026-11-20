@@ -3049,17 +3049,13 @@ Branch : main
             return [Number(c[0]), Number(c[1]), Number(c[2]), Number(c[3])];
           }
           return [Number(c.open), Number(c.high), Number(c.low), Number(c.close)];
-        }).filter(c => !isNaN(c[0]) && c[0] > 0);
+        }).filter(c => c.length === 4 && c.every(v => Number.isFinite(v) && v > 0) &&
+          c[1] >= Math.max(c[0], c[3]) && c[2] <= Math.min(c[0], c[3]));
       }
 
       if (parsedCandles.length < 4) {
-        parsedCandles = [
-          [liveBid - 4.2, liveBid - 1.5, liveBid - 5.8, liveBid - 2.4],
-          [liveBid - 2.4, liveBid + 0.8, liveBid - 3.6, liveBid - 1.1],
-          [liveBid - 1.1, liveBid + 1.4, liveBid - 2.5, liveBid + 0.4],
-          [liveBid + 0.4, liveBid + 2.1, liveBid - 1.2, liveBid - 0.5],
-          [liveBid - 0.5, liveBid + 1.6, liveBid - 1.8, liveBid]
-        ];
+        // No synthetic OHLC bars: an unavailable MT5 source must leave chart empty.
+        parsedCandles = [];
       } else {
         // Cập nhật cây nến cuối cùng khớp 100% với giá Bid thực tế từng giây từ MT5
         const lastIdx = parsedCandles.length - 1;
@@ -3068,6 +3064,13 @@ Branch : main
         if (liveBid < parsedCandles[lastIdx][2]) parsedCandles[lastIdx][2] = liveBid;
       }
 
+      const hasVerifiedMtfDisplay = data.mtfAnalysis?.dataStatus === "BROKER_CANDLE_BASIS";
+      const hasExecutableScenario = hasVerifiedMtfDisplay && data.mtfAnalysis?.allowed === true && es?.allowed === true;
+      const firstBrokerPosition = openPos[0];
+      const hasNativeStops = Boolean(firstBrokerPosition) &&
+        Number.isFinite(Number(firstBrokerPosition.sl)) && Number(firstBrokerPosition.sl) > 0 &&
+        Number.isFinite(Number(firstBrokerPosition.tp)) && Number(firstBrokerPosition.tp) > 0;
+      if (parsedCandles.length >= 4 && hasVerifiedMtfDisplay && (hasExecutableScenario || hasNativeStops)) {
       // Tính SL theo cấu trúc 6–8 giá và TP tại vùng cản H1/H4 thực tế từ nến (giới hạn biên hiển thị để không làm bẹp nến M15)
       const swingLowM15 = Math.min(...parsedCandles.map(c => c[2]));
       const swingHighM15 = Math.max(...parsedCandles.map(c => c[1]));
@@ -3078,8 +3081,8 @@ Branch : main
       let activeTpDist = Number(document.getElementById("tradeTpDist")?.value || 16.0);
       if (slMode === "STRUCTURAL_6_8") {
         activeSlDist = structSlDist;
-        const h4High = Number(data.mtfAnalysis?.h4?.swingHigh || (liveBid + 18.0));
-        const h4Low = Number(data.mtfAnalysis?.h4?.swingLow || (liveBid - 18.0));
+        const h4High = Number(data.mtfAnalysis?.h4?.swingHigh);
+        const h4Low = Number(data.mtfAnalysis?.h4?.swingLow);
         const rawTarget = isBull ? (h4High - 0.25) : (h4Low + 0.25);
         const rawDist = Math.abs(rawTarget - liveBid);
         const clampedDist = Math.min(structSlDist * 2.8, Math.max(structSlDist * 1.8, rawDist));
@@ -3088,9 +3091,9 @@ Branch : main
 
       if (isLiveChartMode) {
         let entry = liveBid;
-        let sl = isBull ? entry - activeSlDist : entry + activeSlDist;
-        let tp1 = isBull ? entry + activeSlDist : entry - activeSlDist;
-        let tp2 = isBull ? entry + activeTpDist : entry - activeTpDist;
+        let sl = hasExecutableScenario ? Number(es.sl) : Number(openPos[0].sl);
+        let tp2 = hasExecutableScenario ? Number(es.tp) : Number(openPos[0].tp);
+        let tp1 = isBull ? entry + Math.abs(entry - sl) : entry - Math.abs(entry - sl);
         let sideTag = `CANH ${prefSide}`;
 
         // Nếu đang có lệnh mở thực tế trên MT5, vẽ chính xác đường Entry, SL và TP của lệnh đang mở lên biểu đồ!
@@ -3117,6 +3120,13 @@ Branch : main
           sideTag,
           candles: parsedCandles
         });
+      }
+
+      } else if (isLiveChartMode) {
+        const svg = document.getElementById("mainCandleSvg");
+        if (svg) svg.innerHTML = '<text x="45" y="125" fill="#f59e0b" font-size="15">MT5 DATA_UNAVAILABLE — không vẽ nến/SL/TP giả định</text>';
+        document.getElementById("chartFootLeft").textContent =
+          "NO_TRADE: thiếu nến H4/H1/M15 hoặc tín hiệu SL/TP từ broker chưa xác minh.";
       }
 
       // Đồng bộ tức thì Mẫu hình thời gian thực (12 Mẫu hình) theo đúng chiều ưu tiên prefSide (SELL/BUY)
