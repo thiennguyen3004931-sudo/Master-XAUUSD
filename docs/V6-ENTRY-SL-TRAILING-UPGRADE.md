@@ -23,6 +23,14 @@
 - Kết quả status V6 có thêm `executionSizing` (chỉ đọc): `executionFamily`, `orderSizingMode`, `configuredLot`, `automaticCapitalSizingActiveOnV6`, `riskPolicy`, `verificationScope`. Khi cấu hình Lot lỗi/chưa xác minh, `configuredLot = null`. Trường này **không xác nhận** phiên bản đang triển khai trên Windows, broker lot step, lệnh thực tế hoặc cho phép LIVE.
 - Việc đưa Auto Lot thật vào V6 cần một thay đổi riêng, được đánh giá chính sách rủi ro và kiểm thử ngoại tuyến trước. Không bật bằng cách sửa cờ hiển thị và không tự thay đổi `BOT_MODE`, ARM, lệnh MT5 hay cấu hình địa phương.
 
+### 3.2 Bộ tính Auto Lot theo broker — SHADOW ONLY (Issue #76)
+
+- Module thử nghiệm riêng `scripts/v6_auto_lot_shadow.py` cung cấp `recommend_broker_auto_lot_shadow(...)`. **Không được import hoặc gọi từ đường gửi lệnh V6**; không tạo lệnh, không bật ARM, không lưu thay đổi cấu hình. `orderSizingMode` của V6 vẫn là `FIXED_LOT`.
+- Đầu vào bắt buộc: Equity, Free Margin, login/server của tài khoản, giá entry/SL và giá Bid/Ask đã xác minh độ mới, rủi ro SL của vị thế đang mở và lệnh chờ, ngân sách lỗ ngày còn lại và chi phí vòng giao dịch. `risk_inputs_verified`, `costs_verified` chỉ là cam kết của bên gọi; **không tự xác nhận tính xác thực của MT5**.
+- Tính rủi ro trực tiếp bằng `order_calc_profit` của broker (không giả sử 1 lot = 100 oz), tính margin bằng `order_calc_margin`; tính thêm dự phòng bất lợi 5% và chi phí được cung cấp. Shadow sử dụng trần *cứng riêng cho mô phỏng* `1%/lệnh`, `1,5%/danh mục`, và giới hạn còn lại của lỗ ngày. Không được suy diễn rằng Fixed Lot LIVE đã áp dụng những trần này.
+- Làm tròn xuống bước `volume_step`, không tự nâng lên lot tối thiểu khi vượt ngân sách; từ chối nếu thiếu dữ liệu, giá/SL sai chiều, quote cũ, broker API lỗi, ngân sách/margin thiếu hoặc chính sách DCA chưa xác minh.
+- Chưa có bằng chứng kết nối thực tế từ chương trình Windows; **không chuyển chế độ Auto Lot trên LIVE** từ những tính toán shadow này. Cần PR riêng để gắn vào gateway, chứng thực dữ liệu broker tại thời điểm gửi, xác nhận chính sách risk% và đối soát khối lượng sau khớp lệnh. Chạy kiểm thử offline: `python -m unittest tests.test_v6_auto_lot_shadow`.
+
 ## 4. Chọn Bot, SL/TP & Quản lý Vị thế Thống nhất
 - **Trạng thái thị trường:** `TREND_UP`, `TREND_DOWN`, `RANGE`, `TRANSITION`, `UNKNOWN` (cập nhật theo nến M15 đóng mới).
 - **SL ban đầu:** Cấu trúc M5 `6–8` giá (`1 giá = 1 USD/oz`). Vượt `8` giá -> `WAIT_PULLBACK` (thời hạn hiệu lực `60 phút`).
