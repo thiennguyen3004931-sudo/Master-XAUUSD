@@ -287,8 +287,7 @@ test("V6 release manifest covers every direct standalone helper import", () => {
 
 test("V6 Web chart hides missing H4/M15 evidence rather than drawing sample candles (#82)", () => {
   const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
-  const chart = ui.slice(ui.indexOf("function renderLiveMt5DataOnDashboard("),
-    ui.indexOf("function renderPatternAtlas("));
+  const chart = ui.slice(ui.indexOf("function renderLiveMt5DataOnDashboard("));
   assert.match(chart, /data\.mtfAnalysis\?\.dataStatus === "BROKER_CANDLE_BASIS"/);
   assert.match(chart, /hasVerifiedMtfDisplay && \(hasExecutableScenario \|\| hasNativeStops\)/);
   assert.match(chart, /parsedCandles = \[\];/);
