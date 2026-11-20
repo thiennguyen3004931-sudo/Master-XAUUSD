@@ -1843,17 +1843,40 @@ def _entry_fill_evidence(mt5, intent):
         deals = mt5.history_deals_get(start, end)
         if not isinstance(deals, (list, tuple)):
             return unknown
-        tickets = set()
+        fills = {}
         for deal in deals:
             if (deal.comment == intent["brokerComment"] and deal.symbol == intent["symbol"]
                     and deal.magic == 270715 and deal.type == {"BUY": 0, "SELL": 1}[intent["side"]]
                     and deal.ticket > 0 and deal.volume > 0 and isfinite(deal.volume)):
-                tickets.add(int(deal.ticket))
+                ticket = int(deal.ticket)
+                fill = (float(deal.volume), getattr(deal, "position_id", None))
+                if ticket in fills and fills[ticket] != fill:
+                    return unknown
+                fills[ticket] = fill
+        if not fills:
+            return unknown
+        observed = round(sum(volume for volume, _ in fills.values()), 8)
+        result = {"status": "EXECUTION_OBSERVED", "dealTickets": sorted(fills),
+                  "observedDealVolume": observed, "positionReadbackAvailable": False}
+        position_ids = {position for _, position in fills.values()}
+        if len(position_ids) == 1 and None not in position_ids:
+            positions, available, _ = _safe_read_positions(mt5, intent["symbol"])
+            linked = [p for p in positions if getattr(p, "identifier", None) in position_ids
+                      and p.symbol == intent["symbol"] and p.magic == 270715
+                      and p.type == {"BUY": 0, "SELL": 1}[intent["side"]]]
+            if available and len(linked) == 1 and next(iter(position_ids)) > 0:
+                pos = linked[0]
+                if pos.ticket > 0 and all(isfinite(v) and v > 0 for v in (pos.volume, pos.sl, pos.tp)):
+                    result.update(positionReadbackAvailable=True, positionTicket=int(pos.ticket),
+                                  positionVolume=pos.volume, brokerSl=pos.sl, brokerTp=pos.tp)
+        requested = intent.get("requestedVolume")
+        if isinstance(requested, (int, float)) and isfinite(requested) and requested > 0:
+            result["requestedVolume"] = requested
+            result["observedVolumeMatchesRequest"] = abs(requested - observed) < 1e-8
         account = mt5.account_info()
         if account.login != intent["accountLogin"] or account.server != intent["server"]:
             return unknown
-        if tickets:
-            return {"status": "EXECUTION_OBSERVED", "dealTickets": sorted(tickets)}
+        return result
     except Exception:
         return unknown
     return unknown
@@ -1890,6 +1913,7 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
                     "symbol": active_symbol,
                     "side": str((order_cfg or {}).get("side", "")).strip().upper(),
                     "brokerComment": broker_comment,
+                    "requestedVolume": (order_cfg or {}).get("volume"),
                     "status": "ENTRY_IN_FLIGHT",
                     "accountLogin": login,
                     "server": server,
