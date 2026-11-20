@@ -183,7 +183,10 @@ test("V6 disconnected status must not expose placeholder or previously observed 
   assert.match(server, /const brokerEvidence = getV6BrokerStatusEvidence\(probe\)/);
   assert.match(server, /quote: brokerEvidence\.quote/);
   assert.match(server, /accountFreeMargin: brokerEvidence\.accountFreeMargin/);
-  assert.match(server, /isConnected && brokerEvidence\.quote !== null && probe\?\.mtfAnalysis/);
+  assert.match(server, /brokerMarketFresh && probe\?\.mtfAnalysis/);
+  assert.match(server, /tradingEnabled: brokerMarketFresh/);
+  assert.match(server, /entrySignal: brokerMarketFresh/);
+  assert.match(server, /positions: brokerSnapshotCurrent/);
   assert.match(server, /entrySignal: isConnected/);
 });
 
