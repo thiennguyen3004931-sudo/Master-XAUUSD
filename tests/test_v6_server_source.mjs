@@ -270,3 +270,14 @@ test("V6 standalone UI clears stale balance and does not calculate Auto Lot from
   assert.doesNotMatch(lot, /4131\.83/);
   assert.doesNotMatch(status, /DBG Market Limited|5201362/);
 });
+
+test("V6 release manifest covers every direct standalone helper import", () => {
+  const pack = readFileSync(resolve(root, "scripts/package-v6-release.mjs"), "utf8");
+  for (const helper of [
+    "scripts/v6-api-input-guards.mjs",
+    "scripts/v6-execution-sizing-disclosure.mjs",
+    "scripts/v6-broker-status-evidence.mjs",
+  ]) {
+    assert.ok(pack.includes(JSON.stringify(helper)), "missing release manifest dependency: " + helper);
+  }
+});
