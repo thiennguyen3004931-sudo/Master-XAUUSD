@@ -1,3 +1,4 @@
+import "./test_daily_risk_scheduler_contract.mjs";
 import test from "node:test";
 import { execFileSync as gitExecFileSync } from "node:child_process";
 import assert from "node:assert/strict";

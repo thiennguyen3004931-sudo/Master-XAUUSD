@@ -1406,6 +1406,7 @@ function startV6BackgroundMonitor() {
     if (v6MonitorBusy) return;
     v6MonitorBusy = true;
     try {
+      const probeStartUtc = Math.floor(Date.now() / 1000);
       const snap = await invokeMt5PythonEngine({ action: "probe" }, true);
       if (!snap || !snap.connected) return;
 
@@ -1450,8 +1451,24 @@ function startV6BackgroundMonitor() {
         autoBotState.lastLog = "CHỜ MỞ KHÓA ARM LIVE: Bot đang bật quét tín hiệu nhưng chưa cấp quyền ARM LIVE cho phiên này.";
         return;
       }
-      if (snap.dailyRiskState?.dailyLimitBreached) {
-        autoBotState.lastRiskWarning = `Đã chạm giới hạn lỗ ngày (${snap.dailyRiskState.currentDailyLossUsd} / ${snap.dailyRiskState.dailyLossLimitUsd}). Tạm dừng mở lệnh mới và DCA.`;
+      // Fail closed for NEW entries/DCA when the daily risk snapshot cannot be verified.
+      // Existing position management runs in its separate loop above.
+      const dailyRisk = snap.dailyRiskState;
+      if (!dailyRisk || typeof dailyRisk !== "object" || Array.isArray(dailyRisk) ||
+          dailyRisk.ok !== true || !Number.isSafeInteger(dailyRisk.updatedAtUtc) ||
+          dailyRisk.updatedAtUtc < probeStartUtc || dailyRisk.updatedAtUtc > Math.floor(Date.now() / 1000) ||
+          dailyRisk.currentDailyLossUsd < 0 ||
+          Math.abs(Date.now() / 1000 - dailyRisk.updatedAtUtc) > 30 ||
+          typeof dailyRisk.dailyLimitBreached !== "boolean" ||
+          !Number.isFinite(dailyRisk.currentDailyLossUsd) ||
+          !Number.isFinite(dailyRisk.dailyLossLimitUsd) ||
+          dailyRisk.dailyLossLimitUsd <= 0) {
+        autoBotState.lastRiskWarning = "Không xác minh được trạng thái giới hạn lỗ ngày. Tạm dừng mở lệnh mới và DCA đến khi đối soát thành công.";
+        autoBotState.lastLog = autoBotState.lastRiskWarning;
+        return;
+      }
+      if (dailyRisk.dailyLimitBreached || dailyRisk.currentDailyLossUsd >= dailyRisk.dailyLossLimitUsd) {
+        autoBotState.lastRiskWarning = `Đã chạm giới hạn lỗ ngày (${dailyRisk.currentDailyLossUsd} / ${dailyRisk.dailyLossLimitUsd}). Tạm dừng mở lệnh mới và DCA.`;
         autoBotState.lastLog = autoBotState.lastRiskWarning;
         return;
       }
