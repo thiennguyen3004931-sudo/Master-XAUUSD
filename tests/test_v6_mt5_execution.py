@@ -412,6 +412,76 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertTrue(allowed["ok"], allowed)
         self.assertEqual(len(broker.sent), 1)
 
+    def test_margin_can_deteriorate_after_initial_preflight_but_before_send(self):
+        """P0: changes during the pending book check must not permit a new order."""
+        for side in ("BUY", "SELL"):
+            for scenario in ("free_drops", "margin_api_missing", "margin_api_nan",
+                             "account_switch", "server_switch", "mode_switch"):
+                with self.subTest(side=side, scenario=scenario):
+                    broker = MockBroker()
+                    state = {"free": 4000.0, "login": 5201362,
+                             "server": "MOCK-DEMO", "trade_mode": 0}
+                    original_account_info = broker.account_info
+                    def account_info():
+                        account = original_account_info()
+                        for key, value in state.items():
+                            if key == "free":
+                                account.margin_free = value
+                            else:
+                                setattr(account, key, value)
+                        return account
+                    broker.account_info = account_info
+                    def after_margin_checked():
+                        if scenario == "free_drops":
+                            state["free"] = 0.1
+                        elif scenario == "margin_api_missing":
+                            broker.order_calc_margin = None
+                        elif scenario == "margin_api_nan":
+                            broker.order_calc_margin = lambda *args: float("nan")
+                        elif scenario == "account_switch":
+                            state["login"] = 777777
+                        elif scenario == "server_switch":
+                            state["server"] = "OTHER-BROKER"
+                        elif scenario == "mode_switch":
+                            state["trade_mode"] = 2
+                        return []
+                    broker.orders_get = after_margin_checked
+                    result = engine.execute_order(broker, "XAUUSD.G", {
+                        "side": side, "volume": 0.02,
+                        "slDistance": 6.8, "tpDistance": 16,
+                    })
+                    self.assertFalse(result.get("ok"), result)
+                    self.assertFalse(result.get("submitted", False), result)
+                    self.assertEqual(broker.sent, [])
+                    expected = (
+                        "BLOCKED_INSUFFICIENT_MARGIN" if scenario == "free_drops"
+                        else "BLOCKED_ACCOUNT_CHANGED_BEFORE_SEND"
+                        if scenario.endswith("switch")
+                        else "BLOCKED_MARGIN_RECHECK_UNVERIFIED"
+                    )
+                    self.assertEqual(result.get("status"), expected, result)
+
+    def test_final_margin_recheck_is_real_and_records_the_verified_budget(self):
+        """Healthy BUY/SELL orders must pass both checks, without a live broker."""
+        for side in ("BUY", "SELL"):
+            with self.subTest(side=side):
+                broker = MockBroker()
+                calls = []
+                original_calc = broker.order_calc_margin
+                def tracked_calc(*args):
+                    calls.append(args)
+                    return original_calc(*args)
+                broker.order_calc_margin = tracked_calc
+                result = engine.execute_order(broker, "XAUUSD.G", {
+                    "side": side, "volume": 0.02,
+                    "slDistance": 6.8, "tpDistance": 16,
+                })
+                self.assertTrue(result.get("ok"), result)
+                self.assertEqual(len(broker.sent), 1)
+                self.assertGreaterEqual(len(calls), 2)
+                self.assertEqual(result["riskMetrics"]["freeMarginUsd"], 4000.0)
+                self.assertGreater(result["riskMetrics"]["requiredMarginUsd"], 0.0)
+
     def test_high_spread_is_rejected(self):
         mt5 = MockBroker()
         mt5.asks = 4002.0
