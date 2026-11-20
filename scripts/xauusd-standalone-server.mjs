@@ -1789,7 +1789,7 @@ function buildStatusPayload(probe) {
     }
   }
   const armGate = getCanonicalLiveArmState(probe);
-  const mtfAnalysis = isConnected && probe?.mtfAnalysis
+  const mtfAnalysis = isConnected && brokerEvidence.quote !== null && probe?.mtfAnalysis
     ? probe.mtfAnalysis : buildFallbackMtfAnalysis(null);
   const ips = getLanIps();
   return {
