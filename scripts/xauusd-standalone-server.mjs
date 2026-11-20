@@ -1406,6 +1406,7 @@ function startV6BackgroundMonitor() {
     if (v6MonitorBusy) return;
     v6MonitorBusy = true;
     try {
+      const probeStartUtc = Math.floor(Date.now() / 1000);
       const snap = await invokeMt5PythonEngine({ action: "probe" }, true);
       if (!snap || !snap.connected) return;
 
@@ -1454,6 +1455,9 @@ function startV6BackgroundMonitor() {
       // Existing position management runs in its separate loop above.
       const dailyRisk = snap.dailyRiskState;
       if (!dailyRisk || typeof dailyRisk !== "object" || Array.isArray(dailyRisk) ||
+          dailyRisk.ok !== true || !Number.isInteger(dailyRisk.updatedAtUtc) ||
+          dailyRisk.updatedAtUtc < probeStartUtc || dailyRisk.updatedAtUtc > Math.floor(Date.now() / 1000) ||
+          dailyRisk.currentDailyLossUsd < 0 ||
           typeof dailyRisk.dailyLimitBreached !== "boolean" ||
           !Number.isFinite(dailyRisk.currentDailyLossUsd) ||
           !Number.isFinite(dailyRisk.dailyLossLimitUsd) ||
@@ -1462,7 +1466,7 @@ function startV6BackgroundMonitor() {
         autoBotState.lastLog = autoBotState.lastRiskWarning;
         return;
       }
-      if (dailyRisk.dailyLimitBreached) {
+      if (dailyRisk.dailyLimitBreached || dailyRisk.currentDailyLossUsd >= dailyRisk.dailyLossLimitUsd) {
         autoBotState.lastRiskWarning = `Đã chạm giới hạn lỗ ngày (${dailyRisk.currentDailyLossUsd} / ${dailyRisk.dailyLossLimitUsd}). Tạm dừng mở lệnh mới và DCA.`;
         autoBotState.lastLog = autoBotState.lastRiskWarning;
         return;
