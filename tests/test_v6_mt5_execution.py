@@ -587,6 +587,21 @@ class ExecutionRiskTest(unittest.TestCase):
             self.assertEqual(result["status"], "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY")
             self.assertFalse(result["submitted"])
         self.assertEqual(result["fillEvidence"]["dealTickets"], [456])
+        self.assertFalse(result["fillEvidence"]["observedVolumeMatchesRequest"])
+        self.assertFalse(result["fillEvidence"]["positionReadbackAvailable"])
+        deal.position_id = 888
+        second = SimpleNamespace(**{**vars(deal), "ticket": 457})
+        restarted.history_deals_get = lambda *args: [deal, second, deal]
+        restarted.positions = [SimpleNamespace(identifier=888, ticket=999, symbol="XAUUSD.G",
+            type=0, magic=270715, volume=0.02, sl=3993.4, tp=4016.2)]
+        result = engine.execute_order(restarted, "XAUUSD.G", cfg)
+        evidence = result["fillEvidence"]
+        self.assertEqual(evidence["observedDealVolume"], 0.02)
+        self.assertTrue(evidence["observedVolumeMatchesRequest"])
+        self.assertTrue(evidence["positionReadbackAvailable"])
+        self.assertEqual((evidence["positionTicket"], evidence["brokerSl"], evidence["brokerTp"]),
+                         (999, 3993.4, 4016.2))
+        self.assertEqual(result["status"], "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY")
         self.assertEqual(restarted.sent, [])
 
     def test_uncertain_entry_freeze_survives_restart_and_blocks_retry(self):
