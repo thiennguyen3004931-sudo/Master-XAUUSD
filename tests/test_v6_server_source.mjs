@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { getV6ExecutionSizingDisclosure } from "../scripts/v6-execution-sizing-disclosure.mjs";
+import { getV6BrokerStatusEvidence, readExplicitBacktestStartingBalance } from "../scripts/v6-broker-status-evidence.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const server = readFileSync(resolve(root, "scripts/xauusd-standalone-server.mjs"), "utf8");
@@ -159,4 +160,78 @@ test("V6 disclosure never invents a verified lot for corrupt or missing settings
   assert.equal(unverified.configuredLotValidInLocalConfig, false);
   assert.equal(unverified.configuredLot, null);
   assert.equal(unverified.verificationScope, "SOURCE_POLICY_NOT_DEPLOYED_RUNTIME_OR_BROKER_PROOF");
+});
+
+test("V6 disconnected status must not expose placeholder or previously observed account/quote (#80)", () => {
+  for (const raw of [
+    null, undefined, {}, { connected: "true", balance: 9999, bid: 4000 },
+    { connected: false, balance: 4131.83, equity: 4131.83, freeMargin: 4000,
+      profit: 220, accountLogin: 1234567, brokerSymbol: "XAUUSD.G",
+      bid: 4678.96, ask: 4679.16, quoteFresh: true, quoteAgeSeconds: 1 },
+  ]) {
+    const evidence = getV6BrokerStatusEvidence(raw);
+    assert.equal(evidence.connected, false);
+    assert.equal(evidence.dataStatus, "BROKER_UNAVAILABLE");
+    for (const key of ["accountLogin", "accountBalance", "accountEquity", "accountFreeMargin",
+      "accountProfit", "accountMode", "brokerSymbol", "brokerObservedAtMs"]) {
+      assert.equal(evidence[key], null, key);
+    }
+    assert.equal(evidence.quote, null);
+    assert.deepEqual(evidence.availableGoldSymbols, []);
+  }
+  assert.doesNotMatch(server, /lastKnownAccountMetrics|4131\.83|4678\.96|4679\.16/);
+  assert.match(server, /const brokerEvidence = getV6BrokerStatusEvidence\(probe\)/);
+  assert.match(server, /quote: brokerEvidence\.quote/);
+  assert.match(server, /accountFreeMargin: brokerEvidence\.accountFreeMargin/);
+  assert.match(server, /isConnected && probe\?\.mtfAnalysis/);
+  assert.match(server, /entrySignal: isConnected/);
+});
+
+test("V6 broker status accepts only finite connected broker data and fresh verified quote", () => {
+  const broker = {
+    connected: true, accountLogin: 111222, accountName: "Test Broker", accountMode: "LIVE",
+    balance: 900, equity: 850, freeMargin: 600, profit: -50,
+    brokerSymbol: "XAUUSD.G", availableGoldSymbols: ["XAUUSD.G"], server: "Example-Live",
+    currency: "USD", bid: 4000.12, ask: 4000.23, spreadPoints: 11,
+    quoteFresh: true, quoteAgeSeconds: 2, timestamp: 1795140000000,
+  };
+  const ok = getV6BrokerStatusEvidence(broker);
+  assert.equal(ok.accountDataStatus, "BROKER_VALUES_PRESENT");
+  assert.equal(ok.quoteDataStatus, "BROKER_QUOTE_FRESH");
+  assert.equal(ok.accountBalance, 900);
+  assert.equal(ok.accountEquity, 850);
+  assert.equal(ok.accountFreeMargin, 600);
+  assert.equal(ok.accountProfit, -50);
+  assert.equal(ok.accountMode, "live");
+  assert.equal(ok.quote.bid, 4000.12);
+  assert.equal(ok.quote.timestamp, 1795140000000);
+
+  const malformed = getV6BrokerStatusEvidence({
+    ...broker, balance: "900", equity: NaN, freeMargin: undefined,
+    profit: Infinity, quoteAgeSeconds: 61,
+  });
+  assert.equal(malformed.accountDataStatus, "PARTIAL_UNVERIFIED");
+  for (const key of ["accountBalance", "accountEquity", "accountFreeMargin", "accountProfit"]) {
+    assert.equal(malformed[key], null);
+  }
+  assert.equal(malformed.quote, null);
+  for (const variation of [
+    { quoteFresh: false }, { quoteAgeSeconds: -12 }, { bid: -1 },
+    { ask: 3999 }, { spreadPoints: null }, { brokerSymbol: "" },
+  ]) {
+    assert.equal(getV6BrokerStatusEvidence({ ...broker, ...variation }).quote, null);
+  }
+});
+
+test("backtest never silently substitutes capital from a disconnected MT5 or canned account", () => {
+  const endpoint = server.slice(server.indexOf('if (pathname === "/api/v1/mt5/run-backtest"'),
+    server.indexOf('const btRes = probe?.actionResult;'));
+  assert.match(endpoint, /readExplicitBacktestStartingBalance\(body\.startingBalance\)/);
+  assert.match(endpoint, /EXPLICIT_BACKTEST_BALANCE_REQUIRED/);
+  assert.match(endpoint, /startingBalance,/);
+  for (const invalid of [undefined, null, NaN, Infinity, -100, 0, "500", true, {}]) {
+    assert.equal(readExplicitBacktestStartingBalance(invalid), null);
+  }
+  assert.equal(readExplicitBacktestStartingBalance(500), 500);
+  assert.equal(readExplicitBacktestStartingBalance(12000.50), 12000.50);
 });
