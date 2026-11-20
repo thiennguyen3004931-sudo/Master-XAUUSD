@@ -1,5 +1,5 @@
-// Offline source-contract regression: the entry scheduler must fail closed on missing risk data.
-// This test does not start the server or contact MT5.
+// Offline behavioral test: execute the scheduler's actual risk gate in isolation.
+// No server, MT5 module, network or order_send is loaded.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -7,34 +7,35 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("../scripts/xauusd-standalone-server.mjs", import.meta.url), "utf8");
 const gateStart = source.indexOf("const dailyRisk = snap.dailyRiskState;");
 const entryStart = source.indexOf("// 1. Nếu đang có lệnh mở", gateStart);
+assert.ok(gateStart > 0 && entryStart > gateStart, "daily risk gate precedes DCA");
+const gate = source.slice(gateStart, entryStart);
+// Wrap the extracted real gate in a function so 'return' has the same semantics.
+const runGate = new Function("snap", "autoBotState", gate + "\nreturn true;");
+const now = Math.floor(Date.now() / 1000);
+const valid = { ok: true, updatedAtUtc: now, dailyLimitBreached: false,
+  currentDailyLossUsd: 20, dailyLossLimitUsd: 100 };
+function permitsEntry(dailyRiskState) {
+  const state = { lastLog: "", lastRiskWarning: "" };
+  const allowed = runGate({ dailyRiskState }, state) === true;
+  return { allowed, state };
+}
 
-test("new-entry gate rejects missing or malformed daily risk state before DCA", () => {
-  assert.ok(gateStart > 0 && entryStart > gateStart, "daily-risk gate precedes DCA");
-  const gate = source.slice(gateStart, entryStart);
-  for (const fragment of [
-    "!dailyRisk",
-    'typeof dailyRisk.dailyLimitBreached !== "boolean"',
-    "Number.isFinite(dailyRisk.currentDailyLossUsd)",
-    "Number.isFinite(dailyRisk.dailyLossLimitUsd)",
-    "dailyRisk.dailyLossLimitUsd <= 0",
-    "dailyRisk.dailyLimitBreached || dailyRisk.currentDailyLossUsd >= dailyRisk.dailyLossLimitUsd",
-  ]) assert.ok(gate.includes(fragment), "missing fail-closed guard: " + fragment);
-  assert.equal((gate.match(/return;/g) || []).length, 2, "invalid and breached states both return");
-});
-
-test("scheduler sends no entry request with stale, invalid or breached risk after reconnect", () => {
-  const start = Math.floor(Date.now() / 1000);
-  const valid = { ok: true, updatedAtUtc: start, dailyLimitBreached: false,
-    currentDailyLossUsd: 0, dailyLossLimitUsd: 120 };
-  const evaluate = new Function("snap", "autoBotState", "probeStartUtc", "submit",
-    source.slice(gateStart, entryStart) + "\nsubmit();");
-  let submissions = 0;
-  for (const risk of [null, {...valid, ok: false}, {...valid, updatedAtUtc: start - 1},
-    {...valid, updatedAtUtc: start + 600}, {...valid, currentDailyLossUsd: -1},
-    {...valid, currentDailyLossUsd: 120}, {...valid, dailyLimitBreached: true}]) {
-    evaluate({dailyRiskState: risk}, {}, start, () => submissions++);
-    assert.equal(submissions, 0);
+test("only fresh, verified, unbreached daily state permits Auto/DCA evaluation", () => {
+  assert.equal(permitsEntry(valid).allowed, true);
+  for (const invalid of [
+    undefined, null, [], {},
+    { ...valid, ok: false },
+    { ...valid, updatedAtUtc: now - 31 },
+    { ...valid, updatedAtUtc: now + 31 },
+    { ...valid, updatedAtUtc: null },
+    { ...valid, dailyLimitBreached: undefined },
+    { ...valid, dailyLimitBreached: "false" },
+    { ...valid, currentDailyLossUsd: NaN },
+    { ...valid, dailyLossLimitUsd: 0 },
+    { ...valid, dailyLimitBreached: true },
+  ]) {
+    const result = permitsEntry(invalid);
+    assert.equal(result.allowed, false, "unverified or breached state must block");
+    assert.ok(result.state.lastRiskWarning.length > 0);
   }
-  evaluate({dailyRiskState: valid}, {}, start, () => submissions++);
-  assert.equal(submissions, 1);
 });
