@@ -13,6 +13,8 @@ const coreFiles = [
   "scripts/xauusd_v6_trade_rules.py",
   "scripts/xauusd-standalone-server.mjs",
   "scripts/v6-api-input-guards.mjs",
+  "scripts/v6-execution-sizing-disclosure.mjs",
+  "scripts/v6-broker-status-evidence.mjs",
   "scripts/test-v6-live-readiness-observer-source.mjs",
   "scripts/run-mt5-demo-integration.py",
   "scripts/verify-windows-mt5-readonly.py",
