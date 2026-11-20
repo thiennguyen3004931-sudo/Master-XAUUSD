@@ -1458,6 +1458,9 @@ function startV6BackgroundMonitor() {
           dailyRisk.ok !== true || !Number.isInteger(dailyRisk.updatedAtUtc) ||
           dailyRisk.updatedAtUtc < probeStartUtc || dailyRisk.updatedAtUtc > Math.floor(Date.now() / 1000) ||
           dailyRisk.currentDailyLossUsd < 0 ||
+          dailyRisk.ok !== true ||
+          !Number.isSafeInteger(dailyRisk.updatedAtUtc) ||
+          Math.abs(Date.now() / 1000 - dailyRisk.updatedAtUtc) > 30 ||
           typeof dailyRisk.dailyLimitBreached !== "boolean" ||
           !Number.isFinite(dailyRisk.currentDailyLossUsd) ||
           !Number.isFinite(dailyRisk.dailyLossLimitUsd) ||
