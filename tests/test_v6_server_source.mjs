@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { getV6ExecutionSizingDisclosure } from "../scripts/v6-execution-sizing-disclosure.mjs";
+import { getV6BrokerStatusEvidence, readExplicitBacktestStartingBalance } from "../scripts/v6-broker-status-evidence.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const server = readFileSync(resolve(root, "scripts/xauusd-standalone-server.mjs"), "utf8");
@@ -159,4 +160,127 @@ test("V6 disclosure never invents a verified lot for corrupt or missing settings
   assert.equal(unverified.configuredLotValidInLocalConfig, false);
   assert.equal(unverified.configuredLot, null);
   assert.equal(unverified.verificationScope, "SOURCE_POLICY_NOT_DEPLOYED_RUNTIME_OR_BROKER_PROOF");
+});
+
+test("V6 disconnected status must not expose placeholder or previously observed account/quote (#80)", () => {
+  for (const raw of [
+    null, undefined, {}, { connected: "true", balance: 9999, bid: 4000 },
+    { connected: false, balance: 4131.83, equity: 4131.83, freeMargin: 4000,
+      profit: 220, accountLogin: 1234567, brokerSymbol: "XAUUSD.G",
+      bid: 4678.96, ask: 4679.16, quoteFresh: true, quoteAgeSeconds: 1 },
+  ]) {
+    const evidence = getV6BrokerStatusEvidence(raw);
+    assert.equal(evidence.connected, false);
+    assert.equal(evidence.dataStatus, "BROKER_UNAVAILABLE");
+    for (const key of ["accountLogin", "accountBalance", "accountEquity", "accountFreeMargin",
+      "accountProfit", "accountMode", "brokerSymbol", "brokerObservedAtMs"]) {
+      assert.equal(evidence[key], null, key);
+    }
+    assert.equal(evidence.quote, null);
+    assert.deepEqual(evidence.availableGoldSymbols, []);
+  }
+  assert.doesNotMatch(server, /lastKnownAccountMetrics|4131\.83|4678\.96|4679\.16/);
+  assert.match(server, /const brokerEvidence = getV6BrokerStatusEvidence\(probe\)/);
+  assert.match(server, /quote: brokerEvidence\.quote/);
+  assert.match(server, /accountFreeMargin: brokerEvidence\.accountFreeMargin/);
+  assert.match(server, /brokerMarketFresh && probe\?\.mtfAnalysis/);
+  assert.match(server, /tradingEnabled: brokerMarketFresh/);
+  assert.match(server, /entrySignal: brokerMarketFresh/);
+  assert.match(server, /positions: brokerSnapshotCurrent/);
+  assert.match(server, /entrySignal: brokerMarketFresh/);
+});
+
+test("V6 broker status accepts only finite connected broker data and fresh verified quote", () => {
+  const broker = {
+    connected: true, accountLogin: 111222, accountName: "Test Broker", accountMode: "LIVE",
+    balance: 900, equity: 850, freeMargin: 600, profit: -50,
+    brokerSymbol: "XAUUSD.G", availableGoldSymbols: ["XAUUSD.G"], server: "Example-Live",
+    currency: "USD", bid: 4000.12, ask: 4000.23, spreadPoints: 11,
+    quoteFresh: true, quoteAgeSeconds: 2, timestamp: 1795140000000,
+  };
+  const now = broker.timestamp + 2000;
+  const ok = getV6BrokerStatusEvidence(broker, now);
+  assert.equal(ok.accountDataStatus, "BROKER_VALUES_PRESENT");
+  assert.equal(ok.quoteDataStatus, "BROKER_QUOTE_FRESH");
+  assert.equal(ok.accountBalance, 900);
+  assert.equal(ok.accountEquity, 850);
+  assert.equal(ok.accountFreeMargin, 600);
+  assert.equal(ok.accountProfit, -50);
+  assert.equal(ok.accountMode, "live");
+  assert.equal(ok.quote.bid, 4000.12);
+  assert.equal(ok.quote.timestamp, 1795140000000);
+
+  const malformed = getV6BrokerStatusEvidence({
+    ...broker, balance: "900", equity: NaN, freeMargin: undefined,
+    profit: Infinity, quoteAgeSeconds: 61,
+  }, now);
+  assert.equal(malformed.accountDataStatus, "PARTIAL_UNVERIFIED");
+  for (const key of ["accountBalance", "accountEquity", "accountFreeMargin", "accountProfit"]) {
+    assert.equal(malformed[key], null);
+  }
+  assert.equal(malformed.quote, null);
+  for (const variation of [
+    { quoteFresh: false }, { quoteAgeSeconds: -12 }, { bid: -1 },
+    { ask: 3999 }, { spreadPoints: null }, { brokerSymbol: "" },
+  ]) {
+    assert.equal(getV6BrokerStatusEvidence({ ...broker, ...variation }, now).quote, null);
+  }
+});
+
+test("backtest never silently substitutes capital from a disconnected MT5 or canned account", () => {
+  const endpoint = server.slice(server.indexOf('if (pathname === "/api/v1/mt5/run-backtest"'),
+    server.indexOf('const btRes = probe?.actionResult;'));
+  assert.match(endpoint, /readExplicitBacktestStartingBalance\(body\.startingBalance\)/);
+  assert.match(endpoint, /EXPLICIT_BACKTEST_BALANCE_REQUIRED/);
+  assert.match(endpoint, /startingBalance,/);
+  for (const invalid of [undefined, null, NaN, Infinity, -100, 0, "500", true, {}]) {
+    assert.equal(readExplicitBacktestStartingBalance(invalid), null);
+  }
+  assert.equal(readExplicitBacktestStartingBalance(500), 500);
+  assert.equal(readExplicitBacktestStartingBalance(12000.50), 12000.50);
+});
+
+test("stale connected broker snapshots cannot masquerade as current account/quote", () => {
+  const oldProbe = {
+    connected: true, timestamp: 1795140000000, accountLogin: 12,
+    balance: 1200, equity: 1200, freeMargin: 1100, profit: 0,
+    bid: 4200, ask: 4200.3, brokerSymbol: "XAUUSD.G",
+    spreadPoints: 30, quoteFresh: true, quoteAgeSeconds: 1,
+  };
+  for (const observedNow of [oldProbe.timestamp + 30001, oldProbe.timestamp - 10001]) {
+    const out = getV6BrokerStatusEvidence(oldProbe, observedNow);
+    assert.equal(out.dataStatus, "STALE_OR_UNTIMESTAMPED_BROKER_SNAPSHOT");
+    assert.equal(out.accountBalance, null);
+    assert.equal(out.quote, null);
+  }
+  const noTime = getV6BrokerStatusEvidence({ ...oldProbe, timestamp: undefined }, oldProbe.timestamp);
+  assert.equal(noTime.dataStatus, "STALE_OR_UNTIMESTAMPED_BROKER_SNAPSHOT");
+  assert.equal(noTime.accountFreeMargin, null);
+});
+
+test("V6 standalone UI clears stale balance and does not calculate Auto Lot from a fake account", () => {
+  const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  const status = ui.slice(ui.indexOf("function applyMt5StatusToUi(data)"),
+    ui.indexOf("let isLiveChartMode = true;"));
+  assert.match(status, /data\.mt5LiveBridgeConnected === true && h\.connected === true/);
+  assert.match(status, /h\.accountDataStatus === "BROKER_VALUES_PRESENT"/);
+  assert.match(status, /window\.__latestAccountBalance = null/);
+  assert.match(status, /lastLiveMt5Payload = null/);
+  const lot = ui.slice(ui.indexOf("function computeLotFromRiskPct(pctVal)"),
+    ui.indexOf("function onManualLotInput()"));
+  assert.match(lot, /if \(!Number\.isFinite\(bal\) \|\| bal <= 0/);
+  assert.match(lot, /if \(calcLot === null\) \{ showUnverifiedAutoLotWarning\(\); return; \}/);
+  assert.doesNotMatch(lot, /4131\.83/);
+  assert.doesNotMatch(status, /DBG Market Limited|5201362/);
+});
+
+test("V6 release manifest covers every direct standalone helper import", () => {
+  const pack = readFileSync(resolve(root, "scripts/package-v6-release.mjs"), "utf8");
+  for (const helper of [
+    "scripts/v6-api-input-guards.mjs",
+    "scripts/v6-execution-sizing-disclosure.mjs",
+    "scripts/v6-broker-status-evidence.mjs",
+  ]) {
+    assert.ok(pack.includes(JSON.stringify(helper)), "missing release manifest dependency: " + helper);
+  }
 });
