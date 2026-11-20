@@ -35,7 +35,7 @@ def main():
         "botRoot": str(root),
         "deployedCommitSha": git_sha,
         "mt5ReadOnlyVerified": False,
-        "liveArmed": False,
+        "liveArmed": None,  # Not checked by this read-only broker probe; do not assert DISARMED\n        "liveAuthorization": "NOT_GRANTED",\n        "readinessClassification": "LIVE_BLOCKED",\n        "operatingProcessVerified": False,\n        "riskControlsVerified": False,
         "checks": {},
         "ownerActionRequired": [],
     }
@@ -96,7 +96,7 @@ def main():
             result["checks"]["terminalConnected"] and gold_sym and positions is not None and orders is not None
         )
         result["ok"] = result["mt5ReadOnlyVerified"]
-        result["status"] = "RUNTIME_VERIFIED" if result["ok"] else "BLOCKED"
+        result["status"] = "BROKER_READONLY_OBSERVED" if result["ok"] else "BLOCKED"\n        # Probe of the MT5 Python session is not proof of the active V6\n        # gateway process, its ARM state, deployed SHA or loss controls.\n        # Therefore LIVE authorization remains explicitly blocked.
     finally:
         mt5.shutdown()
 
