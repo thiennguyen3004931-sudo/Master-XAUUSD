@@ -284,3 +284,16 @@ test("V6 release manifest covers every direct standalone helper import", () => {
     assert.ok(pack.includes(JSON.stringify(helper)), "missing release manifest dependency: " + helper);
   }
 });
+
+test("V6 Web chart hides missing H4/M15 evidence rather than drawing sample candles (#82)", () => {
+  const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  const chart = ui.slice(ui.indexOf("function renderLiveMt5DataOnDashboard("));
+  assert.match(chart, /data\.mtfAnalysis\?\.dataStatus === "BROKER_CANDLE_BASIS"/);
+  assert.match(chart, /hasVerifiedMtfDisplay && \(hasExecutableScenario \|\| hasNativeStops\)/);
+  assert.match(chart, /parsedCandles = \[\];/);
+  assert.match(chart, /MT5 DATA_UNAVAILABLE — không vẽ nến\/SL\/TP giả định/);
+  assert.doesNotMatch(chart, /liveBid \+ 18\.0|liveBid - 18\.0/);
+  assert.doesNotMatch(chart, /\[liveBid - 4\.2, liveBid - 1\.5/);
+  assert.match(ui, /window\.__liveMatchedPatternId = null/);
+  assert.match(ui, /mt5PatternVerified \? '● Đang khớp MT5/);
+});

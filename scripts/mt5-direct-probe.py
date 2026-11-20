@@ -924,9 +924,66 @@ def calc_ema(values, period):
     return round(ema_val, 2)
 
 
+def _verified_display_candles(bars, minimum):
+    """Require real OHLC bars including a forming bar, leaving enough closed bars to analyze."""
+    if not isinstance(bars, (list, tuple)) or len(bars) < minimum:
+        return False
+    try:
+        for bar in bars[-minimum:]:
+            if not isinstance(bar, (list, tuple)) or len(bar) < 4:
+                return False
+            op, hi, lo, cl = map(float, bar[:4])
+            if not all(isfinite(v) and v > 0 for v in (op, hi, lo, cl)):
+                return False
+            if hi < max(op, cl) or lo > min(op, cl) or lo > hi:
+                return False
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
+def _unavailable_mtf_display(reason):
+    """Informational display only: never synthesize market levels or actionable proposals."""
+    return {
+        "updatedAt": int(time.time() * 1000),
+        "status": "DATA_UNAVAILABLE",
+        "dataStatus": "UNVERIFIED_MARKET_EVIDENCE",
+        "waitingForMt5": True,
+        "allowed": False,
+        "currentPrice": None,
+        "marketRegime": "UNKNOWN",
+        "reason": reason,
+        "h4": {"timeframe": "H4", "bias": "WAITING_FOR_MT5", "isBull": False,
+               "ema34": None, "ema89": None, "swingHigh": None, "swingLow": None,
+               "summary": "H4: thiếu nến đóng đã xác minh từ MT5."},
+        "h1": {"timeframe": "H1", "bias": "WAITING_FOR_MT5", "isBull": False,
+               "ema34": None, "demandZone": None, "supplyZone": None,
+               "summary": "H1: thiếu nến đóng đã xác minh từ MT5."},
+        "m15": {"timeframe": "M15", "patternName": "WAITING_FOR_MT5 (NO_TRADE)",
+                "signalSide": "NEUTRAL", "setupScore": None, "confidence": None,
+                "atr": None, "summary": "M15: không tạo tín hiệu khi giá hoặc nến chưa xác minh."},
+        "scenario15m": {"direction": "NEUTRAL", "marketRegime": "UNKNOWN",
+                        "title": "DATA_UNAVAILABLE — NO_TRADE",
+                        "recommendedBot": "NO_TRADE", "entryZone": None,
+                        "stopLoss": None, "beTrigger": None, "tp1": None, "tp2": None,
+                        "tpSource": "UNVERIFIED", "dcaCondition": "BLOCKED_NO_BROKER_EVIDENCE",
+                        "invalidation": reason},
+    }
+
+
 def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_analysis, current_price, entry_signal=None):
-    p = round(float(current_price or 4678.96), 2)
-    es = entry_signal or {}
+    """Display-only MTF summary. Missing broker evidence is explicitly non-actionable."""
+    if not isinstance(current_price, (int, float)) or not isfinite(current_price) or current_price <= 0:
+        return _unavailable_mtf_display("MT5 quote missing, stale or invalid")
+    # The final bar in each timeframe is still forming and must not count as closed.
+    if not (_verified_display_candles(candles_h4, 11) and
+            _verified_display_candles(candles_h1, 11) and
+            _verified_display_candles(candles_m15, 16)):
+        return _unavailable_mtf_display("Insufficient verified closed H4/H1/M15 candles")
+
+    p = round(float(current_price), 2)
+    es = entry_signal if isinstance(entry_signal, dict) else {}
+    live_analysis = live_analysis if isinstance(live_analysis, dict) else {}
     market_regime = str(es.get("marketRegime") or "UNKNOWN")
 
     if candles_h4 and len(candles_h4) >= 10:
@@ -945,12 +1002,7 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
             h4_bull = (es_h4 == "BUY") if es_h4 in ("BUY", "SELL") else (p >= ema34_h4)
             h4_bias = "TĂNG CHỦ ĐẠO (Bullish Structure)" if h4_bull else "GIẢM CHỦ ĐẠO (Bearish Structure)"
     else:
-        ema34_h4 = round(p - 6.5, 2)
-        ema89_h4 = round(p - 18.2, 2)
-        swing_high_h4 = round(p + 24.0, 2)
-        swing_low_h4 = round(p - 21.0, 2)
-        h4_bull = True
-        h4_bias = "TĂNG CHỦ ĐẠO (Trên EMA34/89 H4)"
+        return _unavailable_mtf_display("Missing verified H4 candle history")
 
     if candles_h1 and len(candles_h1) >= 10:
         closes_h1 = [c[3] for c in candles_h1]
@@ -967,16 +1019,17 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
             h1_bull = (es_h1 == "BUY") if es_h1 in ("BUY", "SELL") else (p >= ema34_h1)
             h1_bias = "ĐỒNG PHA TĂNG (Giữ trên vùng Cầu H1)" if h1_bull else "ĐỒNG PHA GIẢM (Dưới vùng Cung H1)"
     else:
-        ema34_h1 = round(p - 3.8, 2)
-        swing_high_h1 = round(p + 11.5, 2)
-        swing_low_h1 = round(p - 9.5, 2)
-        h1_bull = True
-        h1_bias = "ĐỒNG PHA TĂNG (Cấu trúc đáy cao dần)"
+        return _unavailable_mtf_display("Missing verified H1 candle history")
 
-    demand_low = round(max(swing_low_h1, p - 6.5), 2)
-    demand_high = round(demand_low + 2.8, 2)
-    supply_high = round(min(swing_high_h1, p + 9.5), 2)
-    supply_low = round(supply_high - 2.8, 2)
+    # Display-only estimated bands from observed H1 swing extremes, not fabricated price offsets.
+    width_h1 = float(swing_high_h1 - swing_low_h1)
+    if not isfinite(width_h1) or width_h1 <= 0:
+        return _unavailable_mtf_display("H1 range cannot be verified")
+    band_h1 = round(width_h1 * 0.15, 2)
+    demand_low = swing_low_h1
+    demand_high = round(min(swing_high_h1, swing_low_h1 + band_h1), 2)
+    supply_high = swing_high_h1
+    supply_low = round(max(swing_low_h1, swing_high_h1 - band_h1), 2)
 
     es_side = es.get("side")
     es_pref = es.get("preferredSide")
@@ -987,7 +1040,7 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
     else:
         m15_side = "NEUTRAL"
 
-    m15_pat = str(live_analysis.get("patternName") or "12. Hộp Tích Lũy Nén Biên Độ")
+    m15_pat = str(live_analysis.get("patternName") or "CHƯA XÁC MINH MẪU NẾN (NO_TRADE)")
     if m15_side == "SELL" and ("Tăng" in m15_pat or "Bullish" in m15_pat):
         m15_pat = "10. Cờ Giảm Tiếp Diễn (Bearish Flag)"
     elif m15_side == "BUY" and ("Giảm" in m15_pat or "Bearish" in m15_pat):
@@ -995,18 +1048,51 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
     elif m15_side == "NEUTRAL":
         m15_pat = "12. Trạng thái Trung Tính / Chuyển Tiếp (Đứng ngoài NO_TRADE)"
 
-    m15_score = int(es.get("setupScore") or live_analysis.get("setupScore") or live_analysis.get("confidence") or 85)
-    m15_atr = float(live_analysis.get("atr") or 4.5)
+    score_candidate = es.get("setupScore") or live_analysis.get("setupScore") or live_analysis.get("confidence")
+    try:
+        score_candidate = float(score_candidate) if score_candidate is not None else 0.0
+        m15_score = max(0, min(100, int(score_candidate))) if isfinite(score_candidate) else 0
+    except (TypeError, ValueError, OverflowError):
+        m15_score = 0
 
-    is_buy_plan = (m15_side != "SELL")
-    entry_low = round(p - 1.2 if is_buy_plan else p - 0.5, 2)
-    entry_high = round(p + 0.5 if is_buy_plan else p + 1.2, 2)
-    plan_sl_dist = max(MIN_STRUCTURAL_SL_DIST, min(MAX_STRUCTURAL_SL_DIST, round(m15_atr * 1.25, 2)))
-    sl_price = round(float(es.get("sl") or (p - plan_sl_dist if is_buy_plan else p + plan_sl_dist)), 2)
-    actual_r = round(abs(p - sl_price), 2) or 6.8
-    be_price = round(p + actual_r if is_buy_plan else p - actual_r, 2)
-    tp1_price = round(p + round(actual_r * 1.6, 2) if is_buy_plan else p - round(actual_r * 1.6, 2), 2)
-    tp2_price = round(float(es.get("tp") or (p + round(actual_r * 2.2, 2) if is_buy_plan else p - round(actual_r * 2.2, 2))), 2)
+    # Derive ATR solely from actual closed M15 candles when upstream analytics omit it.
+    try:
+        atr_candidate = float(live_analysis.get("atr") or 0)
+    except (TypeError, ValueError, OverflowError):
+        atr_candidate = 0.0
+    if not isfinite(atr_candidate) or atr_candidate <= 0:
+        closed_m15 = closed(candles_m15)
+        true_ranges = []
+        for i in range(max(1, len(closed_m15) - 14), len(closed_m15)):
+            h, l, prev_close = (float(closed_m15[i][1]), float(closed_m15[i][2]),
+                                float(closed_m15[i - 1][3]))
+            true_ranges.append(max(h - l, abs(h - prev_close), abs(l - prev_close)))
+        atr_candidate = sum(true_ranges) / len(true_ranges) if true_ranges else 0.0
+    if not isfinite(atr_candidate) or atr_candidate <= 0:
+        return _unavailable_mtf_display("M15 ATR cannot be derived from verified candles")
+    m15_atr = round(atr_candidate, 4)
+
+    # Display a trade plan only if a separate canonical entry decision supplied
+    # verified SL/TP on the correct side of the actual broker price.
+    try:
+        canonical_sl = float(es.get("sl"))
+        canonical_tp = float(es.get("tp"))
+    except (TypeError, ValueError, OverflowError):
+        canonical_sl, canonical_tp = None, None
+    signal_verified = (
+        es.get("allowed") is True and es.get("side") in ("BUY", "SELL") and
+        canonical_sl is not None and canonical_tp is not None and
+        isfinite(canonical_sl) and isfinite(canonical_tp) and
+        ((canonical_sl < p < canonical_tp) if es["side"] == "BUY"
+         else (canonical_tp < p < canonical_sl))
+    )
+    entry_zone = f"{p:.2f}" if signal_verified else None
+    sl_price = round(canonical_sl, 2) if signal_verified else None
+    tp2_price = round(canonical_tp, 2) if signal_verified else None
+    actual_r = round(abs(p - sl_price), 2) if signal_verified else None
+    is_buy_plan = es.get("side") == "BUY"
+    be_price = round(p + actual_r if is_buy_plan else p - actual_r, 2) if signal_verified else None
+    tp1_price = round(p + actual_r * 1.6 if is_buy_plan else p - actual_r * 1.6, 2) if signal_verified else None
 
     now_sec = int(time.time())
     next_15m_boundary = ((now_sec // 900) + 1) * 900
@@ -1023,6 +1109,10 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
     return {
         "updatedAt": int(time.time() * 1000),
         "nextUpdateInSec": rem_sec,
+        "status": "BROKER_CANDLE_BASIS",
+        "dataStatus": "BROKER_CANDLE_BASIS",
+        "waitingForMt5": False,
+        "allowed": bool(signal_verified),
         "currentPrice": p,
         "marketRegime": market_regime,
         "h4": {
@@ -1042,7 +1132,7 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
             "ema34": ema34_h1,
             "demandZone": f"{demand_low} – {demand_high}",
             "supplyZone": f"{supply_low} – {supply_high}",
-            "summary": f"EMA34 H1: {ema34_h1} · Vùng Cầu (Demand): {demand_low}–{demand_high} · Vùng Cung (Supply): {supply_low}–{supply_high}."
+            "summary": f"EMA34 H1: {ema34_h1} · Dải biên ước lượng 15% khoảng H1 (không phải vùng cung/cầu xác nhận): {demand_low}–{demand_high} và {supply_low}–{supply_high}."
         },
         "m15": {
             "timeframe": "M15",
@@ -1055,21 +1145,19 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
             "summary": f"Trạng thái: {market_regime} · Mẫu nến: {m15_pat} (Điểm setup: {m15_score}/100) · Hướng: {m15_side} · ATR(M15): ${m15_atr}."
         },
         "scenario15m": {
-            "direction": m15_side,
+            "direction": m15_side if signal_verified else "NEUTRAL",
             "marketRegime": market_regime,
-            "title": (
-                f"TRẠNG THÁI {market_regime}: ĐỨNG NGOÀI (NO_TRADE)"
-                if m15_side == "NEUTRAL"
-                else f"TRẠNG THÁI {market_regime}: THEO DÕI {m15_side} (SL 6–8 GIÁ & KIỂM TRA CẢN GẦN)"
-            ),
-            "recommendedBot": rec_bot_map.get(market_regime, "Bot 1: Tự Động Theo Trạng Thái Thị Trường"),
-            "entryZone": f"{entry_low} – {entry_high}",
+            "title": (f"TRẠNG THÁI {market_regime}: THEO DÕI {m15_side} (Có SL/TP từ bộ vào lệnh)"
+                      if signal_verified else "KHÔNG CÓ TÍN HIỆU ĐỦ ĐIỀU KIỆN — NO_TRADE"),
+            "recommendedBot": rec_bot_map.get(market_regime, "NO_TRADE") if signal_verified else "NO_TRADE",
+            "entryZone": entry_zone,
             "stopLoss": sl_price,
             "beTrigger": be_price,
             "tp1": tp1_price,
             "tp2": tp2_price,
-            "tpSource": es.get("tpSource", "FALLBACK_FIXED_RR_OPEN_AIR"),
-            "dcaCondition": f"Chỉ nhồi DCA Dương khi lệnh đầu ({p}) ĐÃ KÉO SL VỀ BE 1R ({be_price}), đang Dương, không có cảnh báo đối soát, tổng rủi ro <= 1.5% và có nến M15 mới đóng cùng chiều.",
+            "tpSource": es.get("tpSource") if signal_verified else "UNVERIFIED",
+            "dcaCondition": (f"DCA chỉ được đánh giá sau khi tín hiệu thực khớp và đã kéo BE 1R ({be_price}); tuân thủ cổng rủi ro riêng."
+                             if signal_verified else "BLOCKED_NO_VERIFIED_SIGNAL"),
             "invalidation": f"Nếu SL cấu trúc > 8.0 giá -> WAIT_PULLBACK; nếu vướng cản gần H1/H4 không đủ R:R ròng -> NO_TRADE."
         }
     }
@@ -5186,7 +5274,7 @@ def main():
         "quoteAgeSeconds": round(sig_age, 2),
         "liveAnalysis": live_analysis,
         "entrySignal": entry_signal,
-        "mtfAnalysis": analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles, live_analysis, bid if bid > 0 else (candles[-1][3] if candles else 4678.96), entry_signal),
+        "mtfAnalysis": analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles, live_analysis, bid if fresh_sig_ok and bid > 0 else None, entry_signal),
         "candles": candles,
         "openPositions": open_positions,
         "recentTrades": recent_trades,
