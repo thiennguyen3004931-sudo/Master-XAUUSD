@@ -23,6 +23,7 @@ import { spawn, execFile, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseRequiredTicket, parseOptionalBoolean } from "./v6-api-input-guards.mjs";
 import { getV6ExecutionSizingDisclosure } from "./v6-execution-sizing-disclosure.mjs";
+import { getV6BrokerStatusEvidence, readExplicitBacktestStartingBalance } from "./v6-broker-status-evidence.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -833,14 +834,6 @@ let lastSyncAction = {
   device: "SYSTEM",
   summary: "Khởi tạo V6 ở trạng thái an toàn PAUSE & DISARMED (liveArmed=false, autoBot=false, DCA=false)",
   timestamp: Date.now(),
-};
-
-let lastKnownAccountMetrics = {
-  balance: 4131.83,
-  equity: 4131.83,
-  profit: 0.0,
-  bid: 4678.96,
-  ask: 4679.16,
 };
 
 // MÃ HÓA BẢO MẬT AES-256-GCM CHO TELEGRAM BOT TOKEN (KHÔNG LƯU VĂN BẢN THUẦN TRONG MÃ NGUỒN HOẶC FILE CẤU HÌNH)
@@ -1785,7 +1778,8 @@ function readJsonBody(req) {
 
 function buildStatusPayload(probe) {
   readSavedTunnelUrl();
-  const isConnected = Boolean(probe?.connected);
+  const brokerEvidence = getV6BrokerStatusEvidence(probe);
+  const isConnected = brokerEvidence.connected;
   if (isConnected) {
     if (probe.accountMode === "LIVE" || probe.accountMode === "DEMO") {
       currentAccountConfig.accountMode = probe.accountMode;
@@ -1793,20 +1787,22 @@ function buildStatusPayload(probe) {
     if (probe.server) {
       currentAccountConfig.server = probe.server;
     }
-    if (probe.balance !== undefined && probe.balance !== null) lastKnownAccountMetrics.balance = Number(probe.balance);
-    if (probe.equity !== undefined && probe.equity !== null) lastKnownAccountMetrics.equity = Number(probe.equity);
-    if (probe.profit !== undefined && probe.profit !== null) lastKnownAccountMetrics.profit = Number(probe.profit);
-    if (probe.bid > 0) lastKnownAccountMetrics.bid = Number(probe.bid);
-    if (probe.ask > 0) lastKnownAccountMetrics.ask = Number(probe.ask);
   }
   const armGate = getCanonicalLiveArmState(probe);
-  const activeBid = isConnected && probe?.bid > 0 ? Number(probe.bid) : lastKnownAccountMetrics.bid;
-  const mtfAnalysis = probe?.mtfAnalysis || buildFallbackMtfAnalysis(activeBid);
+  const mtfAnalysis = isConnected && probe?.mtfAnalysis
+    ? probe.mtfAnalysis : buildFallbackMtfAnalysis(null);
   const ips = getLanIps();
   return {
     status: "ok",
     reachable: true,
     mt5LiveBridgeConnected: isConnected,
+    brokerEvidenceStatus: {
+      dataStatus: brokerEvidence.dataStatus,
+      accountDataStatus: brokerEvidence.accountDataStatus,
+      quoteDataStatus: brokerEvidence.quoteDataStatus,
+      brokerObservedAtMs: brokerEvidence.brokerObservedAtMs,
+      note: "Status reports only validated MT5 probe values; local HTTP response time does not attest broker quote freshness.",
+    },
     syncRevision,
     lastSyncAction,
     liveArmStatus: armGate,
@@ -1863,34 +1859,29 @@ function buildStatusPayload(probe) {
       tradingEnabled: isConnected && (probe?.accountMode === "DEMO" || armGate.liveArmed),
       terminalTradeAllowed: probe?.terminalTradeAllowed ?? false,
       expertTradeAllowed: probe?.expertTradeAllowed ?? false,
-      accountLogin: isConnected ? probe.accountLogin : Number(currentAccountConfig.login || 5201362),
-      accountName: isConnected ? probe.accountName : "",
-      accountMode: isConnected ? probe.accountMode.toLowerCase() : currentAccountConfig.accountMode.toLowerCase(),
-      configuredAccountMode: isConnected ? probe.accountMode : currentAccountConfig.accountMode,
+      accountLogin: brokerEvidence.accountLogin,
+      accountName: brokerEvidence.accountName || "",
+      accountMode: brokerEvidence.accountMode || "unknown",
+      configuredAccountMode: currentAccountConfig.accountMode,
+      configuredBrokerSymbol: currentAccountConfig.brokerSymbol || null,
       liveExecutionArmed: armGate.liveArmed,
-      accountBalance: isConnected ? probe.balance : lastKnownAccountMetrics.balance,
-      accountEquity: isConnected ? probe.equity : lastKnownAccountMetrics.equity,
-      accountFreeMargin: isConnected ? probe.freeMargin : lastKnownAccountMetrics.equity,
-      accountProfit: isConnected ? probe.profit : lastKnownAccountMetrics.profit,
-      accountCurrency: isConnected ? probe.currency : "USD",
-      server: isConnected ? probe.server : currentAccountConfig.server,
-      brokerSymbol: isConnected ? probe.brokerSymbol : (currentAccountConfig.brokerSymbol || "XAUUSD.G"),
-      availableGoldSymbols: probe?.availableGoldSymbols || ["XAUUSD.G", "XAUUSD"],
-      timestamp: Date.now(),
+      accountBalance: brokerEvidence.accountBalance,
+      accountEquity: brokerEvidence.accountEquity,
+      accountFreeMargin: brokerEvidence.accountFreeMargin,
+      accountProfit: brokerEvidence.accountProfit,
+      accountCurrency: brokerEvidence.accountCurrency,
+      server: brokerEvidence.server,
+      brokerSymbol: brokerEvidence.brokerSymbol,
+      availableGoldSymbols: brokerEvidence.availableGoldSymbols,
+      accountDataStatus: brokerEvidence.accountDataStatus,
+      quoteDataStatus: brokerEvidence.quoteDataStatus,
+      timestamp: brokerEvidence.brokerObservedAtMs,
     },
-    quote:
-      isConnected && probe.bid > 0
-        ? {
-            symbol: "XAUUSD",
-            brokerSymbol: probe.brokerSymbol,
-            bid: probe.bid,
-            ask: probe.ask,
-            spreadPoints: probe.spreadPoints,
-            timestamp: Date.now(),
-          }
-        : null,
-    liveAnalysis: probe?.liveAnalysis || null,
-    entrySignal: probe?.entrySignal || { allowed: false, side: "WAIT", reason: "MT5 not connected" },
+    quote: brokerEvidence.quote,
+    liveAnalysis: isConnected ? (probe?.liveAnalysis || null) : null,
+    entrySignal: isConnected
+      ? (probe?.entrySignal || { allowed: false, side: "WAIT", reason: "MT5 signal unavailable" })
+      : { allowed: false, side: "WAIT", reason: "MT5 not connected" },
     candles: isConnected && Array.isArray(probe.candles) ? probe.candles : [],
     positions: isConnected && Array.isArray(probe.openPositions) ? probe.openPositions : [],
     recentTrades: isConnected && Array.isArray(probe.recentTrades) ? probe.recentTrades : [],
@@ -2515,6 +2506,14 @@ export async function handleApiRequest(req, res) {
   if (pathname === "/api/v1/mt5/run-backtest" && req.method === "POST") {
     const body = await readJsonBody(req);
     const reqMode = String(body.strategyMode || autoBotState.configuredStrategyMode || "AUTO_REGIME");
+    const startingBalance = readExplicitBacktestStartingBalance(body.startingBalance);
+    if (startingBalance === null) {
+      sendJson(res, 422, {
+        ok: false, error: "EXPLICIT_BACKTEST_BALANCE_REQUIRED",
+        message: "Backtest cần số vốn giả định dương do người dùng nhập; không tự điền số dư MT5 chưa xác minh hoặc vốn mẫu.",
+      }, req);
+      return;
+    }
     const probe = await invokeMt5PythonEngine(
       {
         action: "run_backtest",
@@ -2525,7 +2524,7 @@ export async function handleApiRequest(req, res) {
         enableM5StructuralTrail: body.enableM5StructuralTrail !== undefined ? Boolean(body.enableM5StructuralTrail) : true,
         enablePeakLock: body.enablePeakLock !== undefined ? Boolean(body.enablePeakLock) : true,
         volume: Number(body.volume ?? getCanonicalFixedLot()),
-        startingBalance: Number(body.startingBalance || lastKnownAccountMetrics.balance || 4131.83),
+        startingBalance,
       },
       true
     );
