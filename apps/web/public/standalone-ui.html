@@ -843,7 +843,7 @@
                 <span>Tài khoản MT5 đang vận hành</span>
                 <span class="badge badge-up" id="dashAccModeBadge">LIVE · #5201362</span>
               </div>
-              <div class="metric-value text-up" id="dashEquityVal">$4,131.83</div>
+              <div class="metric-value" id="dashEquityVal">Chưa có dữ liệu MT5</div>
               <div class="metric-foot" id="dashAccSub">Số dư: <b>$4,131.83</b> · Mã: <span class="text-accent">XAUUSD.G</span></div>
             </div>
           </div>
@@ -1155,9 +1155,9 @@
                   <div class="kv-row"><span class="kv-key">Số tài khoản (Login)</span><span class="kv-val" id="infoLogin">#5201362</span></div>
                   <div class="kv-row"><span class="kv-key">Chế độ vận hành</span><span class="kv-val text-accent" id="infoMode">LIVE (Tài khoản thật)</span></div>
                   <div class="kv-row"><span class="kv-key">Ký hiệu mã Vàng sàn</span><span class="kv-val text-accent" id="infoSymbol">XAUUSD.G</span></div>
-                  <div class="kv-row"><span class="kv-key">Số dư (Balance)</span><span class="kv-val text-up" id="infoBalance">$4,131.83 USD</span></div>
-                  <div class="kv-row"><span class="kv-key">Vốn khả dụng (Equity)</span><span class="kv-val text-up" id="infoEquity">$4,131.83 USD</span></div>
-                  <div class="kv-row"><span class="kv-key">Lợi nhuận đang mở</span><span class="kv-val" id="infoProfit">0.00 USD</span></div>
+                  <div class="kv-row"><span class="kv-key">Số dư (Balance)</span><span class="kv-val" id="infoBalance">— Chưa xác minh</span></div>
+                  <div class="kv-row"><span class="kv-key">Vốn khả dụng (Equity)</span><span class="kv-val" id="infoEquity">— Chưa xác minh</span></div>
+                  <div class="kv-row"><span class="kv-key">Lợi nhuận đang mở</span><span class="kv-val" id="infoProfit">— Chưa xác minh</span></div>
                 </div>
               </div>
               <div style="padding-top:10px;margin-top:10px;border-top:1px solid var(--border)">
@@ -2512,11 +2512,11 @@ Branch : main
     function applyMt5StatusToUi(data) {
       if (!data || !data.health) return;
       const h = data.health;
-      const connected = Boolean(data.mt5LiveBridgeConnected);
-      const mode = String(h.configuredAccountMode || "LIVE").toUpperCase();
-      const login = h.accountLogin || "5201362";
-      const srv = h.server || "DBG Market Limited";
-      const sym = h.brokerSymbol || "XAUUSD.G";
+      const connected = data.mt5LiveBridgeConnected === true && h.connected === true;
+      const mode = String(h.configuredAccountMode || "UNKNOWN").toUpperCase();
+      const login = connected && Number.isSafeInteger(h.accountLogin) ? h.accountLogin : "—";
+      const srv = connected && h.server ? h.server : "Chưa xác minh MT5";
+      const sym = h.brokerSymbol || h.configuredBrokerSymbol || "XAUUSD";
       activeBrokerSymbol = sym;
 
       if (data.lanIp) {
@@ -2526,7 +2526,8 @@ Branch : main
 
       document.getElementById("chartSymbolTitle").textContent = sym;
       document.getElementById("execSymbolBadge").textContent = sym;
-      document.getElementById("headerAccountBadge").textContent = `${mode} · #${login} (${sym})`;
+      document.getElementById("headerAccountBadge").textContent = connected
+        ? `${mode} · #${login} (${sym})` : `CẤU HÌNH ${mode} · MT5 CHƯA KẾT NỐI`;
       document.getElementById("navModeTag").textContent = mode;
       document.getElementById("infoServer").textContent = srv;
       document.getElementById("infoLogin").textContent = "#" + login;
@@ -2664,7 +2665,9 @@ Branch : main
       }
 
       const dotEl = document.getElementById("sidebarConnDot");
-      if (h.accountBalance !== null && h.accountBalance !== undefined) {
+      const verifiedAccount = connected && h.accountDataStatus === "BROKER_VALUES_PRESENT" &&
+        [h.accountBalance, h.accountEquity, h.accountFreeMargin, h.accountProfit].every(Number.isFinite);
+      if (verifiedAccount) {
         dotEl.className = "dot dot-up";
         document.getElementById("sidebarConnTitle").textContent = `MT5 ${mode} · Đã kết nối`;
         document.getElementById("sidebarConnSub").textContent = `TK #${login} · ${srv} · ${sym}`;
@@ -2687,14 +2690,33 @@ Branch : main
         pfEl.textContent = `${pf >= 0 ? '+' : ''}${pf.toFixed(2)} ${cur}`;
         pfEl.className = "kv-val " + (pf >= 0 ? "text-up" : "text-down");
 
-        if (data.quote && data.quote.bid > 0) {
+        if (data.quote && data.quote.bid > 0 && h.quoteDataStatus === "BROKER_QUOTE_FRESH") {
           const liveBid = Number(data.quote.bid);
           document.getElementById("livePriceChip").textContent = `${sym} ${liveBid.toFixed(2)}`;
           renderLiveMt5DataOnDashboard(data, liveBid, sym);
           if (!window.__autoBacktestLoadedOnce) {
             window.__autoBacktestLoadedOnce = true;
           }
+        } else {
+          lastLiveMt5Payload = null;
+          document.getElementById("livePriceChip").textContent = `${sym} · Giá MT5 chưa xác minh`;
         }
+      } else {
+        // Clear prior monetary values on disconnect, restart, malformed probe or an unverified account.
+        lastLiveMt5Payload = null;
+        window.__latestAccountBalance = null;
+        dotEl.className = "dot";
+        document.getElementById("sidebarConnTitle").textContent = "MT5 chưa kết nối / chưa xác minh";
+        document.getElementById("sidebarConnSub").textContent = `Cấu hình ${mode} · không có dữ liệu tài khoản hiện tại`;
+        for (const id of ["dashEquityVal", "infoBalance", "infoEquity", "infoProfit"]) {
+          const el = document.getElementById(id);
+          if (el) el.textContent = "— Chưa xác minh MT5";
+        }
+        document.getElementById("cardAccStatusBadge").className = "badge badge-warn";
+        document.getElementById("cardAccStatusBadge").textContent = "MT5 CHƯA XÁC MINH";
+        document.getElementById("dashAccModeBadge").textContent = "CHƯA XÁC MINH MT5";
+        document.getElementById("dashAccSub").textContent = "Số dư, Equity và P/L chưa có dữ liệu broker";
+        document.getElementById("livePriceChip").textContent = `${sym} · Giá MT5 chưa xác minh`;
       }
     }
 
@@ -2719,7 +2741,7 @@ Branch : main
 
 
     let lastUserParamEditTime = 0;
-    window.__latestAccountBalance = 4131.83;
+    window.__latestAccountBalance = null;
     window.__userLockedLot = parseFloat(localStorage.getItem("xauusd_locked_lot") || "0.05") || 0.05;
 
     // Section 4.1: Tách riêng dữ liệu giả lập minh họa giao diện (DỮ LIỆU GIẢ LẬP).
