@@ -202,6 +202,11 @@ class AutoLotShadowTest(unittest.TestCase):
         self.assertNotIn("arm_live", source)
         self.assertNotIn("MetaTrader5", source)
         self.assertNotIn("write_text(", source)
+        live_gateway = (Path(__file__).resolve().parents[1] / "scripts/mt5-direct-probe.py").read_text()
+        standalone = (Path(__file__).resolve().parents[1] / "scripts/xauusd-standalone-server.mjs").read_text()
+        self.assertNotIn("v6_auto_lot_shadow", live_gateway)
+        self.assertNotIn("v6_auto_lot_shadow", standalone)
+        self.assertIn('orderSizingMode: "FIXED_LOT"', (Path(__file__).resolve().parents[1] / "scripts/v6-execution-sizing-disclosure.mjs").read_text())
 
 
 if __name__ == "__main__":
