@@ -37,6 +37,15 @@ type UpgradeKey =
   | "confidenceTieredLot";
 
 interface EvaluatorResponse {
+  provenance: {
+    dataStatus: "SYNTHETIC_ILLUSTRATION_ONLY";
+    brokerEvidenceVerified: false;
+    historicalCandlesUsed: false;
+    brokerDealsUsed: false;
+    forwardPerformanceVerified: false;
+    liveReadinessEvidence: false;
+    limitations: string;
+  };
   config: {
     days: number;
     strategyMode: string;
@@ -230,12 +239,12 @@ export function Phase7CBacktestEvaluatorPage() {
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
               <ScienceRounded color="primary" />
               <Typography variant="h5" fontWeight={950}>
-                TRUNG TÂM BACKTEST & ĐÁNH GIÁ HIỆU SUẤT BOT
+                TRUNG TÂM NGHIÊN CỨU & ĐÁNH GIÁ BOT
               </Typography>
               <Chip label="BOT V1 HIỆN HỮU vs BOT V2 ĐỀ XUẤT" color="warning" size="small" sx={{ fontWeight: 900 }} />
             </Stack>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.6 }}>
-              Kiểm thử lịch sử XAUUSD, đối chiếu hiệu suất thực tế (Forward vs Backtest), đánh giá từng mẫu hình nến và mô phỏng 5 đề xuất nâng cấp Bot.
+              Tab 1 chỉ mô phỏng giả định để so sánh đề xuất (không sử dụng nến hay deal MT5). Các tab Replay và Auto-Lot Shadow được đánh giá riêng theo nguồn dữ liệu của chúng.
             </Typography>
           </Box>
           <Tabs
@@ -247,7 +256,7 @@ export function Phase7CBacktestEvaluatorPage() {
               p: 0.5,
             }}
           >
-            <Tab label="1. Mô phỏng & Đề xuất nâng cấp Bot" sx={{ fontWeight: 800, fontSize: 13 }} />
+            <Tab label="1. Kịch bản giả định (không phải Backtest)" sx={{ fontWeight: 800, fontSize: 13 }} />
             <Tab label="2. Canonical MT5 Replay" sx={{ fontWeight: 800, fontSize: 13 }} />
             <Tab label="3. Auto-Lot Shadow vs Fixed" sx={{ fontWeight: 800, fontSize: 13 }} />
           </Tabs>
@@ -259,6 +268,11 @@ export function Phase7CBacktestEvaluatorPage() {
 
       {subTab === 0 && (
         <Stack spacing={2.2}>
+          <Alert severity="warning" variant="outlined" sx={{ fontWeight: 700 }}>
+            CHỈ SỐ MINH HỌA — KHÔNG PHẢI LỊCH SỬ GIAO DỊCH: Win Rate, Profit Factor, P/L, số lệnh,
+            đường tăng trưởng vốn và mức cải thiện bên dưới được tạo từ công thức và giả định cố định.
+            Không có dữ liệu nến/deal MT5 đã xác minh, không phải Forward Test và không chứng minh bot đủ điều kiện LIVE.
+          </Alert>
           <Card variant="outlined" sx={{ borderRadius: 3, bgcolor: "rgba(6,13,24,.88)", borderColor: "rgba(148,163,184,.18)" }}>
             <CardContent>
               <Grid container spacing={2} alignItems="center">
@@ -267,13 +281,13 @@ export function Phase7CBacktestEvaluatorPage() {
                     select
                     fullWidth
                     size="small"
-                    label="Khoảng thời gian Backtest"
+                    label="Kỳ giả lập (không có dữ liệu lịch sử)"
                     value={days}
                     onChange={(e) => setDays(Number(e.target.value))}
                   >
                     {[30, 90, 180, 365].map((d) => (
                       <MenuItem key={d} value={d}>
-                        {d} ngày gần nhất
+                        {d} ngày giả định
                       </MenuItem>
                     ))}
                   </TextField>
@@ -361,12 +375,19 @@ export function Phase7CBacktestEvaluatorPage() {
             </CardContent>
           </Card>
 
-          {data ? (
+          {data && (data.provenance?.dataStatus !== "SYNTHETIC_ILLUSTRATION_ONLY" ||
+            data.provenance?.brokerEvidenceVerified !== false) && (
+            <Alert severity="error">
+              Không có thông tin nguồn dữ liệu mô phỏng hợp lệ từ API; các chỉ số minh họa được ẩn để tránh hiểu nhầm thành kết quả thực.
+            </Alert>
+          )}
+          {data?.provenance?.dataStatus === "SYNTHETIC_ILLUSTRATION_ONLY" &&
+            data.provenance.brokerEvidenceVerified === false ? (
             <>
               <Grid container spacing={2}>
                 <Grid size={{ xs: 12, sm: 6, xl: 3 }}>
                   <MetricCard
-                    label="Lợi nhuận ròng (Bot Đề Xuất V2 vs Hiện tại)"
+                    label="Lợi nhuận giả định (V2 so với V1)"
                     value={`${fmtMoney(data.optimized.netPnlUsd)} (+${data.optimized.returnPercent}%)`}
                     detail={`Bot hiện tại: ${fmtMoney(data.baseline.netPnlUsd)} · Tăng thêm ${fmtMoney(data.delta.netPnlUsd)}`}
                     tone="success.main"
@@ -374,7 +395,7 @@ export function Phase7CBacktestEvaluatorPage() {
                 </Grid>
                 <Grid size={{ xs: 12, sm: 6, xl: 3 }}>
                   <MetricCard
-                    label="Tỷ lệ thắng (Win Rate)"
+                    label="Win Rate minh họa (không phải thực tế)"
                     value={`${data.optimized.winRatePercent.toFixed(1)}%`}
                     detail={`Bot hiện tại: ${data.baseline.winRatePercent.toFixed(1)}% · Cải thiện +${data.delta.winRateDiff.toFixed(1)}%`}
                     tone="success.main"
@@ -382,7 +403,7 @@ export function Phase7CBacktestEvaluatorPage() {
                 </Grid>
                 <Grid size={{ xs: 12, sm: 6, xl: 3 }}>
                   <MetricCard
-                    label="Profit Factor & Sharpe Ratio"
+                    label="PF & Sharpe mô phỏng giả định"
                     value={`PF ${data.optimized.profitFactor.toFixed(2)} · Sharpe ${data.optimized.sharpeRatio.toFixed(2)}`}
                     detail={`Bot hiện tại: PF ${data.baseline.profitFactor.toFixed(2)} · Kỳ vọng ${data.optimized.averageR.toFixed(2)}R/lệnh`}
                     tone="success.main"
@@ -390,7 +411,7 @@ export function Phase7CBacktestEvaluatorPage() {
                 </Grid>
                 <Grid size={{ xs: 12, sm: 6, xl: 3 }}>
                   <MetricCard
-                    label="Sụt giảm tối đa (Max Drawdown)"
+                    label="Max Drawdown minh họa"
                     value={`${data.optimized.maxDrawdownPercent.toFixed(2)}% ($${data.optimized.maxDrawdownUsd.toFixed(0)})`}
                     detail={`Bot hiện tại: ${data.baseline.maxDrawdownPercent.toFixed(2)}% · Giảm rủi ro −${data.delta.drawdownReductionPct}% · Cứu ${data.delta.beSweepsSaved} lệnh quét BE`}
                     tone="info.main"
@@ -403,8 +424,8 @@ export function Phase7CBacktestEvaluatorPage() {
                   <Card variant="outlined" sx={{ height: "100%", borderRadius: 3 }}>
                     <CardContent>
                       <Stack direction="row" justifyContent="space-between" alignItems="center">
-                        <Typography fontWeight={900}>Đường tăng trưởng vốn (Equity Curve — Bot V2 Tối ưu)</Typography>
-                        <Chip size="small" color="success" label={`+${data.optimized.returnPercent}% / ${data.config.days} ngày`} />
+                        <Typography fontWeight={900}>Đường vốn mô phỏng (không phải Equity thực)</Typography>
+                        <Chip size="small" color="success" label={`Giả định +${data.optimized.returnPercent}% / ${data.config.days} ngày`} />
                       </Stack>
                       <Box sx={{ mt: 2 }}>
                         <Sparkline values={data.equityCurve.map((p) => p.optimizedEquity)} positive />

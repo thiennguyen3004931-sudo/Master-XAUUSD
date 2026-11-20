@@ -46,6 +46,8 @@ jobs:
         run: pnpm --filter @xauusd/api exec node --import tsx --test src/services/phase7c-runtime-source-attestation.service.test.ts
       - name: Canonical gate source contract
         run: node --test scripts/test-phase7c-canonical-pr-gate-contract.mjs
+      - name: Synthetic evaluator provenance contract (issue 75)
+        run: node --test scripts/test-phase7c-backtest-provenance-source.mjs
       - name: Repository workflow pruning contract
         run: node --test scripts/test-repository-workflow-pruning-contract.mjs
       - name: Build and test broker risk strategy foundations
