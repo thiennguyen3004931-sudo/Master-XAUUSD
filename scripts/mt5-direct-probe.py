@@ -2038,6 +2038,55 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
         }
 
 
+def verify_last_moment_entry_margin(mt5, initial_account, order_type, symbol, volume, entry_price):
+    """Read-only, fail-closed final margin/account check directly before order_send.
+
+    This is separate from the earlier margin check: pending orders, positions
+    and daily-history reconciliation can take time while broker equity/margin
+    and account binding change. A successful first check is not authorization
+    for a later order if the current free-margin evidence is unavailable.
+    """
+    failure = lambda status, message: {
+        "ok": False, "submitted": False, "status": status, "message": message,
+    }
+    try:
+        latest_account = mt5.account_info()
+        if latest_account is None:
+            return failure("BLOCKED_MARGIN_RECHECK_UNVERIFIED", "Broker account unavailable before order_send")
+        previous_identity = (
+            int(getattr(initial_account, "login", 0)),
+            str(getattr(initial_account, "server", "") or "").strip(),
+            int(getattr(initial_account, "trade_mode", -1)),
+        )
+        latest_identity = (
+            int(getattr(latest_account, "login", 0)),
+            str(getattr(latest_account, "server", "") or "").strip(),
+            int(getattr(latest_account, "trade_mode", -1)),
+        )
+        if (previous_identity[0] <= 0 or not previous_identity[1]
+                or previous_identity != latest_identity):
+            return failure("BLOCKED_ACCOUNT_CHANGED_BEFORE_SEND",
+                           "Account identity, mode or broker server changed during order preflight")
+        current_free = float(getattr(latest_account, "margin_free", None))
+        calc_margin = getattr(mt5, "order_calc_margin", None)
+        if not callable(calc_margin):
+            return failure("BLOCKED_MARGIN_RECHECK_UNVERIFIED",
+                           "Broker margin API missing immediately before order_send")
+        required = float(calc_margin(order_type, symbol, volume, entry_price))
+    except Exception:
+        return failure("BLOCKED_MARGIN_RECHECK_UNVERIFIED",
+                       "Broker account or margin recheck failed immediately before order_send")
+    if not (isfinite(current_free) and current_free > 0
+            and isfinite(required) and required > 0):
+        return failure("BLOCKED_MARGIN_RECHECK_UNVERIFIED",
+                       "Broker returned invalid final free margin or required margin")
+    if required > current_free * 0.95:
+        return failure("BLOCKED_INSUFFICIENT_MARGIN",
+                       "Final broker margin would exceed 95% of current free margin")
+    return {"ok": True, "freeMarginUsd": current_free,
+            "requiredMarginUsd": required, "accountIdentity": latest_identity}
+
+
 def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V6"):
     """Unified Fail-Closed Execution Gateway & Final Pre-Send SL Gate (Section 1.2, 1.3, 1.4).
     Unit convention: 1 price unit ("1 giá") = 1.00 USD/oz (distinct from broker `point`).
@@ -2443,6 +2492,17 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
         "type_time": int(getattr(mt5, "ORDER_TIME_GTC", 0)),
         "type_filling": resolve_filling_mode(mt5, sym_info),
     }
+
+    # Repeat mandatory broker budget and identity verification immediately
+    # before submission: earlier positive margin can become stale during
+    # risk history, positions and pending inventory checks.
+    final_margin = verify_last_moment_entry_margin(
+        mt5, account, order_type, active_symbol, volume, price,
+    )
+    if not final_margin.get("ok"):
+        return final_margin
+    risk_metrics["freeMarginUsd"] = final_margin["freeMarginUsd"]
+    risk_metrics["requiredMarginUsd"] = final_margin["requiredMarginUsd"]
 
     try:
         res = mt5.order_send(req)
