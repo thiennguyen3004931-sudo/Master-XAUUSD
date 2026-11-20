@@ -183,7 +183,7 @@ test("V6 disconnected status must not expose placeholder or previously observed 
   assert.match(server, /const brokerEvidence = getV6BrokerStatusEvidence\(probe\)/);
   assert.match(server, /quote: brokerEvidence\.quote/);
   assert.match(server, /accountFreeMargin: brokerEvidence\.accountFreeMargin/);
-  assert.match(server, /isConnected && probe\?\.mtfAnalysis/);
+  assert.match(server, /isConnected && brokerEvidence\.quote !== null && probe\?\.mtfAnalysis/);
   assert.match(server, /entrySignal: isConnected/);
 });
 
@@ -195,7 +195,8 @@ test("V6 broker status accepts only finite connected broker data and fresh verif
     currency: "USD", bid: 4000.12, ask: 4000.23, spreadPoints: 11,
     quoteFresh: true, quoteAgeSeconds: 2, timestamp: 1795140000000,
   };
-  const ok = getV6BrokerStatusEvidence(broker);
+  const now = broker.timestamp + 2000;
+  const ok = getV6BrokerStatusEvidence(broker, now);
   assert.equal(ok.accountDataStatus, "BROKER_VALUES_PRESENT");
   assert.equal(ok.quoteDataStatus, "BROKER_QUOTE_FRESH");
   assert.equal(ok.accountBalance, 900);
@@ -209,7 +210,7 @@ test("V6 broker status accepts only finite connected broker data and fresh verif
   const malformed = getV6BrokerStatusEvidence({
     ...broker, balance: "900", equity: NaN, freeMargin: undefined,
     profit: Infinity, quoteAgeSeconds: 61,
-  });
+  }, now);
   assert.equal(malformed.accountDataStatus, "PARTIAL_UNVERIFIED");
   for (const key of ["accountBalance", "accountEquity", "accountFreeMargin", "accountProfit"]) {
     assert.equal(malformed[key], null);
@@ -219,7 +220,7 @@ test("V6 broker status accepts only finite connected broker data and fresh verif
     { quoteFresh: false }, { quoteAgeSeconds: -12 }, { bid: -1 },
     { ask: 3999 }, { spreadPoints: null }, { brokerSymbol: "" },
   ]) {
-    assert.equal(getV6BrokerStatusEvidence({ ...broker, ...variation }).quote, null);
+    assert.equal(getV6BrokerStatusEvidence({ ...broker, ...variation }, now).quote, null);
   }
 });
 
@@ -234,4 +235,38 @@ test("backtest never silently substitutes capital from a disconnected MT5 or can
   }
   assert.equal(readExplicitBacktestStartingBalance(500), 500);
   assert.equal(readExplicitBacktestStartingBalance(12000.50), 12000.50);
+});
+
+test("stale connected broker snapshots cannot masquerade as current account/quote", () => {
+  const oldProbe = {
+    connected: true, timestamp: 1795140000000, accountLogin: 12,
+    balance: 1200, equity: 1200, freeMargin: 1100, profit: 0,
+    bid: 4200, ask: 4200.3, brokerSymbol: "XAUUSD.G",
+    spreadPoints: 30, quoteFresh: true, quoteAgeSeconds: 1,
+  };
+  for (const observedNow of [oldProbe.timestamp + 30001, oldProbe.timestamp - 10001]) {
+    const out = getV6BrokerStatusEvidence(oldProbe, observedNow);
+    assert.equal(out.dataStatus, "STALE_OR_UNTIMESTAMPED_BROKER_SNAPSHOT");
+    assert.equal(out.accountBalance, null);
+    assert.equal(out.quote, null);
+  }
+  const noTime = getV6BrokerStatusEvidence({ ...oldProbe, timestamp: undefined }, oldProbe.timestamp);
+  assert.equal(noTime.dataStatus, "STALE_OR_UNTIMESTAMPED_BROKER_SNAPSHOT");
+  assert.equal(noTime.accountFreeMargin, null);
+});
+
+test("V6 standalone UI clears stale balance and does not calculate Auto Lot from a fake account", () => {
+  const ui = readFileSync(resolve(root, "apps/web/public/standalone-ui.html"), "utf8");
+  const status = ui.slice(ui.indexOf("function applyMt5StatusToUi(data)"),
+    ui.indexOf("let isLiveChartMode = true;"));
+  assert.match(status, /data\.mt5LiveBridgeConnected === true && h\.connected === true/);
+  assert.match(status, /h\.accountDataStatus === "BROKER_VALUES_PRESENT"/);
+  assert.match(status, /window\.__latestAccountBalance = null/);
+  assert.match(status, /lastLiveMt5Payload = null/);
+  const lot = ui.slice(ui.indexOf("function computeLotFromRiskPct(pctVal)"),
+    ui.indexOf("function onManualLotInput()"));
+  assert.match(lot, /if \(!Number\.isFinite\(bal\) \|\| bal <= 0/);
+  assert.match(lot, /if \(calcLot === null\) \{ showUnverifiedAutoLotWarning\(\); return; \}/);
+  assert.doesNotMatch(lot, /4131\.83/);
+  assert.doesNotMatch(status, /DBG Market Limited|5201362/);
 });
