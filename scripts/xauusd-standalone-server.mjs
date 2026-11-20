@@ -22,6 +22,7 @@ import crypto from "node:crypto";
 import { spawn, execFile, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseRequiredTicket, parseOptionalBoolean } from "./v6-api-input-guards.mjs";
+import { getV6ExecutionSizingDisclosure } from "./v6-execution-sizing-disclosure.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1810,6 +1811,13 @@ function buildStatusPayload(probe) {
     lastSyncAction,
     liveArmStatus: armGate,
     dailyRiskState: probe?.dailyRiskState || null,
+    // Source-level disclosure only. A healthy bridge does not prove the source
+    // revision deployed on Windows, or make Phase7C shadow Auto Lot executable.
+    executionSizing: getV6ExecutionSizingDisclosure({
+      fixedLot: getCanonicalFixedLot(),
+      configVerified: configIntegrityState.verified === true &&
+        currentAccountConfig.configUnverified !== true,
+    }),
     loopLatencyDisclosure: {
       positionManagementIntervalMs: POSITION_MGMT_INTERVAL_MS,
       signalScanIntervalMs: SIGNAL_SCAN_INTERVAL_MS,
