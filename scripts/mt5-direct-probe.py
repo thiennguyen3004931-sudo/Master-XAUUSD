@@ -1002,12 +1002,7 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
             h4_bull = (es_h4 == "BUY") if es_h4 in ("BUY", "SELL") else (p >= ema34_h4)
             h4_bias = "TĂNG CHỦ ĐẠO (Bullish Structure)" if h4_bull else "GIẢM CHỦ ĐẠO (Bearish Structure)"
     else:
-        ema34_h4 = round(p - 6.5, 2)
-        ema89_h4 = round(p - 18.2, 2)
-        swing_high_h4 = round(p + 24.0, 2)
-        swing_low_h4 = round(p - 21.0, 2)
-        h4_bull = True
-        h4_bias = "TĂNG CHỦ ĐẠO (Trên EMA34/89 H4)"
+        return _unavailable_mtf_display("Missing verified H4 candle history")
 
     if candles_h1 and len(candles_h1) >= 10:
         closes_h1 = [c[3] for c in candles_h1]
@@ -1024,16 +1019,17 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
             h1_bull = (es_h1 == "BUY") if es_h1 in ("BUY", "SELL") else (p >= ema34_h1)
             h1_bias = "ĐỒNG PHA TĂNG (Giữ trên vùng Cầu H1)" if h1_bull else "ĐỒNG PHA GIẢM (Dưới vùng Cung H1)"
     else:
-        ema34_h1 = round(p - 3.8, 2)
-        swing_high_h1 = round(p + 11.5, 2)
-        swing_low_h1 = round(p - 9.5, 2)
-        h1_bull = True
-        h1_bias = "ĐỒNG PHA TĂNG (Cấu trúc đáy cao dần)"
+        return _unavailable_mtf_display("Missing verified H1 candle history")
 
-    demand_low = round(max(swing_low_h1, p - 6.5), 2)
-    demand_high = round(demand_low + 2.8, 2)
-    supply_high = round(min(swing_high_h1, p + 9.5), 2)
-    supply_low = round(supply_high - 2.8, 2)
+    # Display-only estimated bands from observed H1 swing extremes, not fabricated price offsets.
+    width_h1 = float(swing_high_h1 - swing_low_h1)
+    if not isfinite(width_h1) or width_h1 <= 0:
+        return _unavailable_mtf_display("H1 range cannot be verified")
+    band_h1 = round(width_h1 * 0.15, 2)
+    demand_low = swing_low_h1
+    demand_high = round(min(swing_high_h1, swing_low_h1 + band_h1), 2)
+    supply_high = swing_high_h1
+    supply_low = round(max(swing_low_h1, swing_high_h1 - band_h1), 2)
 
     es_side = es.get("side")
     es_pref = es.get("preferredSide")
@@ -1044,7 +1040,7 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
     else:
         m15_side = "NEUTRAL"
 
-    m15_pat = str(live_analysis.get("patternName") or "12. Hộp Tích Lũy Nén Biên Độ")
+    m15_pat = str(live_analysis.get("patternName") or "CHƯA XÁC MINH MẪU NẾN (NO_TRADE)")
     if m15_side == "SELL" and ("Tăng" in m15_pat or "Bullish" in m15_pat):
         m15_pat = "10. Cờ Giảm Tiếp Diễn (Bearish Flag)"
     elif m15_side == "BUY" and ("Giảm" in m15_pat or "Bearish" in m15_pat):
@@ -1120,7 +1116,7 @@ def analyze_multi_timeframe_h4_h1_m15(candles_h4, candles_h1, candles_m15, live_
             "ema34": ema34_h1,
             "demandZone": f"{demand_low} – {demand_high}",
             "supplyZone": f"{supply_low} – {supply_high}",
-            "summary": f"EMA34 H1: {ema34_h1} · Vùng Cầu (Demand): {demand_low}–{demand_high} · Vùng Cung (Supply): {supply_low}–{supply_high}."
+            "summary": f"EMA34 H1: {ema34_h1} · Dải biên ước lượng 15% khoảng H1 (không phải vùng cung/cầu xác nhận): {demand_low}–{demand_high} và {supply_low}–{supply_high}."
         },
         "m15": {
             "timeframe": "M15",
