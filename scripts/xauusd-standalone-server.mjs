@@ -1455,11 +1455,9 @@ function startV6BackgroundMonitor() {
       // Existing position management runs in its separate loop above.
       const dailyRisk = snap.dailyRiskState;
       if (!dailyRisk || typeof dailyRisk !== "object" || Array.isArray(dailyRisk) ||
-          dailyRisk.ok !== true || !Number.isInteger(dailyRisk.updatedAtUtc) ||
+          dailyRisk.ok !== true || !Number.isSafeInteger(dailyRisk.updatedAtUtc) ||
           dailyRisk.updatedAtUtc < probeStartUtc || dailyRisk.updatedAtUtc > Math.floor(Date.now() / 1000) ||
           dailyRisk.currentDailyLossUsd < 0 ||
-          dailyRisk.ok !== true ||
-          !Number.isSafeInteger(dailyRisk.updatedAtUtc) ||
           Math.abs(Date.now() / 1000 - dailyRisk.updatedAtUtc) > 30 ||
           typeof dailyRisk.dailyLimitBreached !== "boolean" ||
           !Number.isFinite(dailyRisk.currentDailyLossUsd) ||
