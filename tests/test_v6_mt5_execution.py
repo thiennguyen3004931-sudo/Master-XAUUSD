@@ -565,6 +565,30 @@ class ExecutionRiskTest(unittest.TestCase):
         self.assertTrue(result["uncertain"])
         self.assertEqual(len(mt5.sent), 1)
 
+    def test_lost_ack_recovers_deal_evidence_without_resubmitting(self):
+        class LostAck(MockBroker):
+            def order_send(self, request):
+                self.sent.append(request)
+                return None
+
+        broker = LostAck()
+        cfg = {"side": "BUY", "volume": 0.02, "slDistance": 6.8, "tpDistance": 16}
+        result = engine.execute_order(broker, "XAUUSD.G", cfg)
+        self.assertEqual(result["fillEvidence"]["status"], "UNVERIFIED")
+        deal = SimpleNamespace(ticket=456, symbol="XAUUSD.G", type=0, volume=0.01,
+                               magic=270715, comment=broker.sent[0]["comment"])
+        restarted = MockBroker()
+        restarted.history_deals_get = lambda *args: [deal]
+        for comment, expected in [("unrelated", "UNVERIFIED"),
+                                  (broker.sent[0]["comment"], "EXECUTION_OBSERVED")]:
+            deal.comment = comment
+            result = engine.execute_order(restarted, "XAUUSD.G", cfg)
+            self.assertEqual(result["fillEvidence"]["status"], expected)
+            self.assertEqual(result["status"], "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY")
+            self.assertFalse(result["submitted"])
+        self.assertEqual(result["fillEvidence"]["dealTickets"], [456])
+        self.assertEqual(restarted.sent, [])
+
     def test_uncertain_entry_freeze_survives_restart_and_blocks_retry(self):
         """P0: An ambiguous broker submission must freeze future entries."""
         class NoResponseBroker(MockBroker):

@@ -1832,6 +1832,33 @@ def _write_uncertain_entry_state(state):
         _save_json_state_unlocked(file_path, state)
 
 
+def _entry_fill_evidence(mt5, intent):
+    """Report broker deal tickets without clearing the persistent entry freeze."""
+    unknown = {"status": "UNVERIFIED"}
+    if not isinstance(intent, dict) or not intent.get("brokerComment"):
+        return unknown
+    try:
+        start = datetime.datetime.fromtimestamp(intent["createdAtUtc"], datetime.timezone.utc)
+        end = datetime.datetime.now(datetime.timezone.utc)
+        deals = mt5.history_deals_get(start, end)
+        if not isinstance(deals, (list, tuple)):
+            return unknown
+        tickets = set()
+        for deal in deals:
+            if (deal.comment == intent["brokerComment"] and deal.symbol == intent["symbol"]
+                    and deal.magic == 270715 and deal.type == {"BUY": 0, "SELL": 1}[intent["side"]]
+                    and deal.ticket > 0 and deal.volume > 0 and isfinite(deal.volume)):
+                tickets.add(int(deal.ticket))
+        account = mt5.account_info()
+        if account.login != intent["accountLogin"] or account.server != intent["server"]:
+            return unknown
+        if tickets:
+            return {"status": "EXECUTION_OBSERVED", "dealTickets": sorted(tickets)}
+    except Exception:
+        return unknown
+    return unknown
+
+
 def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V6"):
     """Serialize entry, persist pre-submission intent, and freeze uncertain exposure.
 
@@ -1855,9 +1882,14 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
                     return {
                         "ok": False, "submitted": False,
                         "status": "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY",
+                        "fillEvidence": _entry_fill_evidence(mt5, state[key]),
                         "message": "A prior entry attempt may have reached broker; verify positions/orders before clearing the persistent freeze",
                     }
+                broker_comment = f"{comment_tag[:19]}:{uuid.uuid4().hex[:11]}"
                 state[key] = {
+                    "symbol": active_symbol,
+                    "side": str((order_cfg or {}).get("side", "")).strip().upper(),
+                    "brokerComment": broker_comment,
                     "status": "ENTRY_IN_FLIGHT",
                     "accountLogin": login,
                     "server": server,
@@ -1873,8 +1905,9 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
 
             # An exception or process crash intentionally leaves the durable
             # in-flight marker in place; never auto-retry a possibly sent order.
-            result = _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag)
+            result = _execute_order_serialized(mt5, active_symbol, order_cfg, broker_comment)
             if result.get("uncertain"):
+                result["fillEvidence"] = _entry_fill_evidence(mt5, state[key])
                 return result
             try:
                 state = _read_uncertain_entry_state()
