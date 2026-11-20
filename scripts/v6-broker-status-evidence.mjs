@@ -9,7 +9,7 @@ const finiteNumber = (value, minimum = -Infinity) =>
 const nonemptyString = (value) =>
   typeof value === "string" && value.trim() ? value.trim() : null;
 
-export function getV6BrokerStatusEvidence(probe) {
+export function getV6BrokerStatusEvidence(probe, nowMs = Date.now()) {
   const connected = probe?.connected === true;
   const empty = {
     connected: false,
@@ -31,6 +31,16 @@ export function getV6BrokerStatusEvidence(probe) {
     brokerObservedAtMs: null,
   };
   if (!connected) return empty;
+  const snapshotTime = finiteNumber(probe.timestamp, 1);
+  const snapshotAgeMs = snapshotTime === null ? Infinity : nowMs - snapshotTime;
+  // A re-used connected snapshot is not current broker evidence.
+  if (!Number.isFinite(nowMs) || snapshotAgeMs < -10000 || snapshotAgeMs > 30000) {
+    return {
+      ...empty, connected: true,
+      dataStatus: "STALE_OR_UNTIMESTAMPED_BROKER_SNAPSHOT",
+      quoteDataStatus: "STALE_OR_INVALID",
+    };
+  }
 
   const balance = finiteNumber(probe.balance, 0);
   const equity = finiteNumber(probe.equity, 0);
@@ -47,7 +57,6 @@ export function getV6BrokerStatusEvidence(probe) {
     quoteAgeSeconds !== null && quoteAgeSeconds >= -10 && quoteAgeSeconds <= 60 &&
     bid !== null && ask !== null && ask >= bid &&
     spreadPoints !== null && brokerSymbol !== null;
-  const snapshotTime = finiteNumber(probe.timestamp, 1);
 
   return {
     connected: true,
