@@ -17,7 +17,24 @@ test("new-entry gate rejects missing or malformed daily risk state before DCA", 
     "Number.isFinite(dailyRisk.currentDailyLossUsd)",
     "Number.isFinite(dailyRisk.dailyLossLimitUsd)",
     "dailyRisk.dailyLossLimitUsd <= 0",
-    "if (dailyRisk.dailyLimitBreached)",
+    "dailyRisk.dailyLimitBreached || dailyRisk.currentDailyLossUsd >= dailyRisk.dailyLossLimitUsd",
   ]) assert.ok(gate.includes(fragment), "missing fail-closed guard: " + fragment);
   assert.equal((gate.match(/return;/g) || []).length, 2, "invalid and breached states both return");
+});
+
+test("scheduler sends no entry request with stale, invalid or breached risk after reconnect", () => {
+  const start = Math.floor(Date.now() / 1000);
+  const valid = { ok: true, updatedAtUtc: start, dailyLimitBreached: false,
+    currentDailyLossUsd: 0, dailyLossLimitUsd: 120 };
+  const evaluate = new Function("snap", "autoBotState", "probeStartUtc", "submit",
+    source.slice(gateStart, entryStart) + "\nsubmit();");
+  let submissions = 0;
+  for (const risk of [null, {...valid, ok: false}, {...valid, updatedAtUtc: start - 1},
+    {...valid, updatedAtUtc: start + 600}, {...valid, currentDailyLossUsd: -1},
+    {...valid, currentDailyLossUsd: 120}, {...valid, dailyLimitBreached: true}]) {
+    evaluate({dailyRiskState: risk}, {}, start, () => submissions++);
+    assert.equal(submissions, 0);
+  }
+  evaluate({dailyRiskState: valid}, {}, start, () => submissions++);
+  assert.equal(submissions, 1);
 });
