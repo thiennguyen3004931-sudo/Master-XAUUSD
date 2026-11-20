@@ -91,6 +91,15 @@ export interface BacktestTradeRecord {
 
 export interface BacktestEvaluatorResponse {
   generatedAt: number;
+  provenance: {
+    dataStatus: "SYNTHETIC_ILLUSTRATION_ONLY";
+    brokerEvidenceVerified: false;
+    historicalCandlesUsed: false;
+    brokerDealsUsed: false;
+    forwardPerformanceVerified: false;
+    liveReadinessEvidence: false;
+    limitations: string;
+  };
   config: {
     days: number;
     strategyMode: BacktestStrategyFilter;
@@ -595,6 +604,15 @@ export function runPhase7CBacktestEvaluator(input: BacktestEvaluatorRequest = {}
 
   return {
     generatedAt: Date.now(),
+    provenance: {
+      dataStatus: "SYNTHETIC_ILLUSTRATION_ONLY",
+      brokerEvidenceVerified: false,
+      historicalCandlesUsed: false,
+      brokerDealsUsed: false,
+      forwardPerformanceVerified: false,
+      liveReadinessEvidence: false,
+      limitations: "Fixed assumptions and predetermined formulae, not broker candles, deals, verified historical backtest, or forward/LIVE trading results.",
+    },
     config: {
       days,
       strategyMode,
