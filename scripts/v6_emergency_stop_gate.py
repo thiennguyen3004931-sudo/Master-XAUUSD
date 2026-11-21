@@ -1,15 +1,21 @@
 """Fail-closed Emergency Stop gate & uncertain-entry integration for V6 G1 (#7).
 
-Source-only integration candidate built on top of `v6_emergency_stop_latch.py`
-(#88) and `v6_uncertain_entry_evidence_shadow.py` (#89/#94):
+Source-only offline candidate built on `v6_emergency_stop_latch.py` (#88) and
+`v6_uncertain_entry_evidence_shadow.py` (#89/#94):
 - Binds durable latch state to `(accountLogin, server)` and operator identity.
 - Distinguishes explicit operator Emergency Stop from fail-closed startup/corrupt states.
-- Denies release unless authenticated operator approval is provided and no
-  uncertain-entry freeze is active; NEVER grants `liveArmed` or `liveAuthorized`.
-- Enforces final new-order-only gating while keeping protective SL/TP management allowed.
-- Enriches `fillEvidence` with pending/deal/position evidence without clearing freeze.
-
-Deliberately NOT wired into LIVE order-send until owner-approved runtime acceptance.
+- Denies `authorize_emergency_stop_release` unless an active, well-formed,
+  account-bound `OPERATOR_EMERGENCY_STOP` already exists, `uncertain_entry_state`
+  is explicitly verified empty for `(accountLogin, server)` (never defaulted to
+  safe), and caller-supplied approval + CAS timestamp match.
+- Provides a separate `initialize_or_recover_emergency_stop_latch` path for
+  missing/corrupt/mismatched recovery with explicit `recovery_evidence_verified`.
+- Trust boundary: `operator_authenticated` is a caller-asserted flag in this
+  offline library, NOT cryptographic or Windows ACL proof; production release
+  remains disabled until owner-approved runtime integration & host ACL verification.
+- `evaluate_new_order_gate` is strictly a *latch-only offline candidate* check
+  (`liveAuthorized` is always `False`; `PROTECTIVE_SL_TP` means *not blocked by
+  stop latch*, not bypassing independent position/SL verification).
 """
 from __future__ import annotations
 
@@ -28,6 +34,7 @@ except ImportError:
 
 ACTION_NEW_ORDER = "NEW_ORDER"
 ACTION_PROTECTIVE_SL_TP = "PROTECTIVE_SL_TP"
+TRUST_BOUNDARY_NOTE = "OFFLINE_CALLER_ASSERTED_NOT_CRYPTOGRAPHIC_RUNTIME_AUTH"
 
 
 def _positive_login(value) -> int | None:
@@ -52,7 +59,25 @@ def _durability_scope() -> str:
     return "WINDOWS_HOST_ACL_AND_POWERLOSS_UNVERIFIED"
 
 
-def _blocked_latch_result(reason: str, *, category: str, account_login=None, server: str = "", extra: dict | None = None) -> dict:
+def _has_active_uncertain_entry(uncertain_entry_state, *, login: int, server: str) -> tuple[bool, str]:
+    """Fail-closed check: None or non-dict is treated as unverified/unsafe."""
+    if not isinstance(uncertain_entry_state, dict):
+        return True, "UNCERTAIN_ENTRY_STATE_UNVERIFIED"
+    target = f"{login}|{server}".casefold()
+    for raw_key in uncertain_entry_state.keys():
+        if str(raw_key or "").strip().casefold() == target:
+            return True, "UNCERTAIN_ENTRY_FREEZE_ACTIVE"
+    return False, "UNCERTAIN_ENTRY_CLEAR"
+
+
+def _blocked_latch_result(
+    reason: str,
+    *,
+    category: str,
+    account_login=None,
+    server: str = "",
+    extra: dict | None = None,
+) -> dict:
     result = {
         "emergencyStopActive": True,
         "blockNewOrders": True,
@@ -63,6 +88,8 @@ def _blocked_latch_result(reason: str, *, category: str, account_login=None, ser
         "server": _clean_text(server),
         "liveArmed": False,
         "liveAuthorized": False,
+        "runtimeReleaseAllowed": False,
+        "trustBoundary": TRUST_BOUNDARY_NOTE,
         "durabilityScope": _durability_scope(),
         "verificationScope": "SOURCE_INTEGRATION_OFFLINE_NOT_LIVE_SAFE",
     }
@@ -122,7 +149,12 @@ def read_bound_emergency_stop_latch(path: Path, *, account_login, server: str) -
     active = payload.get("emergencyStopActive")
     if active is True:
         category = _clean_text(payload.get("stopCategory")) or "OPERATOR_EMERGENCY_STOP"
-        if category not in ("OPERATOR_EMERGENCY_STOP", "FAIL_CLOSED_STARTUP", "FAIL_CLOSED_CORRUPT", "FAIL_CLOSED_UNVERIFIED"):
+        if category not in (
+            "OPERATOR_EMERGENCY_STOP",
+            "FAIL_CLOSED_STARTUP",
+            "FAIL_CLOSED_CORRUPT",
+            "FAIL_CLOSED_UNVERIFIED",
+        ):
             category = "OPERATOR_EMERGENCY_STOP"
         return _blocked_latch_result(
             _clean_text(payload.get("reason")) or "EMERGENCY_STOP_ACTIVE",
@@ -135,7 +167,12 @@ def read_bound_emergency_stop_latch(path: Path, *, account_login, server: str) -
             },
         )
 
-    if active is False and payload.get("releaseAuthorized") is True and _clean_text(payload.get("releasedBy")) and _clean_text(payload.get("releaseReason")):
+    if (
+        active is False
+        and payload.get("releaseAuthorized") is True
+        and _clean_text(payload.get("releasedBy"))
+        and _clean_text(payload.get("releaseReason"))
+    ):
         return {
             "emergencyStopActive": False,
             "blockNewOrders": False,
@@ -150,6 +187,8 @@ def read_bound_emergency_stop_latch(path: Path, *, account_login, server: str) -
             "previousStopReason": _clean_text(payload.get("previousStopReason")),
             "liveArmed": False,
             "liveAuthorized": False,
+            "runtimeReleaseAllowed": False,
+            "trustBoundary": TRUST_BOUNDARY_NOTE,
             "durabilityScope": _durability_scope(),
             "verificationScope": "SOURCE_INTEGRATION_OFFLINE_NOT_LIVE_SAFE",
         }
@@ -195,18 +234,19 @@ def persist_operator_emergency_stop(
     return read_bound_emergency_stop_latch(path, account_login=login, server=srv)
 
 
-def authorize_emergency_stop_release(
+def initialize_or_recover_emergency_stop_latch(
     path: Path,
     *,
     account_login: int,
     server: str,
-    operator_authenticated: bool,
-    operator_id: str,
-    approval_reason: str,
-    uncertain_entry_frozen: bool = False,
+    operator_authenticated: bool = False,
+    operator_id: str = "",
+    approval_reason: str = "",
+    uncertain_entry_state: dict | None = None,
+    recovery_evidence_verified: bool = False,
     now_utc: float | None = None,
 ) -> dict:
-    """Release Emergency Stop ONLY after authenticated operator approval and clean entry state."""
+    """Distinct initialization/recovery flow for missing, corrupt, or mismatched latch files."""
     login = _positive_login(account_login)
     srv = _clean_text(server)
     op_id = _clean_text(operator_id)
@@ -214,11 +254,17 @@ def authorize_emergency_stop_release(
     current = read_bound_emergency_stop_latch(path, account_login=login, server=srv)
 
     if login is None or not srv:
-        return {**current, "releaseDenied": True, "releaseDeniedReason": "ACCOUNT_UNVERIFIED"}
+        return {**current, "recoveryDenied": True, "recoveryDeniedReason": "ACCOUNT_UNVERIFIED"}
     if operator_authenticated is not True or not op_id or not reason:
-        return {**current, "releaseDenied": True, "releaseDeniedReason": "OPERATOR_AUTH_REQUIRED"}
-    if uncertain_entry_frozen:
-        return {**current, "releaseDenied": True, "releaseDeniedReason": "UNCERTAIN_ENTRY_FREEZE_ACTIVE"}
+        return {**current, "recoveryDenied": True, "recoveryDeniedReason": "OPERATOR_AUTH_REQUIRED"}
+    if recovery_evidence_verified is not True:
+        return {**current, "recoveryDenied": True, "recoveryDeniedReason": "RECOVERY_EVIDENCE_REQUIRED"}
+    if current["stopCategory"] not in ("FAIL_CLOSED_STARTUP", "FAIL_CLOSED_CORRUPT", "FAIL_CLOSED_ACCOUNT_MISMATCH", "FAIL_CLOSED_UNVERIFIED"):
+        return {**current, "recoveryDenied": True, "recoveryDeniedReason": "USE_STANDARD_OPERATOR_RELEASE"}
+
+    frozen, freeze_reason = _has_active_uncertain_entry(uncertain_entry_state, login=login, server=srv)
+    if frozen:
+        return {**current, "recoveryDenied": True, "recoveryDeniedReason": freeze_reason}
 
     record = {
         "schemaVersion": 1,
@@ -232,7 +278,59 @@ def authorize_emergency_stop_release(
         "releasedBy": op_id,
         "releaseReason": reason,
         "releasedAtUtc": int(time.time() if now_utc is None else now_utc),
-        "previousStopReason": current.get("reason") or "UNINITIALIZED",
+        "previousStopReason": current.get("reason") or "RECOVERY_INITIALIZED",
+    }
+    _atomic_write_json(Path(path), record)
+    result = read_bound_emergency_stop_latch(path, account_login=login, server=srv)
+    result["recoveryDenied"] = False
+    return result
+
+
+def authorize_emergency_stop_release(
+    path: Path,
+    *,
+    account_login: int,
+    server: str,
+    operator_authenticated: bool = False,
+    operator_id: str = "",
+    approval_reason: str = "",
+    uncertain_entry_state: dict | None = None,
+    expected_triggered_at_utc: int | None = None,
+    now_utc: float | None = None,
+) -> dict:
+    """Release an existing account-bound OPERATOR_EMERGENCY_STOP only."""
+    login = _positive_login(account_login)
+    srv = _clean_text(server)
+    op_id = _clean_text(operator_id)
+    reason = _clean_text(approval_reason)
+    current = read_bound_emergency_stop_latch(path, account_login=login, server=srv)
+
+    if login is None or not srv:
+        return {**current, "releaseDenied": True, "releaseDeniedReason": "ACCOUNT_UNVERIFIED"}
+    if operator_authenticated is not True or not op_id or not reason:
+        return {**current, "releaseDenied": True, "releaseDeniedReason": "OPERATOR_AUTH_REQUIRED"}
+    if current["stopCategory"] != "OPERATOR_EMERGENCY_STOP" or current["emergencyStopActive"] is not True:
+        return {**current, "releaseDenied": True, "releaseDeniedReason": "REQUIRES_ACTIVE_OPERATOR_STOP"}
+    if expected_triggered_at_utc is not None and current.get("triggeredAtUtc") != expected_triggered_at_utc:
+        return {**current, "releaseDenied": True, "releaseDeniedReason": "STALE_LATCH_VERSION_MISMATCH"}
+
+    frozen, freeze_reason = _has_active_uncertain_entry(uncertain_entry_state, login=login, server=srv)
+    if frozen:
+        return {**current, "releaseDenied": True, "releaseDeniedReason": freeze_reason}
+
+    record = {
+        "schemaVersion": 1,
+        "emergencyStopActive": False,
+        "blockNewOrders": False,
+        "allowProtectivePositionManagement": True,
+        "stopCategory": "AUTHORIZED_CLEAR",
+        "accountLogin": login,
+        "server": srv,
+        "releaseAuthorized": True,
+        "releasedBy": op_id,
+        "releaseReason": reason,
+        "releasedAtUtc": int(time.time() if now_utc is None else now_utc),
+        "previousStopReason": current.get("reason") or "OPERATOR_EMERGENCY_STOP",
     }
     _atomic_write_json(Path(path), record)
     result = read_bound_emergency_stop_latch(path, account_login=login, server=srv)
@@ -271,14 +369,16 @@ def evaluate_new_order_gate(
     uncertain_entry_state: dict | None = None,
     live_armed: bool = False,
 ) -> dict:
-    """Final gate separating NEW_ORDER from PROTECTIVE_SL_TP management."""
+    """Latch-only offline candidate gate separating NEW_ORDER from PROTECTIVE_SL_TP."""
     kind = _clean_text(action_kind).upper()
     if kind == ACTION_PROTECTIVE_SL_TP:
         return {
             "allowed": True,
+            "blockedByStopLatch": False,
             "actionKind": ACTION_PROTECTIVE_SL_TP,
-            "reason": "PROTECTIVE_MANAGEMENT_ALWAYS_ALLOWED",
+            "reason": "NOT_BLOCKED_BY_STOP_LATCH_REQUIRES_INDEPENDENT_SL_VERIFICATION",
             "allowProtectivePositionManagement": True,
+            "gateScope": "LATCH_ONLY_OFFLINE_CANDIDATE_NOT_FINAL_AUTH",
             "liveArmed": False,
             "liveAuthorized": False,
         }
@@ -286,9 +386,11 @@ def evaluate_new_order_gate(
     if kind != ACTION_NEW_ORDER:
         return {
             "allowed": False,
+            "blockedByStopLatch": True,
             "actionKind": kind or "UNKNOWN",
             "reason": "BLOCKED_UNKNOWN_ACTION_KIND",
             "allowProtectivePositionManagement": True,
+            "gateScope": "LATCH_ONLY_OFFLINE_CANDIDATE_NOT_FINAL_AUTH",
             "liveArmed": False,
             "liveAuthorized": False,
         }
@@ -297,32 +399,40 @@ def evaluate_new_order_gate(
     if latch["emergencyStopActive"] or latch["blockNewOrders"]:
         return {
             "allowed": False,
+            "blockedByStopLatch": True,
             "actionKind": ACTION_NEW_ORDER,
             "reason": latch["reason"],
             "stopCategory": latch["stopCategory"],
             "allowProtectivePositionManagement": True,
+            "gateScope": "LATCH_ONLY_OFFLINE_CANDIDATE_NOT_FINAL_AUTH",
             "liveArmed": False,
             "liveAuthorized": False,
         }
 
     login = _positive_login(account_login)
     srv = _clean_text(server)
-    key = f"{login}|{srv}"
-    if uncertain_entry_state is None or not isinstance(uncertain_entry_state, dict):
+    if login is None or not srv:
         return {
             "allowed": False,
+            "blockedByStopLatch": True,
             "actionKind": ACTION_NEW_ORDER,
-            "reason": "BLOCKED_ENTRY_STATE_UNAVAILABLE",
+            "reason": "STOP_LATCH_ACCOUNT_UNVERIFIED",
             "allowProtectivePositionManagement": True,
+            "gateScope": "LATCH_ONLY_OFFLINE_CANDIDATE_NOT_FINAL_AUTH",
             "liveArmed": False,
             "liveAuthorized": False,
         }
-    if key in uncertain_entry_state:
+
+    frozen, freeze_reason = _has_active_uncertain_entry(uncertain_entry_state, login=login, server=srv)
+    if frozen:
+        mapped_reason = "BLOCKED_ENTRY_STATE_UNAVAILABLE" if freeze_reason == "UNCERTAIN_ENTRY_STATE_UNVERIFIED" else "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY"
         return {
             "allowed": False,
+            "blockedByStopLatch": False,
             "actionKind": ACTION_NEW_ORDER,
-            "reason": "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY",
+            "reason": mapped_reason,
             "allowProtectivePositionManagement": True,
+            "gateScope": "LATCH_ONLY_OFFLINE_CANDIDATE_NOT_FINAL_AUTH",
             "liveArmed": False,
             "liveAuthorized": False,
         }
@@ -330,19 +440,24 @@ def evaluate_new_order_gate(
     if live_armed is not True:
         return {
             "allowed": False,
+            "blockedByStopLatch": False,
             "actionKind": ACTION_NEW_ORDER,
             "reason": "BLOCKED_LIVE_NOT_ARMED",
             "allowProtectivePositionManagement": True,
+            "gateScope": "LATCH_ONLY_OFFLINE_CANDIDATE_NOT_FINAL_AUTH",
             "liveArmed": False,
             "liveAuthorized": False,
         }
 
     return {
         "allowed": True,
+        "allowedByStopLatchOnly": True,
+        "blockedByStopLatch": False,
         "actionKind": ACTION_NEW_ORDER,
-        "reason": "NEW_ORDER_GATE_OPEN",
+        "reason": "LATCH_AND_ENTRY_STATE_CLEAR_OFFLINE_CANDIDATE_ONLY",
         "stopCategory": latch["stopCategory"],
         "allowProtectivePositionManagement": True,
+        "gateScope": "LATCH_ONLY_OFFLINE_CANDIDATE_NOT_FINAL_AUTH",
         "liveArmed": True,
         "liveAuthorized": False,
     }
