@@ -23,6 +23,7 @@ SHADOW_ONLY = {
     "liveAuthorized": False,
     "admitted": False,
     "activeSizingMode": "FIXED_LOT",
+    "recommendedLot": 0.0,
     "brokerContractIndependentlyVerified": False,
     "brokerCostIndependentlyVerified": False,
     "clockIndependentlyVerified": False,
@@ -31,13 +32,19 @@ SHADOW_ONLY = {
 
 
 def _pos(v: Any) -> bool:
-    return (isinstance(v, (int, float)) and not isinstance(v, bool)
-            and math.isfinite(v) and v > 0)
+    try:
+        return (isinstance(v, (int, float)) and not isinstance(v, bool)
+                and math.isfinite(float(v)) and v > 0)
+    except (OverflowError, TypeError, ValueError):
+        return False
 
 
 def _nonneg(v: Any) -> bool:
-    return (isinstance(v, (int, float)) and not isinstance(v, bool)
-            and math.isfinite(v) and v >= 0)
+    try:
+        return (isinstance(v, (int, float)) and not isinstance(v, bool)
+                and math.isfinite(float(v)) and v >= 0)
+    except (OverflowError, TypeError, ValueError):
+        return False
 
 
 def _reject(reason: str, **extra: Any) -> dict[str, Any]:
@@ -342,7 +349,10 @@ def evaluate_shadow_auto_lot_p1(
     return {
         **SHADOW_ONLY,
         "shadowCandidateAvailable": True,
-        "recommendedLot": lot, "reason": "UNVERIFIED_SHADOW_CANDIDATE_ONLY",
+        # Intentionally no executable lot recommendation: a caller that
+        # accidentally reads recommendedLot always sees zero.
+        "shadowEstimatedLot": lot, "recommendedLot": 0.0,
+        "reason": "UNVERIFIED_SHADOW_CANDIDATE_ONLY",
         "remainingBudgetUsd": remaining,
         "candidateRiskUsd": final_risk["totalRiskUsd"],
         "symbolsIncluded": exposure["symbols"],
