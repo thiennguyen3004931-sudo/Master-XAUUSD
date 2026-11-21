@@ -134,8 +134,8 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
             raw["releaseProof"] = {
                 "operatorId": "op-1",
                 "releasedAtUtc": released_at,
-                "stopRevision": raw["stopRevision"],
-                "hmacSha256": _sign_release(secret, 1001, "Broker-Demo", raw["stopRevision"], released_at, "op-1"),
+                "stopRevision": stop_state["stopRevision"],
+                "hmacSha256": _sign_release(secret, 1001, "Broker-Demo", stop_state["stopRevision"], released_at, "op-1"),
             }
             latch_file.write_text(json.dumps(raw), encoding="utf-8")
 
