@@ -121,19 +121,39 @@ def assess_uncertain_entry_evidence(
 
     # Position linkage may be unavailable if the position has since closed.
     # Do not infer absence of execution from absent current position.
-    position_ids = {
-        _positive_ticket(d.get("position_id"))
-        for d in deals if _positive_ticket(d.get("position_id")) is not None
-    }
-    linked = []
-    for p in broker_positions:
-        position_id = _positive_ticket(p.get("identifier"))
-        try:
-            belongs = int(p.get("magic")) == magic
-        except (TypeError, ValueError, OverflowError):
-            belongs = False
-        if (position_id in position_ids and belongs
-                and str(p.get("symbol") or "").strip().upper() == symbol):
-            linked.append(p)
-    status = "BROKER_FULL_FILL_POSITION_OBSERVED_REVIEW" if linked else "BROKER_FULL_FILL_HISTORY_ONLY_REVIEW"
+    # Exact-position evidence requires EVERY matched fill to identify the
+    # same broker position. A missing/ambiguous ID must never be upgraded to a
+    # live-position observation from a coincidental symbol/magic match.
+    position_refs = [_positive_ticket(d.get("position_id")) for d in deals]
+    position_ids = set(position_refs)
+    unambiguous_id = (
+        next(iter(position_ids))
+        if None not in position_ids and len(position_ids) == 1 else None
+    )
+    candidates = []
+    if unambiguous_id is not None:
+        for p in broker_positions:
+            position_id = _positive_ticket(p.get("identifier"))
+            try:
+                belongs = (not isinstance(p.get("magic"), bool)
+                           and int(p.get("magic")) == magic)
+            except (TypeError, ValueError, OverflowError):
+                belongs = False
+            if (position_id == unambiguous_id and belongs
+                    and str(p.get("symbol") or "").strip().upper() == symbol):
+                candidates.append(p)
+
+    # A ticket, positive volume and exact BUY/SELL direction must be present.
+    # Duplicate position records are ambiguous even if one looks valid.
+    observed = False
+    if len(candidates) == 1:
+        position = candidates[0]
+        position_type = position.get("type")
+        observed = (
+            type(position_type) is int and position_type == deal_type
+            and _positive_ticket(position.get("ticket")) is not None
+            and _positive_number(position.get("volume")) is not None
+        )
+    status = ("BROKER_FULL_FILL_POSITION_OBSERVED_REVIEW" if observed
+              else "BROKER_FULL_FILL_HISTORY_ONLY_REVIEW")
     return _blocked(status, deal_count=count, observed_volume=total)
