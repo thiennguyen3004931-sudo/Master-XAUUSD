@@ -86,6 +86,8 @@ describe("BrokerFaithfulStopOutReplay (G3 #52)", () => {
     expect(res.fidelity.brokerStopOutExecutionVerified).toBe(false);
     expect(res.fidelity.callerSuppliedContractAssumed).toBe(true);
     expect(res.fidelity.hedgedMarginReliefVerified).toBe(false);
+    expect(res.fidelity.tickOrderedBidAskVerified).toBe(false);
+    expect(res.fidelity.brokerTradingCostsVerified).toBe(false);
     expect(res.rejectedOrderIds).toEqual(["buy-spread-insolvent"]);
     expect(res.remainingOpenPositions).toEqual([]);
   });
@@ -135,7 +137,7 @@ describe("BrokerFaithfulStopOutReplay (G3 #52)", () => {
     ]);
   });
 
-  it("rejects opposing hedge leg and supports SELL + DCA partial stop-out liquidation", () => {
+  it("simulates SELL gaps and same-side DCA partial stop-out under assumed margin", () => {
     const ticks = [
       makeTick(1000, 2000.0, 2000.0),
       makeTick(2000, 2005.0, 2005.0),
@@ -146,7 +148,6 @@ describe("BrokerFaithfulStopOutReplay (G3 #52)", () => {
       ticks,
       orders: [
         { id: "layer-1", side: "BUY", volume: 0.1, submittedAtMs: 1000, isDcaLayer: false },
-        { id: "opposing-sell", side: "SELL", volume: 0.05, submittedAtMs: 1000 },
         { id: "layer-2-dca", side: "BUY", volume: 0.1, submittedAtMs: 2000, isDcaLayer: true },
       ],
       contract: {
@@ -156,7 +157,7 @@ describe("BrokerFaithfulStopOutReplay (G3 #52)", () => {
       },
     });
     expect(res.ok).toBe(true);
-    expect(res.rejectedOrderIds).toEqual(["opposing-sell"]);
+    expect(res.rejectedOrderIds).toEqual([]);
     expect(res.stopOutTriggered).toBe(true);
     expect(res.liquidatedOrderIds).toEqual(["layer-2-dca"]);
     expect(res.remainingOpenPositions.map((p) => p.id)).toEqual(["layer-1"]);
@@ -172,4 +173,32 @@ describe("BrokerFaithfulStopOutReplay (G3 #52)", () => {
     expect(sellExit!.executionPrice).toBe(2015.0);
     expect(sellExit!.grossPnl).toBe(-15.0);
   });
+  it("refuses opposing HEDGING positions instead of falsely reporting broker order rejection", () => {
+    const res = runBrokerFaithfulStopOutReplay({
+      initialBalance: 1000,
+      ticks: [makeTick(1000, 2000, 2000.2), makeTick(2000, 2001, 2001.2)],
+      orders: [
+        { id: "buy-leg", side: "BUY", volume: 0.01, submittedAtMs: 1000 },
+        { id: "sell-leg", side: "SELL", volume: 0.01, submittedAtMs: 2000 },
+      ],
+      contract: BASE_CONTRACT,
+    });
+    expect(res.ok).toBe(false);
+    expect(res.rejectionReason).toBe("HEDGED_MARGIN_POLICY_UNVERIFIED");
+    expect(res.fidelity.brokerStopOutExecutionVerified).toBe(false);
+    expect(res.ledger).toEqual([]);
+    expect(res.rejectedOrderIds).toEqual([]);
+  });
+
+  it("rejects duplicated timestamps without a reliable within-millisecond event ordering", () => {
+    const res = runBrokerFaithfulStopOutReplay({
+      initialBalance: 1000,
+      ticks: [makeTick(1000, 2000, 2000.2), makeTick(1000, 1999, 1999.2)],
+      orders: [],
+      contract: BASE_CONTRACT,
+    });
+    expect(res.ok).toBe(false);
+    expect(res.rejectionReason).toBe("TICK_PATH_UNVERIFIED");
+  });
+
 });
