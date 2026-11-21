@@ -64,19 +64,47 @@ except ImportError:
     from v6_emergency_stop_gate import read_bound_emergency_stop_latch as _read_bound_emergency_stop_latch
 
 
-def _check_runtime_emergency_stop_latch(account_login, server: str) -> dict | None:
-    """Fail-closed runtime Emergency Stop latch check before new-order mt5.order_send."""
-    require_latch = str(os.environ.get("ZIQ_V6_REQUIRE_EMERGENCY_STOP_LATCH", "")).strip() == "1"
-    if not require_latch and not EMERGENCY_STOP_LATCH_FILE.exists():
-        return None
-    latch = _read_bound_emergency_stop_latch(
-        EMERGENCY_STOP_LATCH_FILE,
-        account_login=account_login,
-        server=server,
-    )
-    if latch.get("emergencyStopActive") or latch.get("blockNewOrders"):
+def _check_runtime_emergency_stop_latch(account_login, server: str) -> dict:
+    """P0 quarantine: block NEW entry until trusted host release is verified.
+
+    The old opt-in environment flag allowed a missing stop file to silently
+    bypass the gate. A caller-asserted AUTHORIZED_CLEAR record is also not
+    proof of independent operator authentication/Windows key custody. Both
+    conditions MUST block actual orders until a separate trusted runtime
+    release design is accepted. Protective SL/TP remains a separate path.
+    """
+    try:
+        latch = _read_bound_emergency_stop_latch(
+            EMERGENCY_STOP_LATCH_FILE,
+            account_login=account_login,
+            server=server,
+        )
+    except Exception:
+        return {
+            "emergencyStopActive": True,
+            "blockNewOrders": True,
+            "reason": "STOP_LATCH_READ_EXCEPTION_FAIL_CLOSED",
+            "liveAuthorized": False,
+        }
+    if not isinstance(latch, dict):
+        return {
+            "emergencyStopActive": True,
+            "blockNewOrders": True,
+            "reason": "STOP_LATCH_RESULT_UNVERIFIED",
+            "liveAuthorized": False,
+        }
+    if latch.get("emergencyStopActive") is True or latch.get("blockNewOrders") is True:
         return latch
-    return None
+    # This is currently a source-only latch library. Its release path accepts
+    # operator_authenticated as a caller boolean; therefore even a syntactically
+    # AUTHORIZED_CLEAR result cannot yet authorize runtime new entries.
+    return {
+        "emergencyStopActive": True,
+        "blockNewOrders": True,
+        "reason": "STOP_RELEASE_HOST_AUTH_UNVERIFIED",
+        "liveAuthorized": False,
+        "stopCategory": latch.get("stopCategory", "UNVERIFIED"),
+    }
 
 MANAGER_STATE_FILE = RUNTIME_DIR / "v6-position-manager-state.json"
 DAILY_RISK_STATE_FILE = RUNTIME_DIR / "v6-daily-risk-state.json"
