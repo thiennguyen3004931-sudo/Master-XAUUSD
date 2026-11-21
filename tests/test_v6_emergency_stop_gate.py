@@ -27,6 +27,18 @@ INTENT = {
     "accountLogin": 123456,
     "server": "DBGMarkets-Live",
     "requestedVolume": 0.10,
+    "status": "ENTRY_IN_FLIGHT",
+    "createdAtUtc": 1700000000,
+}
+OTHER_ACCOUNT_INTENT = {
+    "symbol": "XAUUSD.G",
+    "side": "SELL",
+    "brokerComment": "XAUUSD_AI_MASTER_V6:xyz98765432",
+    "accountLogin": 999999,
+    "server": "DBGMarkets-Live",
+    "requestedVolume": 0.05,
+    "status": "ENTRY_IN_FLIGHT",
+    "createdAtUtc": 1700000001,
 }
 DEAL = {
     "ticket": 501,
@@ -48,6 +60,79 @@ POSITION = {
 
 
 class EmergencyStopGateTests(unittest.TestCase):
+    def test_freeze_state_shape_verification_fails_closed_on_malformed_and_allows_valid_other_account(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "latch.json"
+            stop = persist_operator_emergency_stop(
+                path, account_login=123456, server="DBGMarkets-Live", operator_id="owner-op", now_utc=1700000000
+            )
+            before_bytes = path.read_text(encoding="utf-8")
+
+            invalid_states = [
+                (None, "UNCERTAIN_ENTRY_STATE_UNVERIFIED"),
+                ("not-a-dict", "UNCERTAIN_ENTRY_STATE_UNVERIFIED"),
+                (["123456|DBGMarkets-Live"], "UNCERTAIN_ENTRY_STATE_UNVERIFIED"),
+                ({"123456|DBGMarkets-Live": INTENT}, "UNCERTAIN_ENTRY_FREEZE_ACTIVE"),
+                ({"bad-key": {}}, "UNCERTAIN_ENTRY_STATE_MALFORMED"),
+                ({"   ": INTENT}, "UNCERTAIN_ENTRY_STATE_MALFORMED"),
+                ({"": INTENT}, "UNCERTAIN_ENTRY_STATE_MALFORMED"),
+                ({" 123456|DBGMarkets-Live ": INTENT}, "UNCERTAIN_ENTRY_STATE_MALFORMED"),
+                ({"999999|DBGMarkets-Live": "corrupt"}, "UNCERTAIN_ENTRY_STATE_MALFORMED"),
+                ({"999999|DBGMarkets-Live": {"accountLogin": 999999}}, "UNCERTAIN_ENTRY_STATE_MALFORMED"),
+            ]
+            for state_arg, expected_reason in invalid_states:
+                with self.subTest(expected_reason=expected_reason):
+                    res = authorize_emergency_stop_release(
+                        path,
+                        account_login=123456,
+                        server="DBGMarkets-Live",
+                        operator_authenticated=True,
+                        operator_id="owner-op",
+                        approval_reason="Check freeze validation",
+                        uncertain_entry_state=state_arg,
+                        expected_stop_revision=stop["stopRevision"],
+                        now_utc=1700000010,
+                    )
+                    self.assertTrue(res["releaseDenied"])
+                    self.assertEqual(res["releaseDeniedReason"], expected_reason)
+                    self.assertEqual(path.read_text(encoding="utf-8"), before_bytes)
+
+            valid_other = {"999999|DBGMarkets-Live": OTHER_ACCOUNT_INTENT}
+            released = authorize_emergency_stop_release(
+                path,
+                account_login=123456,
+                server="DBGMarkets-Live",
+                operator_authenticated=True,
+                operator_id="owner-op",
+                approval_reason="Other account only",
+                uncertain_entry_state=valid_other,
+                expected_stop_revision=stop["stopRevision"],
+                now_utc=1700000020,
+            )
+            self.assertFalse(released["releaseDenied"])
+            self.assertFalse(released["emergencyStopActive"])
+
+            gate_malformed = evaluate_new_order_gate(
+                action_kind=ACTION_NEW_ORDER,
+                latch_path=path,
+                account_login=123456,
+                server="DBGMarkets-Live",
+                uncertain_entry_state={"bad": 1},
+                live_armed=True,
+            )
+            self.assertFalse(gate_malformed["allowed"])
+            self.assertEqual(gate_malformed["reason"], "BLOCKED_ENTRY_STATE_UNAVAILABLE")
+
+            gate_other = evaluate_new_order_gate(
+                action_kind=ACTION_NEW_ORDER,
+                latch_path=path,
+                account_login=123456,
+                server="DBGMarkets-Live",
+                uncertain_entry_state=valid_other,
+                live_armed=True,
+            )
+            self.assertTrue(gate_other["allowedByStopLatchOnly"])
+
     def test_same_second_stops_have_distinct_revisions_and_block_aba_release(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "latch.json"
@@ -179,38 +264,12 @@ class EmergencyStopGateTests(unittest.TestCase):
             self.assertFalse(released["releaseDenied"])
             self.assertFalse(released["emergencyStopActive"])
 
-    def test_account_switch_restart_uncertain_freeze_and_protective_semantics(self):
+    def test_protective_semantics_and_enriched_fill_evidence_mocks_never_clear_freeze(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "latch.json"
-            stop = persist_operator_emergency_stop(
+            persist_operator_emergency_stop(
                 path, account_login=123456, server="DBGMarkets-Live", operator_id="owner-op", now_utc=1700000000
             )
-            frozen = authorize_emergency_stop_release(
-                path,
-                account_login=123456,
-                server="DBGMarkets-Live",
-                operator_authenticated=True,
-                operator_id="owner-op",
-                approval_reason="Try while frozen",
-                uncertain_entry_state={"123456|DBGMarkets-Live": INTENT},
-                expected_stop_revision=stop["stopRevision"],
-            )
-            self.assertTrue(frozen["releaseDenied"])
-            self.assertEqual(frozen["releaseDeniedReason"], "UNCERTAIN_ENTRY_FREEZE_ACTIVE")
-
-            switched = authorize_emergency_stop_release(
-                path,
-                account_login=999999,
-                server="DBGMarkets-Live",
-                operator_authenticated=True,
-                operator_id="owner-op",
-                approval_reason="Wrong account",
-                uncertain_entry_state={},
-                expected_stop_revision=stop["stopRevision"],
-            )
-            self.assertTrue(switched["releaseDenied"])
-            self.assertEqual(switched["releaseDeniedReason"], "REQUIRES_ACTIVE_OPERATOR_STOP")
-
             protective = evaluate_new_order_gate(
                 action_kind=ACTION_PROTECTIVE_SL_TP,
                 latch_path=path,
@@ -222,7 +281,6 @@ class EmergencyStopGateTests(unittest.TestCase):
             self.assertTrue(protective["allowed"])
             self.assertFalse(protective["blockedByStopLatch"])
 
-    def test_enriched_fill_evidence_mocks_never_clear_freeze(self):
         scenarios = [
             ("NO_MATCH_NOT_PROOF_OF_NO_FILL", dict(broker_positions=[], broker_pending_orders=[], broker_deals=[])),
             ("BROKER_PENDING_ORDER_REVIEW", dict(broker_positions=[], broker_pending_orders=[dict(DEAL, ticket=701)], broker_deals=[])),
