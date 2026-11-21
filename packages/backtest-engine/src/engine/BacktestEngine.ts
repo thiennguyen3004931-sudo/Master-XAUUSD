@@ -80,8 +80,12 @@ export class BacktestEngine implements IBacktestEngine {
     new IntrabarPathService();
   private readonly commissionModel: ICommissionModel;
   private readonly slippageModel: ISlippageModel;
+  private readonly explicitCommissionModel: boolean;
+  private readonly explicitSlippageModel: boolean;
 
   constructor(options: BacktestEngineOptions = {}) {
+    this.explicitCommissionModel = options.commissionModel !== undefined;
+    this.explicitSlippageModel = options.slippageModel !== undefined;
     this.commissionModel =
       options.commissionModel ??
       new ZeroCommissionModel();
@@ -140,6 +144,21 @@ export class BacktestEngine implements IBacktestEngine {
       pendingOrdersExpired: 0,
       plansSkippedByCapacity: 0,
       invalidStrategyPlans: 0,
+      brokerFidelity: {
+        scope: "CANDLE_SIMULATION_NOT_BROKER_VERIFIED",
+        brokerStopOutExecutionVerified: false,
+        stopOutLiquidationSimulated: false,
+        intrabarMarginStressSimulated: false,
+        tickOrderedBidAskVerified: false,
+        brokerTradingCostsVerified: false,
+        commissionModelSource: this.explicitCommissionModel
+          ? "INJECTED_MODEL_UNVERIFIED"
+          : "DEFAULT_ZERO_COMMISSION",
+        slippageModelSource: this.explicitSlippageModel
+          ? "INJECTED_MODEL_UNVERIFIED"
+          : "DEFAULT_ZERO_SLIPPAGE",
+        intrabarOrderingAssumption: config.intrabarPriority,
+      },
     };
 
     for (

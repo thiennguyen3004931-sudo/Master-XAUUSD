@@ -53,5 +53,12 @@ describe("execution costs", () => {
 
     expect(result.trades[0]!.commission).toBe(7);
     expect(result.trades[0]!.netPnl).toBeLessThan(200);
+    expect(result.diagnostics.brokerFidelity).toMatchObject({
+      commissionModelSource: "INJECTED_MODEL_UNVERIFIED",
+      slippageModelSource: "INJECTED_MODEL_UNVERIFIED",
+      brokerTradingCostsVerified: false,
+      brokerStopOutExecutionVerified: false,
+      stopOutLiquidationSimulated: false,
+    });
   });
 });

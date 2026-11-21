@@ -93,6 +93,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --test scripts/phase7c-execution-lock.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Backtest broker-fidelity typecheck and regressions (issue 52)
+        run: |
+          pnpm --filter @xauusd/backtest-engine typecheck
+          pnpm --filter @xauusd/backtest-engine test
       - name: Prebuild API for compiled Fixed TP contracts
         run: pnpm --filter @xauusd/api... build
       - name: Broker-native Fixed TP regressions
