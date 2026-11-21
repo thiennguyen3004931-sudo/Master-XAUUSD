@@ -8,12 +8,13 @@ Safety & truthfulness invariants:
 - NEVER imports MetaTrader5, NEVER calls `order_send`, NEVER mutates ARM/config.
 - Always returns `executionEnabled=False`, `runtimePreSendAccepted=False`, and
   `snapshotOrigin="READONLY_NONATOMIC_BEST_EFFORT_BROKER_SNAPSHOT"`.
-- Cross-call race mitigation (best-effort, non-atomic): re-reads `account_info()`,
-  `positions_get()`, and `orders_get()` before and after tick collection and
-  fails closed (`NO_TRADE`) if account identity/equity/margin OR any position/order
-  field (`ticket`, `symbol`, `type`, `volume`, `price_open`, `sl`) drifts.
+- Requires strict positive integer broker ticket/identifier on every position
+  and pending order (no list-index fallback, no duplicate IDs).
+- Requires explicit broker `ORDER_TYPE_*` constants for pending order sides
+  (no hardcoded integer fallback).
+- Cross-call race mitigation: validates account fingerprint and full position /
+  pending-order snapshots before ticks, after ticks, AND again after pricing.
 - Wraps all broker API calls and attribute reads to return `NO_TRADE` on error.
-- Verifies pending order type codes against broker `ORDER_TYPE_*` constants.
 """
 from __future__ import annotations
 
@@ -49,6 +50,18 @@ def _num(value, *, positive: bool = False) -> float | None:
     return x
 
 
+def _positive_ticket(value) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        n = int(value)
+        if n <= 0 or str(n) != str(value).strip():
+            return None
+        return n
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _no_trade(code: str, reason: str, *, extra: dict | None = None) -> dict:
     payload = {
         "ok": False,
@@ -75,13 +88,13 @@ def _read_account_fingerprint(broker) -> tuple[object, tuple[int, str, float, fl
         acc = get_account()
         if acc is None:
             return None
-        login = int(getattr(acc, "login", 0))
+        login = _positive_ticket(getattr(acc, "login", None))
         server = str(getattr(acc, "server", "") or "").strip()
         equity = _num(getattr(acc, "equity", None), positive=True)
         free_margin = _num(getattr(acc, "margin_free", None), positive=True)
     except Exception:
         return None
-    if login <= 0 or not server or equity is None or free_margin is None:
+    if login is None or not server or equity is None or free_margin is None:
         return None
     return acc, (login, server.casefold(), round(equity, 8), round(free_margin, 8))
 
@@ -131,38 +144,30 @@ def _resolve_position_side(broker, raw_type) -> str | None:
 
 
 def _resolve_pending_side(broker, raw_type) -> str | None:
-    """Resolve pending order side using explicit broker ORDER_TYPE_* constants."""
+    """Resolve pending order side strictly from explicit broker ORDER_TYPE_* constants."""
     if isinstance(raw_type, bool) or not isinstance(raw_type, int):
         return None
 
     buy_consts = ("ORDER_TYPE_BUY_LIMIT", "ORDER_TYPE_BUY_STOP", "ORDER_TYPE_BUY_STOP_LIMIT")
     sell_consts = ("ORDER_TYPE_SELL_LIMIT", "ORDER_TYPE_SELL_STOP", "ORDER_TYPE_SELL_STOP_LIMIT")
-    default_buy = (2, 4, 6)
-    default_sell = (3, 5, 7)
-
     buy_codes: set[int] = set()
     sell_codes: set[int] = set()
+
     try:
-        for name, default_val in zip(buy_consts, default_buy):
+        for name in buy_consts:
             val = getattr(broker, name, None)
-            if val is not None:
-                if isinstance(val, bool) or not isinstance(val, int) or val < 0:
-                    return None
-                buy_codes.add(val)
-            else:
-                buy_codes.add(default_val)
-        for name, default_val in zip(sell_consts, default_sell):
+            if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+                return None
+            buy_codes.add(val)
+        for name in sell_consts:
             val = getattr(broker, name, None)
-            if val is not None:
-                if isinstance(val, bool) or not isinstance(val, int) or val < 0:
-                    return None
-                sell_codes.add(val)
-            else:
-                sell_codes.add(default_val)
+            if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+                return None
+            sell_codes.add(val)
     except Exception:
         return None
 
-    if buy_codes & sell_codes:
+    if len(buy_codes) != 3 or len(sell_codes) != 3 or (buy_codes & sell_codes):
         return None
     if raw_type in buy_codes:
         return "BUY"
@@ -184,9 +189,13 @@ def _snapshot_positions(broker) -> tuple[list[tuple], list[dict]] | None:
 
     identities: list[tuple] = []
     records: list[dict] = []
-    for idx, pos in enumerate(raw_positions):
+    seen_tickets: set[int] = set()
+    for pos in raw_positions:
         try:
-            pos_ticket = getattr(pos, "ticket", getattr(pos, "identifier", idx))
+            raw_ticket = getattr(pos, "ticket", None)
+            if raw_ticket is None:
+                raw_ticket = getattr(pos, "identifier", None)
+            pos_ticket = _positive_ticket(raw_ticket)
             pos_sym = str(getattr(pos, "symbol", "") or "").strip()
             raw_type = getattr(pos, "type", None)
             pos_side = _resolve_position_side(broker, raw_type)
@@ -195,8 +204,9 @@ def _snapshot_positions(broker) -> tuple[list[tuple], list[dict]] | None:
             pos_sl = _num(getattr(pos, "sl", None), positive=True)
         except Exception:
             return None
-        if not pos_sym or pos_side is None or None in (pos_vol, pos_entry, pos_sl):
+        if pos_ticket is None or pos_ticket in seen_tickets or not pos_sym or pos_side is None or None in (pos_vol, pos_entry, pos_sl):
             return None
+        seen_tickets.add(pos_ticket)
         identities.append((pos_ticket, pos_sym.casefold(), raw_type, round(pos_vol, 8), round(pos_entry, 6), round(pos_sl, 6)))
         records.append({
             "symbol": pos_sym,
@@ -222,9 +232,10 @@ def _snapshot_pending_orders(broker) -> tuple[list[tuple], list[dict]] | None:
 
     identities: list[tuple] = []
     records: list[dict] = []
-    for idx, order in enumerate(raw_orders):
+    seen_tickets: set[int] = set()
+    for order in raw_orders:
         try:
-            ord_ticket = getattr(order, "ticket", idx)
+            ord_ticket = _positive_ticket(getattr(order, "ticket", None))
             ord_sym = str(getattr(order, "symbol", "") or "").strip()
             raw_type = getattr(order, "type", None)
             ord_side = _resolve_pending_side(broker, raw_type)
@@ -236,8 +247,9 @@ def _snapshot_pending_orders(broker) -> tuple[list[tuple], list[dict]] | None:
             ord_sl = _num(getattr(order, "sl", None), positive=True)
         except Exception:
             return None
-        if not ord_sym or ord_side is None or None in (ord_vol, ord_entry, ord_sl):
+        if ord_ticket is None or ord_ticket in seen_tickets or not ord_sym or ord_side is None or None in (ord_vol, ord_entry, ord_sl):
             return None
+        seen_tickets.add(ord_ticket)
         identities.append((ord_ticket, ord_sym.casefold(), raw_type, round(ord_vol, 8), round(ord_entry, 6), round(ord_sl, 6)))
         records.append({
             "symbol": ord_sym,
@@ -248,6 +260,27 @@ def _snapshot_pending_orders(broker) -> tuple[list[tuple], list[dict]] | None:
         })
     identities.sort()
     return identities, records
+
+
+def _verify_snapshot_unchanged(broker, *, fp_expected, pos_ids_expected, ord_ids_expected) -> dict | None:
+    acc_check = _read_account_fingerprint(broker)
+    if acc_check is None:
+        return _no_trade("BLOCKED_ACCOUNT_UNVERIFIED", "Broker account_info() unavailable on re-check")
+    if acc_check[1] != fp_expected:
+        return _no_trade("BLOCKED_ACCOUNT_SNAPSHOT_CHANGED", "Broker account state changed during snapshot collection")
+
+    pos_check = _snapshot_positions(broker)
+    if pos_check is None:
+        return _no_trade("BLOCKED_OPEN_EXPOSURE_UNVERIFIED", "Broker positions_get() unavailable on re-check")
+    if pos_check[0] != pos_ids_expected:
+        return _no_trade("BLOCKED_INVENTORY_SNAPSHOT_DRIFT", "Open positions changed during snapshot collection")
+
+    ord_check = _snapshot_pending_orders(broker)
+    if ord_check is None:
+        return _no_trade("BLOCKED_PENDING_EXPOSURE_UNVERIFIED", "Broker orders_get() unavailable on re-check")
+    if ord_check[0] != ord_ids_expected:
+        return _no_trade("BLOCKED_INVENTORY_SNAPSHOT_DRIFT", "Pending orders changed during snapshot collection")
+    return None
 
 
 def evaluate_auto_lot_from_broker_session(
@@ -268,7 +301,7 @@ def evaluate_auto_lot_from_broker_session(
     max_quote_age_sec: float = MAX_QUOTE_AGE_SEC,
     dca_layer: bool = False,
 ) -> dict:
-    """Read live account, ticks, open positions, and pending orders with drift checks."""
+    """Read live account, ticks, open positions, and pending orders with pre- and post-pricing drift checks."""
     try:
         now_val = _num(now_utc, positive=True)
         max_age = _num(max_quote_age_sec, positive=True)
@@ -310,23 +343,11 @@ def evaluate_auto_lot_from_broker_session(
             sym_tick = tick_cache[cache_key]
             pos["mark_price"] = sym_tick["bid"] if pos["side"] == "BUY" else sym_tick["ask"]
 
-        acc_second = _read_account_fingerprint(broker)
-        if acc_second is None:
-            return _no_trade("BLOCKED_ACCOUNT_UNVERIFIED", "Broker account_info() unavailable on re-check")
-        if acc_second[1] != fp_first:
-            return _no_trade("BLOCKED_ACCOUNT_SNAPSHOT_CHANGED", "Broker account state changed during snapshot collection")
-
-        pos_second = _snapshot_positions(broker)
-        if pos_second is None:
-            return _no_trade("BLOCKED_OPEN_EXPOSURE_UNVERIFIED", "Broker positions_get() unavailable on re-check")
-        if pos_second[0] != pos_ids_first:
-            return _no_trade("BLOCKED_INVENTORY_SNAPSHOT_DRIFT", "Open positions changed during snapshot collection")
-
-        ord_second = _snapshot_pending_orders(broker)
-        if ord_second is None:
-            return _no_trade("BLOCKED_PENDING_EXPOSURE_UNVERIFIED", "Broker orders_get() unavailable on re-check")
-        if ord_second[0] != ord_ids_first:
-            return _no_trade("BLOCKED_INVENTORY_SNAPSHOT_DRIFT", "Pending orders changed during snapshot collection")
+        pre_pricing_drift = _verify_snapshot_unchanged(
+            broker, fp_expected=fp_first, pos_ids_expected=pos_ids_first, ord_ids_expected=ord_ids_first
+        )
+        if pre_pricing_drift is not None:
+            return pre_pricing_drift
 
         res = evaluate_auto_lot_candidate_from_snapshot(
             broker=broker,
@@ -349,6 +370,13 @@ def evaluate_auto_lot_from_broker_session(
             max_quote_age_sec=max_age,
             dca_layer=dca_layer,
         )
+
+        post_pricing_drift = _verify_snapshot_unchanged(
+            broker, fp_expected=fp_first, pos_ids_expected=pos_ids_first, ord_ids_expected=ord_ids_first
+        )
+        if post_pricing_drift is not None:
+            return post_pricing_drift
+
         res["snapshotOrigin"] = SNAPSHOT_ORIGIN_NOTE
         res["costProvenance"] = COST_PROVENANCE_UNVERIFIED
         res["observedTickSymbols"] = sorted(tick_cache.keys())
