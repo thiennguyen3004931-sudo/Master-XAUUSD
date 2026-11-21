@@ -115,7 +115,16 @@ def recommend_broker_auto_lot_shadow(
     if not isfinite(risk_budget) or risk_budget <= 0:
         return reject("BLOCKED_RISK_BUDGET_EXHAUSTED", "No verified new-order risk budget")
 
-    order_type = getattr(broker, "ORDER_TYPE_BUY", 0) if side == "BUY" else getattr(broker, "ORDER_TYPE_SELL", 1)
+    # Never guess broker API order-type codes: assumptions can price the wrong
+    # side and produce an unsafe volume even in shadow diagnostics.
+    buy_type = getattr(broker, "ORDER_TYPE_BUY", None)
+    sell_type = getattr(broker, "ORDER_TYPE_SELL", None)
+    if (not isinstance(buy_type, int) or isinstance(buy_type, bool)
+            or not isinstance(sell_type, int) or isinstance(sell_type, bool)
+            or buy_type < 0 or sell_type < 0 or buy_type == sell_type):
+        return reject("BLOCKED_BROKER_ORDER_TYPE_UNVERIFIED",
+                      "Broker BUY/SELL order-type constants are missing or invalid")
+    order_type = buy_type if side == "BUY" else sell_type
     def price_at(steps):
         lot = float(step * steps)
         try:
