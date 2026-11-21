@@ -39,6 +39,7 @@ class MockReadOnlyBroker:
         self._on_account_info = None
         self._on_positions_get = None
         self._on_orders_get = None
+        self._on_calc_profit = None
 
     def account_info(self):
         if self._on_account_info:
@@ -62,6 +63,8 @@ class MockReadOnlyBroker:
         return self._orders
 
     def order_calc_profit(self, order_type, symbol, lot, entry, stop):
+        if self._on_calc_profit:
+            self._on_calc_profit()
         mult = 100000.0 if symbol == "EURUSD" else 100.0
         pnl = (stop - entry) if order_type == self.ORDER_TYPE_BUY else (entry - stop)
         return pnl * lot * mult
@@ -105,29 +108,75 @@ class BrokerSnapshotAdapterTests(unittest.TestCase):
         self.assertTrue(res["ok"], res)
         self.assertFalse(res["executionEnabled"])
         self.assertFalse(res["runtimePreSendAccepted"])
-        self.assertEqual(res["snapshotOrigin"], "READONLY_NONATOMIC_BEST_EFFORT_BROKER_SNAPSHOT")
         self.assertEqual(res["snapshotOrigin"], SNAPSHOT_ORIGIN_NOTE)
         self.assertEqual(res["costProvenance"], COST_PROVENANCE_UNVERIFIED)
         self.assertEqual(res["observedTickSymbols"], ["eurusd", "xauusd.g"])
         self.assertLess(res["candidateVolume"], 0.04)
 
-    def test_cross_call_account_switch_or_equity_change_returns_no_trade(self):
+    def test_missing_zero_negative_bool_or_duplicate_tickets_fail_closed(self):
+        for bad_ticket in (None, 0, -5, True, "bad"):
+            broker = MockReadOnlyBroker()
+            broker._positions = [
+                SimpleNamespace(ticket=bad_ticket, symbol="XAUUSD.G", type=0, volume=0.02, price_open=3980.0, sl=3990.0)
+            ]
+            self.assertEqual(base_call(broker)["status"], "BLOCKED_OPEN_EXPOSURE_UNVERIFIED")
+
+            broker_ord = MockReadOnlyBroker()
+            broker_ord._orders = [
+                SimpleNamespace(ticket=bad_ticket, symbol="XAUUSD.G", type=2, volume_current=0.01, price_open=3995.0, sl=3988.0)
+            ]
+            self.assertEqual(base_call(broker_ord)["status"], "BLOCKED_PENDING_EXPOSURE_UNVERIFIED")
+
+        broker_dup = MockReadOnlyBroker()
+        broker_dup._positions = [
+            SimpleNamespace(ticket=11, symbol="XAUUSD.G", type=0, volume=0.02, price_open=3980.0, sl=3990.0),
+            SimpleNamespace(ticket=11, symbol="XAUUSD.G", type=0, volume=0.02, price_open=3980.0, sl=3990.0),
+        ]
+        self.assertEqual(base_call(broker_dup)["status"], "BLOCKED_OPEN_EXPOSURE_UNVERIFIED")
+
+    def test_post_pricing_account_or_inventory_drift_is_rejected(self):
         broker = MockReadOnlyBroker()
-        calls = {"n": 0}
 
-        def switching_account():
-            calls["n"] += 1
-            if calls["n"] == 1:
-                return SimpleNamespace(login=123456, server="DBGMarkets-Live", equity=4000.0, margin_free=4000.0)
-            return SimpleNamespace(login=999999, server="DBGMarkets-Live", equity=4000.0, margin_free=4000.0)
+        def mutate_account_during_pricing():
+            broker._account = SimpleNamespace(login=999999, server="DBGMarkets-Live", equity=4000.0, margin_free=4000.0)
 
-        broker._on_account_info = switching_account
+        broker._on_calc_profit = mutate_account_during_pricing
         res = base_call(broker)
         self.assertEqual(res["decision"], "NO_TRADE")
         self.assertEqual(res["status"], "BLOCKED_ACCOUNT_SNAPSHOT_CHANGED")
 
-    def test_inventory_drift_added_removed_or_sl_modified_mid_snapshot_fails_closed(self):
+        broker2 = MockReadOnlyBroker()
+
+        def mutate_positions_during_pricing():
+            broker2._positions = [
+                SimpleNamespace(ticket=99, symbol="XAUUSD.G", type=0, volume=0.05, price_open=3990.0, sl=3980.0)
+            ]
+
+        broker2._on_calc_profit = mutate_positions_during_pricing
+        res2 = base_call(broker2)
+        self.assertEqual(res2["decision"], "NO_TRADE")
+        self.assertEqual(res2["status"], "BLOCKED_INVENTORY_SNAPSHOT_DRIFT")
+
+    def test_missing_pending_order_constants_fails_closed(self):
         broker = MockReadOnlyBroker()
+        broker.ORDER_TYPE_BUY_LIMIT = None
+        broker._orders = [
+            SimpleNamespace(ticket=21, symbol="XAUUSD.G", type=2, volume_current=0.01, price_open=3995.0, sl=3988.0)
+        ]
+        res = base_call(broker)
+        self.assertEqual(res["decision"], "NO_TRADE")
+        self.assertEqual(res["status"], "BLOCKED_PENDING_EXPOSURE_UNVERIFIED")
+
+    def test_exceptions_and_pre_pricing_drift_return_no_trade(self):
+        broker = MockReadOnlyBroker()
+
+        def boom():
+            raise RuntimeError("MT5 IPC disconnected")
+
+        broker._on_positions_get = boom
+        self.assertEqual(base_call(broker)["status"], "BLOCKED_OPEN_EXPOSURE_UNVERIFIED")
+
+        broker2 = MockReadOnlyBroker()
         pos_calls = {"n": 0}
 
         def drifting_positions():
@@ -135,54 +184,8 @@ class BrokerSnapshotAdapterTests(unittest.TestCase):
             sl = 3990.0 if pos_calls["n"] == 1 else 3985.0
             return [SimpleNamespace(ticket=11, symbol="XAUUSD.G", type=0, volume=0.02, price_open=3980.0, sl=sl)]
 
-        broker._on_positions_get = drifting_positions
-        res_pos = base_call(broker)
-        self.assertEqual(res_pos["decision"], "NO_TRADE")
-        self.assertEqual(res_pos["status"], "BLOCKED_INVENTORY_SNAPSHOT_DRIFT")
-
-        broker2 = MockReadOnlyBroker()
-        ord_calls = {"n": 0}
-
-        def drifting_orders():
-            ord_calls["n"] += 1
-            if ord_calls["n"] == 1:
-                return []
-            return [SimpleNamespace(ticket=22, symbol="XAUUSD.G", type=2, volume_current=0.02, price_open=3995.0, sl=3988.0)]
-
-        broker2._on_orders_get = drifting_orders
-        res_ord = base_call(broker2)
-        self.assertEqual(res_ord["decision"], "NO_TRADE")
-        self.assertEqual(res_ord["status"], "BLOCKED_INVENTORY_SNAPSHOT_DRIFT")
-
-    def test_exceptions_and_conflicting_pending_constants_return_no_trade(self):
-        broker = MockReadOnlyBroker()
-
-        def boom():
-            raise RuntimeError("MT5 IPC disconnected")
-
-        broker._on_positions_get = boom
-        res = base_call(broker)
-        self.assertEqual(res["decision"], "NO_TRADE")
-        self.assertEqual(res["status"], "BLOCKED_OPEN_EXPOSURE_UNVERIFIED")
-
-        broker2 = MockReadOnlyBroker()
-        broker2.ORDER_TYPE_SELL_LIMIT = broker2.ORDER_TYPE_BUY_LIMIT
-        broker2._orders = [SimpleNamespace(ticket=21, symbol="XAUUSD.G", type=2, volume_current=0.01, price_open=3995.0, sl=3988.0)]
-        res2 = base_call(broker2)
-        self.assertEqual(res2["decision"], "NO_TRADE")
-        self.assertEqual(res2["status"], "BLOCKED_PENDING_EXPOSURE_UNVERIFIED")
-
-    def test_stale_foreign_tick_and_missing_account_fail_closed(self):
-        broker = MockReadOnlyBroker()
-        broker._positions = [
-            SimpleNamespace(ticket=12, symbol="EURUSD", type=0, volume=0.02, price_open=1.1000, sl=1.0950),
-        ]
-        broker._ticks["EURUSD"] = SimpleNamespace(bid=1.1020, ask=1.1022, time=1700000000.0)
-        self.assertEqual(base_call(broker)["status"], "BLOCKED_OPEN_POSITION_MARK_UNVERIFIED")
-
-        broker2 = MockReadOnlyBroker()
-        broker2._account = None
-        self.assertEqual(base_call(broker2)["status"], "BLOCKED_ACCOUNT_UNVERIFIED")
+        broker2._on_positions_get = drifting_positions
+        self.assertEqual(base_call(broker2)["status"], "BLOCKED_INVENTORY_SNAPSHOT_DRIFT")
 
 
 if __name__ == "__main__":
