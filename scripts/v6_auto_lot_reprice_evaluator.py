@@ -6,11 +6,12 @@ WITHOUT routing into LIVE execution (`executionEnabled` is always `False`).
 Truthfulness & trust boundary:
 - All quote, position, pending-order, and cost inputs are caller-supplied
   snapshots (`evidenceSource = CALLER_SUPPLIED_SNAPSHOT_ASSUMED_NOT_BROKER_RUNTIME_PROOF`).
-- This module never independently polls MT5 or certifies LIVE pre-send safety.
-- Binds candidate provenance (`accountLogin`, `server`, `symbol`, `side`,
-  `riskPercent`, `dcaLayer`, `executionEnabled=False`) before repricing.
-- Recomputes floor-aligned volume against fresh broker `min/max/step` and
-  re-verifies `order_calc_profit` & `order_calc_margin` for the exact lot.
+- `candidateMetadata` is a caller-supplied consistency check ONLY, NOT
+  cryptographic authenticity (`metadataTrustBoundary = CALLER_SUPPLIED_METADATA_NOT_CRYPTOGRAPHIC_AUTHENTICITY`).
+- Open-position exposure accounts for mark-to-stop equity drawdown against live
+  equity (never undercounting profitable trailing SLs as 0 risk). Every open
+  position must provide an explicit valid `mark_price`, or evaluation fails
+  closed with `BLOCKED_OPEN_EXPOSURE_UNVERIFIED`.
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ except ImportError:
 
 DEFAULT_MAX_SPREAD_POINTS = 65.0
 EVIDENCE_SOURCE_NOTE = "CALLER_SUPPLIED_SNAPSHOT_ASSUMED_NOT_BROKER_RUNTIME_PROOF"
+METADATA_TRUST_NOTE = "CALLER_SUPPLIED_METADATA_NOT_CRYPTOGRAPHIC_AUTHENTICITY"
 
 
 def _num(value, *, positive: bool = False) -> float | None:
@@ -79,6 +81,7 @@ def _no_trade(code: str, reason: str, *, extra: dict | None = None) -> dict:
         "executionEnabled": False,
         "runtimePreSendAccepted": False,
         "evidenceSource": EVIDENCE_SOURCE_NOTE,
+        "metadataTrustBoundary": METADATA_TRUST_NOTE,
         "candidateVolume": None,
         "status": code,
         "reason": reason,
@@ -104,15 +107,50 @@ def _resolve_order_types(broker) -> tuple[int, int] | None:
     return buy_type, sell_type
 
 
-def _price_exposure_collection(
-    broker,
-    items,
-    *,
-    buy_type: int,
-    sell_type: int,
-    allow_profitable_trailing_sl: bool,
-) -> float | None:
-    """Calculate adverse SL risk across open positions or pending orders."""
+def _price_open_positions_equity_risk(broker, items, *, buy_type: int, sell_type: int) -> tuple[float, float] | None:
+    """Compute (risk_to_original_cost_usd, mark_to_stop_equity_drawdown_usd) for open positions."""
+    if not isinstance(items, (list, tuple)):
+        return None
+    calc_profit = getattr(broker, "order_calc_profit", None)
+    if not callable(calc_profit):
+        return None
+
+    cost_risk_total = 0.0
+    mark_drawdown_total = 0.0
+    for item in items:
+        if not isinstance(item, dict):
+            return None
+        sym = str(item.get("symbol") or "").strip()
+        side = str(item.get("side") or "").strip().upper()
+        vol = _num(item.get("volume"), positive=True)
+        entry = _num(item.get("price_open"), positive=True)
+        sl = _num(item.get("sl"), positive=True)
+        mark = _num(item.get("mark_price"), positive=True)
+        if not sym or side not in ("BUY", "SELL") or None in (vol, entry, sl, mark):
+            return None
+
+        if (side == "BUY" and mark <= sl) or (side == "SELL" and mark >= sl):
+            return None
+
+        order_type = buy_type if side == "BUY" else sell_type
+        try:
+            pnl_from_entry = float(calc_profit(order_type, sym, vol, entry, sl))
+            pnl_from_mark = float(calc_profit(order_type, sym, vol, mark, sl))
+        except Exception:
+            return None
+        if not (isfinite(pnl_from_entry) and isfinite(pnl_from_mark)) or pnl_from_mark >= 0:
+            return None
+
+        cost_risk = max(0.0, -pnl_from_entry) * ADVERSE_GAP_BUFFER
+        mark_drawdown = (-pnl_from_mark) * ADVERSE_GAP_BUFFER
+        cost_risk_total += cost_risk
+        mark_drawdown_total += max(cost_risk, mark_drawdown)
+
+    return round(cost_risk_total, 6), round(mark_drawdown_total, 6)
+
+
+def _price_pending_orders_risk(broker, items, *, buy_type: int, sell_type: int) -> float | None:
+    """Compute adverse SL risk for pending orders (SL must be on adverse side of price_open)."""
     if not isinstance(items, (list, tuple)):
         return None
     calc_profit = getattr(broker, "order_calc_profit", None)
@@ -130,22 +168,15 @@ def _price_exposure_collection(
         sl = _num(item.get("sl"), positive=True)
         if not sym or side not in ("BUY", "SELL") or None in (vol, entry, sl):
             return None
-
-        adverse_side = (sl < entry) if side == "BUY" else (sl > entry)
-        if not adverse_side and not allow_profitable_trailing_sl:
+        if (side == "BUY" and sl >= entry) or (side == "SELL" and sl <= entry):
             return None
-
         order_type = buy_type if side == "BUY" else sell_type
         try:
             pnl = float(calc_profit(order_type, sym, vol, entry, sl))
         except Exception:
             return None
-        if not isfinite(pnl):
+        if not isfinite(pnl) or pnl >= 0:
             return None
-        if pnl >= 0:
-            if not allow_profitable_trailing_sl:
-                return None
-            continue
         total_risk += (-pnl) * ADVERSE_GAP_BUFFER
     return round(total_risk, 6)
 
@@ -243,15 +274,15 @@ def evaluate_auto_lot_candidate_from_snapshot(
     if total_costs_per_lot <= 0 and allow_zero_cost is not True:
         return _no_trade("BLOCKED_COST_UNVERIFIED", "Zero round-trip cost rejected unless explicitly attested")
 
-    open_risk = _price_exposure_collection(
-        broker, broker_positions, buy_type=buy_type, sell_type=sell_type, allow_profitable_trailing_sl=True
-    )
-    if open_risk is None:
-        return _no_trade("BLOCKED_OPEN_EXPOSURE_UNVERIFIED", "Open position SL risk could not be verified")
+    open_priced = _price_open_positions_equity_risk(broker, broker_positions, buy_type=buy_type, sell_type=sell_type)
+    if open_priced is None:
+        return _no_trade(
+            "BLOCKED_OPEN_EXPOSURE_UNVERIFIED",
+            "Open position mark-to-stop equity risk could not be verified (missing/invalid mark_price or SL)",
+        )
+    open_cost_risk_usd, open_mark_drawdown_usd = open_priced
 
-    pending_risk = _price_exposure_collection(
-        broker, broker_pending_orders, buy_type=buy_type, sell_type=sell_type, allow_profitable_trailing_sl=False
-    )
+    pending_risk = _price_pending_orders_risk(broker, broker_pending_orders, buy_type=buy_type, sell_type=sell_type)
     if pending_risk is None:
         return _no_trade("BLOCKED_PENDING_EXPOSURE_UNVERIFIED", "Pending order SL risk could not be verified")
 
@@ -266,7 +297,7 @@ def evaluate_auto_lot_candidate_from_snapshot(
         risk_percent,
         quote_fresh=True,
         quote_age_seconds=quote_age,
-        existing_sl_risk_usd=open_risk,
+        existing_sl_risk_usd=open_mark_drawdown_usd,
         pending_sl_risk_usd=pending_risk,
         daily_remaining_risk_usd=daily_remaining_risk_usd,
         costs_usd_per_lot=total_costs_per_lot,
@@ -278,10 +309,15 @@ def evaluate_auto_lot_candidate_from_snapshot(
         return _no_trade(
             str(shadow_res.get("status") or "BLOCKED_SHADOW_REJECTED"),
             str(shadow_res.get("reason") or "Shadow auto-lot rejected"),
-            extra={"spreadPoints": spread_points, "openRiskUsd": open_risk, "pendingRiskUsd": pending_risk},
+            extra={
+                "spreadPoints": spread_points,
+                "openRiskToOriginalCostUsd": open_cost_risk_usd,
+                "openMarkToStopEquityDrawdownUsd": open_mark_drawdown_usd,
+                "pendingRiskUsd": pending_risk,
+            },
         )
 
-    fingerprint = {
+    metadata = {
         "accountLogin": exp_login,
         "server": exp_server.casefold(),
         "symbol": sym.casefold(),
@@ -296,12 +332,14 @@ def evaluate_auto_lot_candidate_from_snapshot(
         "executionEnabled": False,
         "runtimePreSendAccepted": False,
         "evidenceSource": EVIDENCE_SOURCE_NOTE,
-        "candidateFingerprint": fingerprint,
+        "metadataTrustBoundary": METADATA_TRUST_NOTE,
+        "candidateMetadata": metadata,
         "entryPrice": entry_price,
         "spreadPoints": spread_points,
-        "openRiskUsd": open_risk,
+        "openRiskToOriginalCostUsd": open_cost_risk_usd,
+        "openMarkToStopEquityDrawdownUsd": open_mark_drawdown_usd,
         "pendingRiskUsd": pending_risk,
-        "combinedExistingRiskUsd": round(open_risk + pending_risk, 6),
+        "combinedExistingRiskUsd": round(open_mark_drawdown_usd + pending_risk, 6),
     }
 
 
@@ -329,29 +367,29 @@ def reprice_auto_lot_before_send(
     dca_layer: bool = False,
     partial_fill_existing_volume: float = 0.0,
 ) -> dict:
-    """Shadow reprice against fresh snapshot; enforces provenance, DCA policy, and fresh min/step."""
+    """Shadow reprice against fresh snapshot; checks metadata consistency, DCA policy, and fresh min/step."""
     if not isinstance(initial_candidate, dict) or not initial_candidate.get("ok"):
         return _no_trade("BLOCKED_INITIAL_CANDIDATE_INVALID", "Initial shadow candidate is not valid")
     if initial_candidate.get("executionEnabled") is not False:
-        return _no_trade("BLOCKED_FORGED_EXECUTION_FLAG", "Shadow repricer rejects executionEnabled != False")
+        return _no_trade("BLOCKED_UNSUPPORTED_EXECUTION_FLAG", "Shadow repricer rejects executionEnabled != False")
 
-    fp = initial_candidate.get("candidateFingerprint")
+    meta_in = initial_candidate.get("candidateMetadata")
     exp_login = _positive_int(expected_account_login)
     exp_server = str(expected_server or "").strip().casefold()
     sym_norm = str(symbol or "").strip().casefold()
     side_norm = str(side or "").strip().upper()
-    if not isinstance(fp, dict):
-        return _no_trade("BLOCKED_CANDIDATE_PROVENANCE_UNVERIFIED", "Initial candidate fingerprint missing")
+    if not isinstance(meta_in, dict):
+        return _no_trade("BLOCKED_CANDIDATE_METADATA_MISSING", "Caller-supplied candidateMetadata missing")
     if (
-        fp.get("accountLogin") != exp_login
-        or fp.get("server") != exp_server
-        or fp.get("symbol") != sym_norm
-        or fp.get("side") != side_norm
-        or fp.get("riskPercent") != _num(risk_percent, positive=True)
-        or fp.get("executionEnabled") is not False
+        meta_in.get("accountLogin") != exp_login
+        or meta_in.get("server") != exp_server
+        or meta_in.get("symbol") != sym_norm
+        or meta_in.get("side") != side_norm
+        or meta_in.get("riskPercent") != _num(risk_percent, positive=True)
+        or meta_in.get("executionEnabled") is not False
     ):
-        return _no_trade("BLOCKED_CANDIDATE_PROVENANCE_MISMATCH", "Initial candidate provenance does not match fresh request")
-    if fp.get("dcaLayer") is True or dca_layer is True:
+        return _no_trade("BLOCKED_CANDIDATE_METADATA_MISMATCH", "Caller-supplied candidateMetadata does not match fresh request")
+    if meta_in.get("dcaLayer") is True or dca_layer is True:
         return _no_trade("BLOCKED_DCA_POLICY_UNVERIFIED", "DCA requires a separate approved risk policy")
 
     initial_vol = _decimal(initial_candidate.get("candidateVolume"))
