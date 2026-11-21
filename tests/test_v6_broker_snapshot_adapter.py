@@ -191,7 +191,7 @@ class BrokerSnapshotAdapterTests(unittest.TestCase):
                 def changing_order():
                     reads["count"] += 1
                     updated = {changed_field: altered} if reads["count"] > 1 else {}
-                    return [make_pending_order(type=6, price_stoplimit=3993.0, **updated)]
+                    return [make_pending_order(**dict({"type": 6, "price_stoplimit": 3993.0}, **updated))]
 
                 broker._on_orders_get = changing_order
                 res = base_call(broker)
