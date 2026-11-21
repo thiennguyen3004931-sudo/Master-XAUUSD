@@ -87,7 +87,7 @@ describe("BrokerFaithfulStopOutReplay (G3 #52)", () => {
     });
 
     expect(res.ok).toBe(true);
-    expect(res.fidelity.brokerStopOutExecutionVerified).toBe(true);
+    expect(res.fidelity.brokerStopOutExecutionVerified).toBe(false);
     expect(res.fidelity.tickOrderedBidAskVerified).toBe(true);
     const slExit = res.ledger.find((e) => e.eventType === "SL_EXIT");
     expect(slExit).toBeDefined();
@@ -149,4 +149,44 @@ describe("BrokerFaithfulStopOutReplay (G3 #52)", () => {
     expect(res.ledger[0]!.timestampMs).toBe(2000);
     expect(res.ledger[0]!.executionPrice).toBe(2010.2);
   });
+  it("refuses NETTING rather than pretending that opposite orders are broker rejected", () => {
+    const res = runBrokerFaithfulStopOutReplay({
+      initialBalance: 1000,
+      ticks: [makeTick(1000, 2000, 2000.2)],
+      orders: [{ id: "net-1", side: "BUY", volume: 0.1, submittedAtMs: 1000 }],
+      contract: { ...BASE_CONTRACT, accountMode: "NETTING" },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.rejectionReason).toBe("NETTING_REPLAY_NOT_IMPLEMENTED");
+    expect(res.fidelity.brokerStopOutExecutionVerified).toBe(false);
+  });
+
+  it("rejects duplicate IDs, invalid stops and missing order inventory instead of silently skipping", () => {
+    const good = { id: "duplicate", side: "BUY" as const, volume: 0.1, submittedAtMs: 1000 };
+    const base = { initialBalance: 1000, ticks: [makeTick(1000, 2000, 2000.2)], contract: BASE_CONTRACT };
+    expect(runBrokerFaithfulStopOutReplay({ ...base, orders: [good, { ...good }] }).rejectionReason)
+      .toBe("ORDER_INTENT_INVALID");
+    expect(runBrokerFaithfulStopOutReplay({ ...base, orders: [{ ...good, stopLoss: -5 }] }).rejectionReason)
+      .toBe("ORDER_INTENT_INVALID");
+    expect(runBrokerFaithfulStopOutReplay({ ...base, orders: null as unknown as typeof good[] }).rejectionReason)
+      .toBe("ORDER_INTENTS_UNVERIFIED");
+  });
+
+  it("orders competing same-tick entries by submission timestamp, not caller array order", () => {
+    const res = runBrokerFaithfulStopOutReplay({
+      initialBalance: 500,
+      ticks: [makeTick(2000, 2000, 2000)],
+      orders: [
+        { id: "later", side: "BUY", volume: 0.2, submittedAtMs: 1500 },
+        { id: "earlier", side: "BUY", volume: 0.2, submittedAtMs: 1000 },
+      ],
+      contract: { ...BASE_CONTRACT, commissionPerLotRoundTrip: 0, slippagePerLotRoundTrip: 0 },
+    });
+    expect(res.ok).toBe(true);
+    expect(res.ledger.filter(e => e.eventType === "ENTRY_FILL").map(e => e.orderId))
+      .toEqual(["earlier"]);
+    expect(res.rejectedOrderIds).toEqual(["later"]);
+    expect(res.fidelity.brokerStopOutExecutionVerified).toBe(false);
+  });
+
 });
