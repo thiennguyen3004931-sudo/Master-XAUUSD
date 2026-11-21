@@ -221,7 +221,9 @@ export function runBrokerFaithfulStopOutReplay(
       !isFinitePositive(tick.bid) ||
       !isFinitePositive(tick.ask) ||
       tick.ask < tick.bid ||
-      tick.timestampMs < prevTs
+      // No trustworthy event sequence is available for two quotes carrying
+      // the same millisecond timestamp; refuse ambiguous quote ordering.
+      tick.timestampMs <= prevTs
     ) {
       return refused("TICK_PATH_UNVERIFIED", request.initialBalance);
     }
@@ -433,8 +435,10 @@ export function runBrokerFaithfulStopOutReplay(
       }
 
       if (openPositions.some((p) => p.side !== intent.side)) {
-        rejectedOrderIds.push(intent.id);
-        continue;
+        // HEDGING brokers ordinarily allow opposing legs. This toy margin
+        // ledger cannot price hedged collateral relief or offsetting margin.
+        // Refuse the WHOLE scenario rather than falsely mark broker rejection.
+        return refused("HEDGED_MARGIN_POLICY_UNVERIFIED", request.initialBalance);
       }
 
       const fillPrice = intent.side === "BUY" ? tick.ask : tick.bid;
@@ -509,8 +513,10 @@ export function runBrokerFaithfulStopOutReplay(
       brokerStopOutExecutionVerified: false,
       stopOutLiquidationSimulated: true,
       intrabarMarginStressSimulated: true,
-      tickOrderedBidAskVerified: true,
-      brokerTradingCostsVerified: contract.costsVerified,
+      // These flags mean independently proven broker fidelity, not caller
+      // assertions. Price stream and costs are supplied to an offline model.
+      tickOrderedBidAskVerified: false,
+      brokerTradingCostsVerified: false,
       callerSuppliedContractAssumed: true,
       hedgedMarginReliefVerified: false,
     },
