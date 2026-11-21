@@ -88,7 +88,10 @@ def parse_icacls_output(stdout_text: str) -> dict:
     return {
         "aceCount": len(aces),
         "broadWriteGrants": broad_write_grants,
-        "nonAdminWriteDenied": len(aces) > 0 and len(broad_write_grants) == 0,
+        # Text scanning cannot establish Windows *effective* access. Deny
+        # any authority-sounding conclusion even when no broad ACE is found.
+        "noBroadWriteAceFoundByTextScan": len(aces) > 0 and len(broad_write_grants) == 0,
+        "nonAdminWriteDenied": False,
     }
 
 
@@ -133,14 +136,16 @@ def inspect_path_acl(
                     "reason": f"ICACLS_FAILED_RC_{proc.returncode}",
                 }
             parsed = parse_icacls_output(proc.stdout)
-            verified = parsed["nonAdminWriteDenied"]
+            no_broad_ace_observed = parsed["noBroadWriteAceFoundByTextScan"]
             return {
                 **chain,
                 "exists": True,
                 "platform": "Windows",
                 "icacls": parsed,
-                "windowsHostAclVerified": verified,
-                "reason": "WINDOWS_ICACLS_VERIFIED" if verified else "BROAD_WRITE_ACE_DETECTED",
+                "aclTextNoBroadWriteAceObserved": no_broad_ace_observed,
+                "windowsHostAclVerified": False,
+                "reason": "WINDOWS_ICACLS_TEXT_REQUIRES_EFFECTIVE_ACCESS_REVIEW"
+                    if no_broad_ace_observed else "BROAD_WRITE_ACE_DETECTED",
             }
         except Exception as exc:
             return {
@@ -194,7 +199,8 @@ def inspect_key_custody_metadata(
     os_name_override: str | None = None,
 ) -> dict:
     """Inspect key-custody state WITHOUT ever reading or returning secret values."""
-    env_present = bool(os.environ.get(control_token_env_name))
+    # Membership tests whether a token is configured without retrieving its value.
+    env_present = control_token_env_name in os.environ
     dpapi_info: dict = {"configured": dpapi_blob_path is not None}
     if dpapi_blob_path is not None:
         dpapi_acl = inspect_path_acl(
@@ -244,13 +250,6 @@ def collect_readonly_host_provenance_report(
     )
     process_id = collect_process_identity()
 
-    overall_windows_acl = bool(
-        runtime_acl.get("windowsHostAclVerified") is True
-        and latch_acl.get("windowsHostAclVerified") is True
-        and not runtime_acl.get("reparseOrSymlinkDetected")
-        and not latch_acl.get("reparseOrSymlinkDetected")
-    )
-
     body = {
         "schemaVersion": 1,
         "probeScope": "READONLY_HOST_PROVENANCE_NO_TRADE_NO_SECRETS",
@@ -264,7 +263,13 @@ def collect_readonly_host_provenance_report(
             "lockFileExists": lock_file.exists(),
         },
         "keyCustodyMetadata": custody,
-        "overallWindowsHostAclVerified": overall_windows_acl,
+        "overallWindowsHostAclVerified": False,
+        "aclTextNoBroadWriteAceObserved": bool(
+            runtime_acl.get("aclTextNoBroadWriteAceObserved") is True
+            and latch_acl.get("aclTextNoBroadWriteAceObserved") is True
+        ),
+        "operatorIdentityVerified": False,
+        "keyCustodyVerified": False,
         "liveAuthorized": False,
     }
     canonical_json = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
