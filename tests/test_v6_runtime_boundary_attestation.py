@@ -35,6 +35,7 @@ class RuntimeBoundaryAttestationTests(unittest.TestCase):
     def test_ast_mapper_classifies_all_four_known_sites_and_rejects_unknown_site(self):
         mapped = map_mt5_order_send_call_sites(SAMPLE_PROBE_SNIPPET)
         self.assertTrue(mapped["allCallSitesClassified"])
+        self.assertFalse(mapped["allPossibleOrderSendPathsVerified"])
         self.assertEqual(mapped["totalCallSites"], 4)
         self.assertEqual(len(mapped["newEntrySites"]), 1)
         self.assertEqual(mapped["newEntrySites"][0]["function"], "_execute_order_serialized")
@@ -66,7 +67,9 @@ class RuntimeBoundaryAttestationTests(unittest.TestCase):
             entry_lock_held=False,
             pending_marker_persisted=False,
         )
-        self.assertTrue(prot["allowed"])
+        self.assertFalse(prot["allowed"])
+        self.assertTrue(prot["protectiveUnaffectedByNewEntryLatch"])
+        self.assertFalse(prot["liveAuthorized"])
 
         mismatch_acct = evaluate_action_boundary(
             action_category="NEW_ORDER_ENTRY",
@@ -115,7 +118,7 @@ class RuntimeBoundaryAttestationTests(unittest.TestCase):
                 now_utc=1700000000,
             )
             self.assertTrue(res1["latchedUncertain"])
-            self.assertEqual(res1["reason"], "UNKNOWN_OR_UNCONFIRMED_ORDER_ACK")
+            self.assertEqual(res1["reason"], "MOCK_ACK_NOT_BROKER_CONFIRMED")
 
             # Simulated restart with a fresh lock must still fail closed due to marker on disk
             fresh_lock = threading.Lock()
@@ -134,10 +137,10 @@ class RuntimeBoundaryAttestationTests(unittest.TestCase):
             )
             self.assertFalse(res2["sent"])
             self.assertTrue(res2["latchedUncertain"])
-            self.assertEqual(res2["reason"], "PRIOR_UNCERTAIN_ENTRY_MARKER_BLOCKS_NEW_ORDER")
+            self.assertEqual(res2["reason"], "PRIOR_UNVERIFIED_ENTRY_MARKER_BLOCKS_NEW_ORDER")
             self.assertEqual(called, [])
 
-    def test_exception_during_order_send_latches_and_confirmed_done_succeeds(self):
+    def test_exception_during_order_send_latches_and_mock_success_is_still_unverified(self):
         with tempfile.TemporaryDirectory() as folder:
             marker_crash = Path(folder) / "crash.json"
             lock = threading.Lock()
@@ -175,8 +178,62 @@ class RuntimeBoundaryAttestationTests(unittest.TestCase):
                 now_utc=1700000020,
             )
             self.assertTrue(res_ok["sent"])
-            self.assertFalse(res_ok["latchedUncertain"])
-            self.assertEqual(res_ok["reason"], "CONFIRMED_DONE")
+            self.assertTrue(res_ok["latchedUncertain"])
+            self.assertEqual(res_ok["reason"], "MOCK_ACK_NOT_BROKER_CONFIRMED")
+            self.assertTrue(res_ok["marker"]["mockAckLooksSuccessful"])
+            self.assertEqual(json.loads(marker_ok.read_text(encoding="utf-8"))["status"], "UNKNOWN_ACK")
+            self.assertFalse(res_ok["liveAuthorized"])
+
+
+    def test_existing_unrecognized_or_nondict_marker_blocks_mock_send(self):
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder) / "latch.json"
+            for text in (
+                '{"status": "UNRECOGNIZED_LEGACY_STATUS"}',
+                '{"status": "CONFIRMED_DONE", "order": 7}',
+                '[]',
+                '{"status": "ABORTED_BEFORE_SEND"}',
+                'not valid json',
+            ):
+                with self.subTest(contents=text):
+                    marker.write_text(text, encoding="utf-8")
+                    before = marker.read_bytes()
+                    submitted = []
+                    result = simulate_locked_new_order_with_pending_marker(
+                        entry_lock=threading.Lock(), pending_marker_path=marker,
+                        request_id="no-retry", expected_account_login=1001,
+                        expected_server="Broker-Demo", observed_account_login=1001,
+                        observed_server="Broker-Demo", emergency_stop_active=False,
+                        mock_order_send=lambda info: submitted.append(info),
+                        now_utc=1700000040,
+                    )
+                    self.assertFalse(result["sent"])
+                    self.assertTrue(result["latchedUncertain"])
+                    self.assertEqual(result["reason"], "PRIOR_UNVERIFIED_ENTRY_MARKER_BLOCKS_NEW_ORDER")
+                    self.assertEqual(submitted, [])
+                    self.assertEqual(marker.read_bytes(), before)
+
+    def test_pure_boundary_checklist_never_grants_runtime_trade(self):
+        result = evaluate_action_boundary(
+            action_category="NEW_ORDER_ENTRY",
+            emergency_stop_active=False, uncertain_entry_latched=False,
+            expected_account_login=1001, expected_server="Broker-Demo",
+            observed_account_login=1001, observed_server="Broker-Demo",
+            entry_lock_held=True, pending_marker_persisted=True,
+        )
+        self.assertFalse(result["allowed"])
+        self.assertTrue(result["offlineChecksPassed"])
+        self.assertFalse(result["liveAuthorized"])
+
+        invalid_login = evaluate_action_boundary(
+            action_category="NEW_ORDER_ENTRY",
+            emergency_stop_active=False, uncertain_entry_latched=False,
+            expected_account_login=None, expected_server="Broker-Demo",
+            observed_account_login=1001, observed_server="Broker-Demo",
+            entry_lock_held=True, pending_marker_persisted=True,
+        )
+        self.assertFalse(invalid_login["allowed"])
+        self.assertEqual(invalid_login["reason"], "ACCOUNT_BINDING_MISMATCH")
 
 
 if __name__ == "__main__":
