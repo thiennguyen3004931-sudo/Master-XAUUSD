@@ -77,4 +77,27 @@ describe("BacktestEngine", () => {
 
     expect(observedLengths).toEqual([1, 2, 3, 4]);
   });
+
+  it("never claims broker liquidation, tick ordering, or verified default-zero costs", async () => {
+    const result = await new BacktestEngine().run({
+      candles: createCandles([100, 101, 102, 103]),
+      strategyEvaluator: {
+        evaluate: ({ currentCandle }) => waitEvaluation(currentCandle.closeTime),
+      },
+      config: { warmupBars: 0, intrabarPriority: "STOP_FIRST" },
+    });
+
+    expect(result.status).toBe("COMPLETED");
+    expect(result.diagnostics.brokerFidelity).toEqual({
+      scope: "CANDLE_SIMULATION_NOT_BROKER_VERIFIED",
+      brokerStopOutExecutionVerified: false,
+      stopOutLiquidationSimulated: false,
+      intrabarMarginStressSimulated: false,
+      tickOrderedBidAskVerified: false,
+      brokerTradingCostsVerified: false,
+      commissionModelSource: "DEFAULT_ZERO_COMMISSION",
+      slippageModelSource: "DEFAULT_ZERO_SLIPPAGE",
+      intrabarOrderingAssumption: "STOP_FIRST",
+    });
+  });
 });
