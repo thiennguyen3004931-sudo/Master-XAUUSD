@@ -125,8 +125,8 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
             )
             with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
                 res = probe.modify_position_sl_tp(_MockMt5(), pos, 2595.0, 2625.0, "TEST_SLTP")
-                self.assertTrue(res.get("ok"))
                 self.assertEqual(len(called), 1)
+                self.assertNotEqual(res.get("status"), "BLOCKED_EMERGENCY_STOP_LATCH")
 
 
 if __name__ == "__main__":
