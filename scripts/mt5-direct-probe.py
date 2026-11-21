@@ -56,6 +56,28 @@ DEFAULT_MAX_DRAWDOWN_PCT = 6.0
 ONE_PRICE_UNIT_USD_PER_OZ = 1.0
 
 RUNTIME_DIR = Path(__file__).resolve().parent.parent / ".runtime"
+EMERGENCY_STOP_LATCH_FILE = RUNTIME_DIR / "v6-emergency-stop-latch.json"
+
+try:
+    from scripts.v6_emergency_stop_gate import read_bound_emergency_stop_latch as _read_bound_emergency_stop_latch
+except ImportError:
+    from v6_emergency_stop_gate import read_bound_emergency_stop_latch as _read_bound_emergency_stop_latch
+
+
+def _check_runtime_emergency_stop_latch(account_login, server: str) -> dict | None:
+    """Fail-closed runtime Emergency Stop latch check before new-order mt5.order_send."""
+    require_latch = str(os.environ.get("ZIQ_V6_REQUIRE_EMERGENCY_STOP_LATCH", "")).strip() == "1"
+    if not require_latch and not EMERGENCY_STOP_LATCH_FILE.exists():
+        return None
+    latch = _read_bound_emergency_stop_latch(
+        EMERGENCY_STOP_LATCH_FILE,
+        account_login=account_login,
+        server=server,
+    )
+    if latch.get("emergencyStopActive") or latch.get("blockNewOrders"):
+        return latch
+    return None
+
 MANAGER_STATE_FILE = RUNTIME_DIR / "v6-position-manager-state.json"
 DAILY_RISK_STATE_FILE = RUNTIME_DIR / "v6-daily-risk-state.json"
 REGIME_STATE_FILE = RUNTIME_DIR / "v6-regime-state.json"
@@ -2503,6 +2525,18 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
         return final_margin
     risk_metrics["freeMarginUsd"] = final_margin["freeMarginUsd"]
     risk_metrics["requiredMarginUsd"] = final_margin["requiredMarginUsd"]
+        estop_block = _check_runtime_emergency_stop_latch(
+            getattr(account, "login", 0),
+            str(getattr(account, "server", "") or "").strip(),
+        )
+        if estop_block is not None:
+            return {
+                "ok": False,
+                "submitted": False,
+                "status": "BLOCKED_EMERGENCY_STOP_LATCH",
+                "message": str(estop_block.get("reason") or "Emergency stop latch blocked new order"),
+                "emergencyStopLatch": estop_block,
+            }
 
     try:
         res = mt5.order_send(req)
