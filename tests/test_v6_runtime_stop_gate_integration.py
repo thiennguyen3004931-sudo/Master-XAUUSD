@@ -1,4 +1,5 @@
 """Offline integration tests for runtime Emergency Stop latch enforcement in mt5-direct-probe.py (#7)."""
+import ast
 import importlib.util
 import os
 import sys
@@ -76,7 +77,96 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
                     now_utc=1700000010,
                 )
                 allowed = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
-                self.assertIsNone(allowed)
+                self.assertIsNotNone(allowed)
+                self.assertTrue(allowed["blockNewOrders"])
+                self.assertEqual(allowed["reason"], "STOP_RELEASE_HOST_AUTH_UNVERIFIED")
+
+
+    def test_missing_latch_always_blocks_even_when_environment_flag_is_disabled(self):
+        probe = _load_probe_module()
+        with tempfile.TemporaryDirectory() as folder:
+            missing = Path(folder) / "missing-stop.json"
+            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", missing):
+                for setting in ("", "0", "1"):
+                    with self.subTest(flag=setting):
+                        with patch.dict(os.environ, {"ZIQ_V6_REQUIRE_EMERGENCY_STOP_LATCH": setting}):
+                            result = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
+                            self.assertIsNotNone(result)
+                            self.assertTrue(result["blockNewOrders"])
+                            self.assertTrue(result["emergencyStopActive"])
+                            self.assertEqual(result["reason"], "STOP_LATCH_MISSING_UNVERIFIED")
+
+    def test_caller_asserted_clear_never_authorizes_new_order(self):
+        probe = _load_probe_module()
+        with tempfile.TemporaryDirectory() as folder:
+            latch_file = Path(folder) / "stop.json"
+            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
+                stop = persist_operator_emergency_stop(
+                    latch_file, account_login=1001, server="Broker-Demo",
+                    operator_id="unverified-claim", now_utc=1700000000,
+                )
+                # No trusted host operator identity, DPAPI custody or broker
+                # reconciliation is established by this legacy source-only API.
+                release = authorize_emergency_stop_release(
+                    latch_file, account_login=1001, server="Broker-Demo",
+                    operator_authenticated=True, operator_id="unverified-claim",
+                    approval_reason="Fake caller assertion", uncertain_entry_state={},
+                    expected_stop_revision=stop["stopRevision"], now_utc=1700000001,
+                )
+                self.assertFalse(release["releaseDenied"])
+                result = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
+                self.assertTrue(result["blockNewOrders"])
+                self.assertFalse(result["liveAuthorized"])
+                self.assertEqual(result["reason"], "STOP_RELEASE_HOST_AUTH_UNVERIFIED")
+
+    def test_latch_reader_exception_nondict_and_account_mismatch_fail_closed(self):
+        probe = _load_probe_module()
+        for fake in (RuntimeError("I/O unavailable"), PermissionError("access denied")):
+            with self.subTest(exception=type(fake).__name__):
+                with patch.object(probe, "_read_bound_emergency_stop_latch", side_effect=fake):
+                    result = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
+                    self.assertTrue(result["blockNewOrders"])
+                    self.assertEqual(result["reason"], "STOP_LATCH_READ_EXCEPTION_FAIL_CLOSED")
+        with patch.object(probe, "_read_bound_emergency_stop_latch", return_value=None):
+            result = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
+            self.assertTrue(result["blockNewOrders"])
+            self.assertEqual(result["reason"], "STOP_LATCH_RESULT_UNVERIFIED")
+
+        with tempfile.TemporaryDirectory() as folder:
+            latch_file = Path(folder) / "stop.json"
+            persist_operator_emergency_stop(
+                latch_file, account_login=1001, server="Broker-Demo",
+                operator_id="owner", now_utc=1700000000,
+            )
+            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
+                mismatch = probe._check_runtime_emergency_stop_latch(1002, "Broker-Demo")
+                self.assertTrue(mismatch["blockNewOrders"])
+                self.assertEqual(mismatch["reason"], "STOP_LATCH_ACCOUNT_SERVER_MISMATCH")
+
+    def test_actual_new_entry_source_has_blocking_guard_before_direct_send(self):
+        # Parse the exact real source without executing MT5 and verify that the
+        # guard return syntactically precedes the order_send call.
+        path = ROOT / "scripts" / "mt5-direct-probe.py"
+        parsed = ast.parse(path.read_text(encoding="utf-8"))
+        fn = next(n for n in parsed.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "_execute_order_serialized")
+        checks = [n for n in ast.walk(fn) if isinstance(n, ast.Call)
+                  and isinstance(n.func, ast.Name)
+                  and n.func.id == "_check_runtime_emergency_stop_latch"]
+        sends = [n for n in ast.walk(fn) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Attribute)
+                 and n.func.attr == "order_send"
+                 and isinstance(n.func.value, ast.Name)
+                 and n.func.value.id == "mt5"]
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(len(sends), 1)
+        self.assertLess(checks[0].lineno, sends[0].lineno)
+        self.assertTrue(any(
+            isinstance(n, ast.If) and "estop_block" in ast.unparse(n.test)
+            and any(isinstance(c, ast.Return) for c in n.body)
+            and n.lineno < sends[0].lineno
+            for n in ast.walk(fn)
+        ))
 
     def test_protective_actions_in_probe_do_not_require_new_order_latch(self):
         probe = _load_probe_module()
