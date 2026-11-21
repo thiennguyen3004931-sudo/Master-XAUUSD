@@ -88,6 +88,8 @@ def map_mt5_order_send_call_sites(source_text: str) -> dict[str, Any]:
         "protectiveOrExitSites": protective_sites,
         "unknownSites": unknown_sites,
         "allCallSitesClassified": len(sites) > 0 and len(unknown_sites) == 0,
+        "allPossibleOrderSendPathsVerified": False,
+        "mappingScope": "DIRECT_AST_MT5_ORDER_SEND_ONLY_NOT_RUNTIME_ATTESTED",
         "sourceSha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
     }
 
@@ -108,8 +110,10 @@ def evaluate_action_boundary(
     if action_category == "PROTECTIVE_OR_EXIT":
         return {
             "actionCategory": action_category,
-            "allowed": True,
-            "reason": "PROTECTIVE_OR_EXIT_EXEMPT_FROM_NEW_ENTRY_LATCH",
+            "allowed": False,
+            "protectiveUnaffectedByNewEntryLatch": True,
+            "liveAuthorized": False,
+            "reason": "PROTECTIVE_REQUIRES_OWN_INDEPENDENT_AUTHORIZATION",
         }
 
     if action_category != "NEW_ORDER_ENTRY":
@@ -125,7 +129,12 @@ def evaluate_action_boundary(
         return {"actionCategory": action_category, "allowed": False, "reason": "EMERGENCY_STOP_LATCHED"}
     if uncertain_entry_latched:
         return {"actionCategory": action_category, "allowed": False, "reason": "UNCERTAIN_ENTRY_LATCHED"}
-    if int(expected_account_login) <= 0 or int(observed_account_login) != int(expected_account_login):
+    try:
+        expected_login = int(expected_account_login)
+        observed_login = int(observed_account_login)
+    except (TypeError, ValueError, OverflowError):
+        return {"actionCategory": action_category, "allowed": False, "reason": "ACCOUNT_BINDING_MISMATCH"}
+    if isinstance(expected_account_login, bool) or isinstance(observed_account_login, bool) or expected_login <= 0 or observed_login != expected_login:
         return {"actionCategory": action_category, "allowed": False, "reason": "ACCOUNT_BINDING_MISMATCH"}
     if not str(expected_server or "").strip() or str(observed_server or "").strip() != str(expected_server).strip():
         return {"actionCategory": action_category, "allowed": False, "reason": "SERVER_BINDING_MISMATCH"}
@@ -134,8 +143,10 @@ def evaluate_action_boundary(
 
     return {
         "actionCategory": action_category,
-        "allowed": True,
-        "reason": "NEW_ORDER_BOUNDARY_CONTRACT_SATISFIED",
+        "allowed": False,
+        "offlineChecksPassed": True,
+        "liveAuthorized": False,
+        "reason": "OFFLINE_BOUNDARY_CHECKLIST_PASSED_NOT_RUNTIME_AUTHORIZED",
     }
 
 
@@ -154,20 +165,24 @@ def simulate_locked_new_order_with_pending_marker(
 ) -> dict[str, Any]:
     """Simulate `_strict_new_order_lock` new-entry execution with crash/unknown-ACK latch."""
     ts = int(time.time() if now_utc is None else now_utc)
-    if pending_marker_path.exists():
-        try:
-            existing = json.loads(pending_marker_path.read_text(encoding="utf-8"))
-        except Exception:
-            existing = {"status": "CORRUPT_MARKER"}
-        if existing.get("status") in {"PENDING_SEND", "UNKNOWN_ACK", "CRASH_OR_EXCEPTION", "CORRUPT_MARKER"}:
+    # threading.Lock is a mock *in-process* lock, NOT the interprocess
+    # runtime lock. Check the entire existing marker inside the lock and
+    # refuse EVERY existing state until independently reconciled.
+    with entry_lock:
+        if pending_marker_path.exists():
+            try:
+                existing = json.loads(pending_marker_path.read_text(encoding="utf-8"))
+                if not isinstance(existing, dict):
+                    existing = {"status": "UNVERIFIED_EXISTING_MARKER"}
+            except Exception:
+                existing = {"status": "CORRUPT_MARKER"}
             return {
-                "sent": False,
-                "latchedUncertain": True,
-                "reason": "PRIOR_UNCERTAIN_ENTRY_MARKER_BLOCKS_NEW_ORDER",
+                "sent": False, "latchedUncertain": True,
+                "liveAuthorized": False,
+                "reason": "PRIOR_UNVERIFIED_ENTRY_MARKER_BLOCKS_NEW_ORDER",
                 "marker": existing,
             }
 
-    with entry_lock:
         marker_payload = {
             "requestId": str(request_id),
             "accountLogin": int(expected_account_login),
@@ -188,7 +203,7 @@ def simulate_locked_new_order_with_pending_marker(
             entry_lock_held=entry_lock.locked(),
             pending_marker_persisted=pending_marker_path.exists(),
         )
-        if not decision["allowed"]:
+        if not decision.get("offlineChecksPassed"):
             marker_payload["status"] = "ABORTED_BEFORE_SEND"
             marker_payload["reason"] = decision["reason"]
             pending_marker_path.write_text(json.dumps(marker_payload, sort_keys=True), encoding="utf-8")
@@ -216,23 +231,16 @@ def simulate_locked_new_order_with_pending_marker(
                 "marker": marker_payload,
             }
 
-        if not isinstance(ack, dict) or ack.get("retcode") != 10009 or not ack.get("order"):
-            marker_payload["status"] = "UNKNOWN_ACK"
-            marker_payload["ack"] = ack
-            pending_marker_path.write_text(json.dumps(marker_payload, sort_keys=True), encoding="utf-8")
-            return {
-                "sent": True,
-                "latchedUncertain": True,
-                "reason": "UNKNOWN_OR_UNCONFIRMED_ORDER_ACK",
-                "marker": marker_payload,
-            }
-
-        marker_payload["status"] = "CONFIRMED_DONE"
-        marker_payload["order"] = int(ack["order"])
+        # Even a successful MOCK acknowledgement is not verified broker fill
+        # evidence. Do not clear the marker until independent broker readback.
+        marker_payload["status"] = "UNKNOWN_ACK"
+        marker_payload["mockAckLooksSuccessful"] = bool(
+            isinstance(ack, dict) and ack.get("retcode") == 10009 and ack.get("order")
+        )
         pending_marker_path.write_text(json.dumps(marker_payload, sort_keys=True), encoding="utf-8")
         return {
-            "sent": True,
-            "latchedUncertain": False,
-            "reason": "CONFIRMED_DONE",
+            "sent": True, "latchedUncertain": True,
+            "liveAuthorized": False,
+            "reason": "MOCK_ACK_NOT_BROKER_CONFIRMED",
             "marker": marker_payload,
         }
