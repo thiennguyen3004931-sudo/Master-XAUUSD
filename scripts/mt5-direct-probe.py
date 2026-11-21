@@ -2525,18 +2525,18 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
         return final_margin
     risk_metrics["freeMarginUsd"] = final_margin["freeMarginUsd"]
     risk_metrics["requiredMarginUsd"] = final_margin["requiredMarginUsd"]
-     estop_block = _check_runtime_emergency_stop_latch(
-         getattr(account, "login", 0),
-         str(getattr(account, "server", "") or "").strip(),
+    estop_block = _check_runtime_emergency_stop_latch(
+        getattr(account, "login", 0),
+        str(getattr(account, "server", "") or "").strip(),
      )
-     if estop_block is not None:
-         return {
-             "ok": False,
-             "submitted": False,
-             "status": "BLOCKED_EMERGENCY_STOP_LATCH",
-             "message": str(estop_block.get("reason") or "Emergency stop latch blocked new order"),
-             "emergencyStopLatch": estop_block,
-         }
+    if estop_block is not None:
+        return {
+            "ok": False,
+            "submitted": False,
+            "status": "BLOCKED_EMERGENCY_STOP_LATCH",
+            "message": str(estop_block.get("reason") or "Emergency stop latch blocked new order"),
+            "emergencyStopLatch": estop_block,
+        }
 
     try:
         res = mt5.order_send(req)
