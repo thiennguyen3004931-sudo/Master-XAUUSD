@@ -28,7 +28,8 @@ class HostAclProvenanceProbeTests(unittest.TestCase):
             "Successfully processed 1 files; Failed processing 0 files\n"
         )
         ok = parse_icacls_output(restricted)
-        self.assertTrue(ok["nonAdminWriteDenied"])
+        self.assertFalse(ok["nonAdminWriteDenied"])
+        self.assertTrue(ok["noBroadWriteAceFoundByTextScan"])
         self.assertEqual(ok["broadWriteGrants"], [])
 
         permissive = (
@@ -94,7 +95,13 @@ class HostAclProvenanceProbeTests(unittest.TestCase):
                 icacls_runner=restricted_runner,
                 os_name_override="nt",
             )
-            self.assertTrue(ok_report["overallWindowsHostAclVerified"])
+            self.assertFalse(ok_report["overallWindowsHostAclVerified"])
+            self.assertTrue(ok_report["aclTextNoBroadWriteAceObserved"])
+            self.assertFalse(ok_report["runtimeDirAcl"]["windowsHostAclVerified"])
+            self.assertFalse(ok_report["operatorIdentityVerified"])
+            self.assertFalse(ok_report["keyCustodyVerified"])
+            self.assertEqual(ok_report["runtimeDirAcl"]["reason"],
+                             "WINDOWS_ICACLS_TEXT_REQUIRES_EFFECTIVE_ACCESS_REVIEW")
             self.assertFalse(ok_report["liveAuthorized"])
 
             bad_report = collect_readonly_host_provenance_report(
@@ -114,6 +121,30 @@ class HostAclProvenanceProbeTests(unittest.TestCase):
             self.assertTrue(custody["controlTokenEnvPresent"])
             self.assertFalse(custody["secretValuesExposed"])
             self.assertNotIn(secret_val, str(custody))
+
+
+    def test_incomplete_acl_text_or_custom_runner_never_proves_host_access(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "state.json"
+            path.write_text("{}", encoding="utf-8")
+            for fake in (
+                "C:\\state BUILTIN\\Administrators:(F)\\nSuccessfully processed 1 files",
+                "C:\\state CUSTOM_SVC:(RX,W)\\nSuccessfully processed 1 files",
+                "C:\\state NT AUTHORITY\\SYSTEM:(F)\\nSuccessfully processed 1 files",
+            ):
+                with self.subTest(fake=fake):
+                    runner = lambda _path: SimpleNamespace(returncode=0, stdout=fake)
+                    outcome = inspect_path_acl(
+                        path, icacls_runner=runner, os_name_override="nt",
+                    )
+                    self.assertFalse(outcome["windowsHostAclVerified"])
+                    self.assertNotEqual(outcome["reason"], "WINDOWS_ICACLS_VERIFIED")
+                    report = collect_readonly_host_provenance_report(
+                        runtime_dir=Path(folder), latch_file=path,
+                        icacls_runner=runner, os_name_override="nt",
+                    )
+                    self.assertFalse(report["overallWindowsHostAclVerified"])
+                    self.assertFalse(report["liveAuthorized"])
 
 
 if __name__ == "__main__":
