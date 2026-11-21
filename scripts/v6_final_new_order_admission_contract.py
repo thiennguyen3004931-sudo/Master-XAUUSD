@@ -47,7 +47,7 @@ def _positive_int(value) -> int | None:
 def assess_caller_supplied_acl_claims(acl_attestation: dict | None) -> dict:
     """Only check untrusted ACL claims; NEVER attest Windows host permissions."""
     if not isinstance(acl_attestation, dict):
-        return {"ok": False, "reason": "WINDOWS_HOST_ACL_UNVERIFIED"}
+        return {"ok": False, "claimsMatch": False, "reason": "WINDOWS_HOST_ACL_UNVERIFIED"}
 
     owner = str(acl_attestation.get("ownerPrincipal") or "").strip()
     if (
@@ -57,10 +57,11 @@ def assess_caller_supplied_acl_claims(acl_attestation: dict | None) -> dict:
         or acl_attestation.get("worldReadable") is not False
         or acl_attestation.get("storageDirExists") is not True
     ):
-        return {"ok": False, "reason": "WINDOWS_HOST_ACL_UNVERIFIED"}
+        return {"ok": False, "claimsMatch": False, "reason": "WINDOWS_HOST_ACL_UNVERIFIED"}
 
     return {
-        "ok": True,
+        "ok": False,
+        "claimsMatch": True,
         "reason": "WINDOWS_ACL_CHECKLIST_MATCHED_UNATTESTED",
         "ownerPrincipal": owner,
         "hostAclIndependentlyVerified": False,
@@ -157,7 +158,7 @@ def verify_operator_reset_token_offline(
     if not isinstance(uncertain_entry_state, dict) or uncertain_entry_state:
         return deny("RESET_BROKER_ENTRY_EVIDENCE_UNVERIFIED")
     return {
-        "ok": True, "tokenValidOffline": True,
+        "ok": False, "tokenValidOffline": True,
         "releaseDenied": True,
         "releaseDeniedReason": "RESET_RUNTIME_AUTHORIZATION_UNAVAILABLE",
         "releaseApplied": False,
@@ -206,7 +207,7 @@ def evaluate_final_new_order_admission(
         }
 
     acl = assess_caller_supplied_acl_claims(acl_attestation)
-    if not acl["ok"]:
+    if not acl.get("claimsMatch"):
         return {
             "admitted": False,
             "actionKind": ACTION_NEW_ORDER,
