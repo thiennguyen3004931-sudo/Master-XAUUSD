@@ -196,6 +196,50 @@ class AutoLotShadowTest(unittest.TestCase):
         result, _ = self.evaluate(dca_layer=True)
         self.assertEqual(result["status"], "BLOCKED_DCA_POLICY_UNVERIFIED")
 
+    def test_missing_or_invalid_broker_order_types_are_blocked_before_pricing(self):
+        invalid_constants = (
+            (None, 1), (0, None), (None, None),
+            (True, 1), (0, False), (0, 0),
+            ("0", 1), (0.0, 1), (-1, 1),
+        )
+        for buy_type, sell_type in invalid_constants:
+            for side in ("BUY", "SELL"):
+                with self.subTest(buy_type=buy_type, sell_type=sell_type, side=side):
+                    broker = MockBroker()
+                    broker.ORDER_TYPE_BUY = buy_type
+                    broker.ORDER_TYPE_SELL = sell_type
+                    result, _ = self.evaluate(broker=broker, side=side)
+                    self.assertFalse(result["ok"], result)
+                    self.assertFalse(result["executionEnabled"])
+                    self.assertIsNone(result["candidateVolume"])
+                    self.assertEqual(result["status"], "BLOCKED_BROKER_ORDER_TYPE_UNVERIFIED")
+                    self.assertEqual(broker.profit_requests, [])
+                    self.assertEqual(broker.margin_requests, [])
+                    self.assertEqual(broker.sent, [])
+
+    def test_nonstandard_broker_order_type_codes_are_passed_to_pricing(self):
+        class NonstandardBroker(MockBroker):
+            ORDER_TYPE_BUY = 10
+            ORDER_TYPE_SELL = 20
+
+            def order_calc_profit(self, order_type, symbol, lot, entry, stop):
+                self.profit_requests.append((order_type, symbol, lot, entry, stop))
+                if order_type == self.ORDER_TYPE_BUY:
+                    return (stop - entry) * lot * 100.0
+                if order_type == self.ORDER_TYPE_SELL:
+                    return (entry - stop) * lot * 100.0
+                raise AssertionError("Unexpected order type")
+
+        for side, expected_code in (("BUY", 10), ("SELL", 20)):
+            with self.subTest(side=side):
+                result, broker = self.evaluate(broker=NonstandardBroker(), side=side)
+                self.assertTrue(result["ok"], result)
+                self.assertFalse(result["executionEnabled"])
+                self.assertGreater(len(broker.profit_requests), 0)
+                self.assertTrue(all(call[0] == expected_code for call in broker.profit_requests))
+                self.assertTrue(all(call[0] == expected_code for call in broker.margin_requests))
+                self.assertEqual(broker.sent, [])
+
     def test_no_orders_arm_mutation_or_runtime_config_side_effects(self):
         source = (Path(__file__).resolve().parents[1] / "scripts/v6_auto_lot_shadow.py").read_text(encoding="utf-8")
         self.assertNotIn("order_send(", source)
