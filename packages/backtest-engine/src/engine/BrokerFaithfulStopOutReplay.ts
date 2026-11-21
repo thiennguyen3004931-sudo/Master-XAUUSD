@@ -175,6 +175,13 @@ export function runBrokerFaithfulStopOutReplay(
     return refused("BROKER_CONTRACT_INVALID", request.initialBalance);
   }
 
+  // This model currently accounts each hedge independently. NETTING needs
+  // signed inventory, reductions/reversals and a different margin ledger;
+  // refuse rather than publish fictitious broker liquidation results.
+  if (c.accountMode === "NETTING") {
+    return refused("NETTING_REPLAY_NOT_IMPLEMENTED", request.initialBalance);
+  }
+
   const ticks = request.ticks;
   if (!Array.isArray(ticks) || ticks.length === 0) {
     return refused("TICK_PATH_UNVERIFIED", request.initialBalance);
@@ -195,17 +202,31 @@ export function runBrokerFaithfulStopOutReplay(
     prevTs = tick.timestampMs;
   }
 
+  if (!Array.isArray(request.orders)) {
+    return refused("ORDER_INTENTS_UNVERIFIED", request.initialBalance);
+  }
+  const seenOrderIds = new Set<string>();
   for (const order of request.orders) {
     if (
       !order ||
-      !order.id ||
+      typeof order.id !== "string" ||
+      !order.id.trim() || order.id !== order.id.trim() ||
+      seenOrderIds.has(order.id) ||
       (order.side !== "BUY" && order.side !== "SELL") ||
       !isFinitePositive(order.volume) ||
-      !isFinitePositive(order.submittedAtMs)
+      !isFinitePositive(order.submittedAtMs) ||
+      (order.stopLoss !== undefined && !isFinitePositive(order.stopLoss)) ||
+      (order.takeProfit !== undefined && !isFinitePositive(order.takeProfit))
     ) {
       return refused("ORDER_INTENT_INVALID", request.initialBalance);
     }
+    seenOrderIds.add(order.id);
   }
+  // The caller's array order is not execution chronology. On the same broker
+  // tick, process earlier submitted intents first (stable order on exact ties).
+  const chronologicalOrders = [...request.orders].sort(
+    (a, b) => a.submittedAtMs - b.submittedAtMs
+  );
 
   const contract: BrokerMarginContract = {
     accountMode: c.accountMode,
@@ -253,7 +274,7 @@ export function runBrokerFaithfulStopOutReplay(
   };
 
   for (const tick of ticks) {
-    for (const intent of request.orders) {
+    for (const intent of chronologicalOrders) {
       if (processedOrderIds.has(intent.id) || intent.submittedAtMs > tick.timestampMs) {
         continue;
       }
@@ -451,7 +472,9 @@ export function runBrokerFaithfulStopOutReplay(
     ok: true,
     fidelity: {
       scope: "TICK_ORDERED_BROKER_CONTRACT_REPLAY",
-      brokerStopOutExecutionVerified: true,
+      // Replay uses a supplied contract/tick stream, not broker liquidation
+      // receipts. Real broker stop-out execution remains unverified.
+      brokerStopOutExecutionVerified: false,
       stopOutLiquidationSimulated: true,
       intrabarMarginStressSimulated: true,
       tickOrderedBidAskVerified: true,
