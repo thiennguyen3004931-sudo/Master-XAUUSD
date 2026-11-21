@@ -29,6 +29,8 @@ import uuid
 import threading
 from contextlib import contextmanager
 import datetime
+import hashlib
+import hmac
 import subprocess
 from pathlib import Path
 from math import isfinite, floor
@@ -57,54 +59,153 @@ ONE_PRICE_UNIT_USD_PER_OZ = 1.0
 
 RUNTIME_DIR = Path(__file__).resolve().parent.parent / ".runtime"
 EMERGENCY_STOP_LATCH_FILE = RUNTIME_DIR / "v6-emergency-stop-latch.json"
+STOP_RELEASE_KEY_FILE = RUNTIME_DIR / "v6-stop-release.key"
+STOP_RELEASE_MAX_AGE_SEC = 300
+_ENTRY_LOCK_STATE = threading.local()
 
 try:
-    from scripts.v6_emergency_stop_gate import read_bound_emergency_stop_latch as _read_bound_emergency_stop_latch
+    from scripts.v6_emergency_stop_gate import (
+        _exclusive_latch_lock as _latch_file_lock,
+        read_bound_emergency_stop_latch as _read_bound_emergency_stop_latch,
+    )
+    from scripts.v6_host_acl_provenance_probe import inspect_path_acl as _inspect_host_path_acl
 except ImportError:
-    from v6_emergency_stop_gate import read_bound_emergency_stop_latch as _read_bound_emergency_stop_latch
+    from v6_emergency_stop_gate import (
+        _exclusive_latch_lock as _latch_file_lock,
+        read_bound_emergency_stop_latch as _read_bound_emergency_stop_latch,
+    )
+    from v6_host_acl_provenance_probe import inspect_path_acl as _inspect_host_path_acl
 
 
-def _check_runtime_emergency_stop_latch(account_login, server: str) -> dict:
-    """P0 quarantine: block NEW entry until trusted host release is verified.
+def _strict_new_order_lock_held() -> bool:
+    return bool(getattr(_ENTRY_LOCK_STATE, "held", False))
 
-    The old opt-in environment flag allowed a missing stop file to silently
-    bypass the gate. A caller-asserted AUTHORIZED_CLEAR record is also not
-    proof of independent operator authentication/Windows key custody. Both
-    conditions MUST block actual orders until a separate trusted runtime
-    release design is accepted. Protective SL/TP remains a separate path.
-    """
-    try:
-        latch = _read_bound_emergency_stop_latch(
-            EMERGENCY_STOP_LATCH_FILE,
-            account_login=account_login,
-            server=server,
-        )
-    except Exception:
-        return {
-            "emergencyStopActive": True,
-            "blockNewOrders": True,
-            "reason": "STOP_LATCH_READ_EXCEPTION_FAIL_CLOSED",
-            "liveAuthorized": False,
-        }
-    if not isinstance(latch, dict):
-        return {
-            "emergencyStopActive": True,
-            "blockNewOrders": True,
-            "reason": "STOP_LATCH_RESULT_UNVERIFIED",
-            "liveAuthorized": False,
-        }
-    if latch.get("emergencyStopActive") is True or latch.get("blockNewOrders") is True:
-        return latch
-    # This is currently a source-only latch library. Its release path accepts
-    # operator_authenticated as a caller boolean; therefore even a syntactically
-    # AUTHORIZED_CLEAR result cannot yet authorize runtime new entries.
-    return {
-        "emergencyStopActive": True,
-        "blockNewOrders": True,
-        "reason": "STOP_RELEASE_HOST_AUTH_UNVERIFIED",
-        "liveAuthorized": False,
-        "stopCategory": latch.get("stopCategory", "UNVERIFIED"),
-    }
+
+def _check_runtime_emergency_stop_latch(
+    account_login,
+    server: str,
+    *,
+    now_utc: int | None = None,
+    host_acl_checker=None,
+) -> dict | None:
+    """Atomic cross-process lock + cryptographic host-verified release check."""
+    with _latch_file_lock(EMERGENCY_STOP_LATCH_FILE):
+        try:
+            latch = _read_bound_emergency_stop_latch(
+                EMERGENCY_STOP_LATCH_FILE,
+                account_login=account_login,
+                server=server,
+            )
+        except Exception:
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_LATCH_READ_EXCEPTION_FAIL_CLOSED",
+                "liveAuthorized": False,
+            }
+        if not isinstance(latch, dict):
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_LATCH_RESULT_UNVERIFIED",
+                "liveAuthorized": False,
+            }
+        if latch.get("emergencyStopActive") is True or latch.get("blockNewOrders") is True:
+            return latch
+
+        # Even when latch says CLEAR, require host-ACL-verified key + fresh HMAC releaseProof.
+        try:
+            raw_latch = json.loads(EMERGENCY_STOP_LATCH_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_LATCH_JSON_UNREADABLE",
+                "liveAuthorized": False,
+            }
+        proof = raw_latch.get("releaseProof") if isinstance(raw_latch, dict) else None
+        if not isinstance(proof, dict):
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_RELEASE_HOST_AUTH_UNVERIFIED",
+                "liveAuthorized": False,
+                "stopCategory": latch.get("stopCategory", "UNVERIFIED"),
+            }
+
+        acl_fn = host_acl_checker or _inspect_host_path_acl
+        try:
+            key_acl = acl_fn(STOP_RELEASE_KEY_FILE)
+            latch_acl = acl_fn(EMERGENCY_STOP_LATCH_FILE)
+        except Exception:
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_RELEASE_ACL_CHECK_FAILED",
+                "liveAuthorized": False,
+            }
+        if (
+            key_acl.get("windowsHostAclVerified") is not True
+            or key_acl.get("reparseOrSymlinkDetected") is True
+            or latch_acl.get("reparseOrSymlinkDetected") is True
+            or not STOP_RELEASE_KEY_FILE.exists()
+        ):
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_RELEASE_WINDOWS_HOST_ACL_UNVERIFIED",
+                "liveAuthorized": False,
+            }
+
+        ts_now = int(time.time() if now_utc is None else now_utc)
+        released_at = proof.get("releasedAtUtc")
+        operator_id = str(proof.get("operatorId") or "").strip()
+        stop_rev = str(proof.get("stopRevision") or "").strip()
+        provided_hmac = str(proof.get("hmacSha256") or "").strip()
+        if (
+            not isinstance(released_at, int)
+            or isinstance(released_at, bool)
+            or ts_now - released_at < 0
+            or ts_now - released_at > STOP_RELEASE_MAX_AGE_SEC
+            or not operator_id
+            or not stop_rev
+            or stop_rev != str(raw_latch.get("stopRevision") or "").strip()
+            or not provided_hmac
+        ):
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_RELEASE_PROOF_STALE_OR_INVALID",
+                "liveAuthorized": False,
+            }
+
+        try:
+            key_bytes = STOP_RELEASE_KEY_FILE.read_bytes()
+        except OSError:
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_RELEASE_KEY_UNREADABLE",
+                "liveAuthorized": False,
+            }
+        if not key_bytes:
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_RELEASE_KEY_EMPTY",
+                "liveAuthorized": False,
+            }
+
+        msg = f"{int(account_login)}|{str(server).strip()}|{stop_rev}|{released_at}|{operator_id}".encode("utf-8")
+        expected_hmac = hmac.new(key_bytes, msg, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(provided_hmac, expected_hmac):
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_RELEASE_HMAC_INVALID",
+                "liveAuthorized": False,
+            }
+        return None
 
 MANAGER_STATE_FILE = RUNTIME_DIR / "v6-position-manager-state.json"
 DAILY_RISK_STATE_FILE = RUNTIME_DIR / "v6-daily-risk-state.json"
@@ -346,9 +447,11 @@ def _strict_new_order_lock():
                     msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
                 except (OSError, ImportError) as exc:
                     raise _EntryExecutionLockUnavailable(str(exc)) from exc
+                _ENTRY_LOCK_STATE.held = True
                 try:
                     yield
                 finally:
+                    _ENTRY_LOCK_STATE.held = False
                     fh.seek(0)
                     msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
             else:
@@ -357,9 +460,11 @@ def _strict_new_order_lock():
                     fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                 except (OSError, ImportError) as exc:
                     raise _EntryExecutionLockUnavailable(str(exc)) from exc
+                _ENTRY_LOCK_STATE.held = True
                 try:
                     yield
                 finally:
+                    _ENTRY_LOCK_STATE.held = False
                     fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         finally:
             fh.close()
@@ -2141,6 +2246,13 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
     """Unified Fail-Closed Execution Gateway & Final Pre-Send SL Gate (Section 1.2, 1.3, 1.4).
     Unit convention: 1 price unit ("1 giá") = 1.00 USD/oz (distinct from broker `point`).
     """
+    if not _strict_new_order_lock_held():
+        return {
+            "ok": False,
+            "submitted": False,
+            "status": "BLOCKED_ENTRY_LOCK_NOT_HELD",
+            "message": "_execute_order_serialized requires _strict_new_order_lock",
+        }
     cfg_o = order_cfg or {}
     side = str(cfg_o.get("side") or "").strip().upper()
     if side not in ("BUY", "SELL"):
