@@ -3,12 +3,15 @@
 Source-only offline candidate built on `v6_emergency_stop_latch.py` (#88) and
 `v6_uncertain_entry_evidence_shadow.py` (#89/#94):
 - Strict schema validation: missing/invalid `stopCategory`, `schemaVersion`,
-  `triggeredBy`, or `triggeredAtUtc` NEVER masquerades as `OPERATOR_EMERGENCY_STOP`.
-- Mandatory atomic compare-and-swap (CAS) under an exclusive cross-process file
-  lock (`expected_triggered_at_utc` is required, never optional).
+  `triggeredBy`, `triggeredAtUtc`, or immutable `stopRevision` NEVER masquerades
+  as `OPERATOR_EMERGENCY_STOP`.
+- Mandatory atomic compare-and-swap (CAS) on an immutable per-stop random
+  `stopRevision` nonce (`secrets.token_hex(16)`) under an exclusive
+  cross-process file lock — prevents ABA / same-second overwrite even when two
+  stops share the exact same `triggeredAtUtc`. `triggeredAtUtc` is audit-only.
 - Recovery flow (`initialize_or_recover_emergency_stop_latch`) ONLY restores a
-  well-formed, account-bound ACTIVE stop latch (`emergencyStopActive=True`); it
-  NEVER clears or unlocks the latch directly.
+  well-formed, account-bound ACTIVE stop latch (`emergencyStopActive=True`) with
+  a fresh `stopRevision`; it NEVER clears or unlocks the latch directly.
 - Trust boundary: `operator_authenticated` is a caller-asserted flag in this
   offline library, NOT cryptographic or Windows ACL proof; production release
   remains disabled until owner-approved runtime integration & host ACL verification.
@@ -18,6 +21,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import json
 import os
+import secrets
 import time
 from pathlib import Path
 
@@ -49,6 +53,13 @@ def _positive_int(value) -> int | None:
 
 def _clean_text(value, *, max_len: int = 128) -> str:
     return str(value or "").strip()[:max_len]
+
+
+def _clean_revision(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    rev = value.strip()
+    return rev if 16 <= len(rev) <= 64 else ""
 
 
 def _durability_scope() -> str:
@@ -183,14 +194,19 @@ def _read_bound_latch_unlocked(path: Path, *, account_login, server: str) -> dic
         category = _clean_text(payload.get("stopCategory"))
         triggered_by = _clean_text(payload.get("triggeredBy"))
         triggered_at = _positive_int(payload.get("triggeredAtUtc"))
+        stop_revision = _clean_revision(payload.get("stopRevision"))
         reason = _clean_text(payload.get("reason"))
-        if category == "OPERATOR_EMERGENCY_STOP" and triggered_by and triggered_at is not None and reason:
+        if category == "OPERATOR_EMERGENCY_STOP" and triggered_by and triggered_at is not None and stop_revision and reason:
             return _blocked_latch_result(
                 reason,
                 category="OPERATOR_EMERGENCY_STOP",
                 account_login=live_login,
                 server=live_server,
-                extra={"triggeredAtUtc": triggered_at, "triggeredBy": triggered_by},
+                extra={
+                    "stopRevision": stop_revision,
+                    "triggeredAtUtc": triggered_at,
+                    "triggeredBy": triggered_by,
+                },
             )
         return _blocked_latch_result(
             "STOP_LATCH_ACTIVE_METADATA_UNVERIFIED",
@@ -206,6 +222,7 @@ def _read_bound_latch_unlocked(path: Path, *, account_login, server: str) -> dic
         and _clean_text(payload.get("releasedBy"))
         and _clean_text(payload.get("releaseReason"))
         and _positive_int(payload.get("releasedAtUtc")) is not None
+        and _clean_revision(payload.get("releasedStopRevision"))
     ):
         return {
             "emergencyStopActive": False,
@@ -218,6 +235,7 @@ def _read_bound_latch_unlocked(path: Path, *, account_login, server: str) -> dic
             "releasedBy": _clean_text(payload.get("releasedBy")),
             "releasedAtUtc": _positive_int(payload.get("releasedAtUtc")),
             "releaseReason": _clean_text(payload.get("releaseReason")),
+            "releasedStopRevision": _clean_revision(payload.get("releasedStopRevision")),
             "previousStopReason": _clean_text(payload.get("previousStopReason")),
             "liveArmed": False,
             "liveAuthorized": False,
@@ -249,7 +267,7 @@ def persist_operator_emergency_stop(
     reason: str = "OPERATOR_EMERGENCY_STOP",
     now_utc: float | None = None,
 ) -> dict:
-    """Atomically persist an explicit operator-triggered Emergency Stop bound to account+server."""
+    """Atomically persist an operator Emergency Stop with an immutable random `stopRevision`."""
     login = _positive_int(account_login)
     srv = _clean_text(server)
     op_id = _clean_text(operator_id)
@@ -263,6 +281,7 @@ def persist_operator_emergency_stop(
         "blockNewOrders": True,
         "allowProtectivePositionManagement": True,
         "stopCategory": "OPERATOR_EMERGENCY_STOP",
+        "stopRevision": secrets.token_hex(16),
         "reason": _clean_text(reason or "OPERATOR_EMERGENCY_STOP"),
         "accountLogin": login,
         "server": srv,
@@ -287,7 +306,7 @@ def initialize_or_recover_emergency_stop_latch(
     recovery_evidence_verified: bool = False,
     now_utc: float | None = None,
 ) -> dict:
-    """Recover missing/corrupt/mismatched state into an ACTIVE, well-formed stop latch."""
+    """Recover missing/corrupt/mismatched state into an ACTIVE stop latch with fresh `stopRevision`."""
     login = _positive_int(account_login)
     srv = _clean_text(server)
     op_id = _clean_text(operator_id)
@@ -317,6 +336,7 @@ def initialize_or_recover_emergency_stop_latch(
             "blockNewOrders": True,
             "allowProtectivePositionManagement": True,
             "stopCategory": "OPERATOR_EMERGENCY_STOP",
+            "stopRevision": secrets.token_hex(16),
             "reason": _clean_text(f"RECOVERED_FAIL_CLOSED:{reason}"),
             "accountLogin": login,
             "server": srv,
@@ -339,15 +359,15 @@ def authorize_emergency_stop_release(
     operator_id: str = "",
     approval_reason: str = "",
     uncertain_entry_state: dict | None = None,
-    expected_triggered_at_utc: int | None = None,
+    expected_stop_revision: str = "",
     now_utc: float | None = None,
 ) -> dict:
-    """Atomically release a well-formed, active OPERATOR_EMERGENCY_STOP under exclusive lock."""
+    """Atomically release an active OPERATOR_EMERGENCY_STOP by exact `expected_stop_revision` CAS."""
     login = _positive_int(account_login)
     srv = _clean_text(server)
     op_id = _clean_text(operator_id)
     reason = _clean_text(approval_reason)
-    exp_ts = _positive_int(expected_triggered_at_utc)
+    exp_rev = _clean_revision(expected_stop_revision)
     now_ts = _positive_int(int(time.time() if now_utc is None else now_utc))
     target = Path(path)
 
@@ -357,12 +377,12 @@ def authorize_emergency_stop_release(
             return {**current, "releaseDenied": True, "releaseDeniedReason": "ACCOUNT_UNVERIFIED"}
         if operator_authenticated is not True or not op_id or not reason:
             return {**current, "releaseDenied": True, "releaseDeniedReason": "OPERATOR_AUTH_REQUIRED"}
-        if exp_ts is None:
-            return {**current, "releaseDenied": True, "releaseDeniedReason": "EXPECTED_VERSION_REQUIRED"}
+        if not exp_rev:
+            return {**current, "releaseDenied": True, "releaseDeniedReason": "EXPECTED_REVISION_REQUIRED"}
         if current["stopCategory"] != "OPERATOR_EMERGENCY_STOP" or current["emergencyStopActive"] is not True:
             return {**current, "releaseDenied": True, "releaseDeniedReason": "REQUIRES_ACTIVE_OPERATOR_STOP"}
-        if current.get("triggeredAtUtc") != exp_ts:
-            return {**current, "releaseDenied": True, "releaseDeniedReason": "STALE_LATCH_VERSION_MISMATCH"}
+        if current.get("stopRevision") != exp_rev:
+            return {**current, "releaseDenied": True, "releaseDeniedReason": "STALE_LATCH_REVISION_MISMATCH"}
 
         frozen, freeze_reason = _has_active_uncertain_entry(uncertain_entry_state, login=login, server=srv)
         if frozen:
@@ -380,6 +400,7 @@ def authorize_emergency_stop_release(
             "releasedBy": op_id,
             "releaseReason": reason,
             "releasedAtUtc": now_ts,
+            "releasedStopRevision": exp_rev,
             "previousStopReason": current.get("reason") or "OPERATOR_EMERGENCY_STOP",
         }
         _atomic_write_json(target, record)
