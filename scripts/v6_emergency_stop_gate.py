@@ -9,6 +9,10 @@ Source-only offline candidate built on `v6_emergency_stop_latch.py` (#88) and
   `stopRevision` nonce (`secrets.token_hex(16)`) under an exclusive
   cross-process file lock — prevents ABA / same-second overwrite even when two
   stops share the exact same `triggeredAtUtc`. `triggeredAtUtc` is audit-only.
+- Strict fail-closed freeze-state validation: `_has_active_uncertain_entry`
+  validates EVERY key and record in `uncertain_entry_state` against the
+  producer schema (`mt5-direct-probe.py`); any malformed/blank/whitespace key
+  or corrupt record blocks with `UNCERTAIN_ENTRY_STATE_MALFORMED`.
 - Recovery flow (`initialize_or_recover_emergency_stop_latch`) ONLY restores a
   well-formed, account-bound ACTIVE stop latch (`emergencyStopActive=True`) with
   a fresh `stopRevision`; it NEVER clears or unlocks the latch directly.
@@ -94,14 +98,63 @@ def _exclusive_latch_lock(path: Path):
                 msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
 
 
+def _validate_uncertain_entry_record(raw_key, raw_record) -> tuple[int, str] | None:
+    """Validate one entry in `v6-uncertain-entry-state.json` against producer schema."""
+    if not isinstance(raw_key, str) or not raw_key or raw_key != raw_key.strip():
+        return None
+    parts = raw_key.split("|")
+    if len(parts) != 2:
+        return None
+    login_part, server_part = parts
+    if login_part != login_part.strip() or server_part != server_part.strip() or not server_part:
+        return None
+    key_login = _positive_int(login_part)
+    if key_login is None:
+        return None
+
+    if not isinstance(raw_record, dict):
+        return None
+    rec_login = _positive_int(raw_record.get("accountLogin"))
+    rec_server = raw_record.get("server")
+    symbol = raw_record.get("symbol")
+    side = raw_record.get("side")
+    comment = raw_record.get("brokerComment")
+    status = raw_record.get("status")
+    created_at = _positive_int(raw_record.get("createdAtUtc"))
+    if (
+        rec_login != key_login
+        or not isinstance(rec_server, str)
+        or not rec_server.strip()
+        or rec_server.strip().casefold() != server_part.casefold()
+        or not isinstance(symbol, str)
+        or not symbol.strip()
+        or side not in ("BUY", "SELL")
+        or not isinstance(comment, str)
+        or not (1 <= len(comment.strip()) <= 31)
+        or status != "ENTRY_IN_FLIGHT"
+        or created_at is None
+    ):
+        return None
+    return key_login, server_part
+
+
 def _has_active_uncertain_entry(uncertain_entry_state, *, login: int, server: str) -> tuple[bool, str]:
-    """Fail-closed check: None or non-dict is treated as unverified/unsafe."""
+    """Fail-closed validation of the entire uncertain-entry state dictionary."""
     if not isinstance(uncertain_entry_state, dict):
         return True, "UNCERTAIN_ENTRY_STATE_UNVERIFIED"
-    target = f"{login}|{server}".casefold()
-    for raw_key in uncertain_entry_state.keys():
-        if str(raw_key or "").strip().casefold() == target:
-            return True, "UNCERTAIN_ENTRY_FREEZE_ACTIVE"
+
+    target_server = server.strip().casefold()
+    matched_target = False
+    for raw_key, raw_record in uncertain_entry_state.items():
+        validated = _validate_uncertain_entry_record(raw_key, raw_record)
+        if validated is None:
+            return True, "UNCERTAIN_ENTRY_STATE_MALFORMED"
+        key_login, key_server = validated
+        if key_login == login and key_server.casefold() == target_server:
+            matched_target = True
+
+    if matched_target:
+        return True, "UNCERTAIN_ENTRY_FREEZE_ACTIVE"
     return False, "UNCERTAIN_ENTRY_CLEAR"
 
 
@@ -498,7 +551,7 @@ def evaluate_new_order_gate(
     if frozen:
         mapped_reason = (
             "BLOCKED_ENTRY_STATE_UNAVAILABLE"
-            if freeze_reason == "UNCERTAIN_ENTRY_STATE_UNVERIFIED"
+            if freeze_reason in ("UNCERTAIN_ENTRY_STATE_UNVERIFIED", "UNCERTAIN_ENTRY_STATE_MALFORMED")
             else "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY"
         )
         return {
@@ -535,4 +588,4 @@ def evaluate_new_order_gate(
         "gateScope": "LATCH_ONLY_OFFLINE_CANDIDATE_NOT_FINAL_AUTH",
         "liveArmed": True,
         "liveAuthorized": False,
-    }
+      }
