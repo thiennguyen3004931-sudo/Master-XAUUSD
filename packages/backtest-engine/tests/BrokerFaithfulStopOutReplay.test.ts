@@ -189,4 +189,20 @@ describe("BrokerFaithfulStopOutReplay (G3 #52)", () => {
     expect(res.fidelity.brokerStopOutExecutionVerified).toBe(false);
   });
 
+  it("rejects an entry whose immediate BID/ASK spread loss breaches margin before fill", () => {
+    const res = runBrokerFaithfulStopOutReplay({
+      initialBalance: 201,
+      ticks: [makeTick(1000, 1989, 2000)],
+      orders: [{ id: "wide-spread", side: "BUY", volume: 0.1, submittedAtMs: 1000 }],
+      contract: { ...BASE_CONTRACT, commissionPerLotRoundTrip: 0, slippagePerLotRoundTrip: 0 },
+    });
+    // Margin = 200; post-spread equity = 201 - 110 = 91, so the
+    // candidate would be instantly below 50% stop-out / negative free margin.
+    expect(res.ok).toBe(true);
+    expect(res.ledger.filter(e => e.eventType === "ENTRY_FILL")).toHaveLength(0);
+    expect(res.rejectedOrderIds).toEqual(["wide-spread"]);
+    expect(res.remainingOpenPositions).toHaveLength(0);
+    expect(res.stopOutTriggered).toBe(false);
+  });
+
 });
