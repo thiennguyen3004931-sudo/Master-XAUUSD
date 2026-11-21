@@ -13,6 +13,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
@@ -177,6 +178,14 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         engine.MANAGER_STATE_FILE = self._tmp_rt / "v6-position-tracker.json"
         engine.DAILY_RISK_STATE_FILE = self._tmp_rt / "v6-daily-risk-state.json"
         engine.REGIME_STATE_FILE = self._tmp_rt / "v6-regime-state.json"
+        # T01-T68 legacy mock-broker regression tests exercise the existing
+        # execution/risk logic. The G1 quarantine is separately tested in
+        # test_v6_runtime_stop_gate_integration and never bypassed at runtime.
+        self._isolated_g1_gate = patch.object(
+            engine, "_check_runtime_emergency_stop_latch", return_value=None
+        )
+        self._isolated_g1_gate.start()
+        self.addCleanup(self._isolated_g1_gate.stop)
 
     def tearDown(self):
         shutil.rmtree(self._tmp_rt, ignore_errors=True)

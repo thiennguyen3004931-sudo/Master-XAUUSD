@@ -9,6 +9,7 @@ import unittest
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -108,6 +109,14 @@ class ExecutionRiskTest(unittest.TestCase):
         engine.MANAGER_STATE_FILE = self._tmp_rt / "v6-position-tracker.json"
         engine.DAILY_RISK_STATE_FILE = self._tmp_rt / "v6-daily-risk-state.json"
         engine.REGIME_STATE_FILE = self._tmp_rt / "v6-regime-state.json"
+        # Isolate legacy execution/math/reconciliation tests from the separately
+        # tested P0 stop gate. Only these MOCK-only test methods bypass the
+        # quarantine; actual runtime always checks the durable stop latch.
+        self._mock_clear_g1_gate = patch.object(
+            engine, "_check_runtime_emergency_stop_latch", return_value=None
+        )
+        self._mock_clear_g1_gate.start()
+        self.addCleanup(self._mock_clear_g1_gate.stop)
 
     def tearDown(self):
         shutil.rmtree(self._tmp_rt, ignore_errors=True)
