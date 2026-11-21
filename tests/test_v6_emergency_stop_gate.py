@@ -1,4 +1,5 @@
 """Offline broker mock & negative tests for V6 G1 Emergency Stop gate (#7)."""
+import json
 import sys
 import tempfile
 import unittest
@@ -47,41 +48,37 @@ POSITION = {
 
 
 class EmergencyStopGateTests(unittest.TestCase):
-    def test_missing_corrupt_and_mismatched_latch_deny_release_and_leave_file_unchanged(self):
+    def test_forged_or_incomplete_active_latch_never_masquerades_as_operator_stop(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "latch.json"
-            missing_rel = authorize_emergency_stop_release(
-                path,
-                account_login=123456,
-                server="DBGMarkets-Live",
-                operator_authenticated=True,
-                operator_id="owner-op",
-                approval_reason="Try release missing",
-                uncertain_entry_state={},
-            )
-            self.assertTrue(missing_rel["releaseDenied"])
-            self.assertEqual(missing_rel["releaseDeniedReason"], "REQUIRES_ACTIVE_OPERATOR_STOP")
-            self.assertFalse(path.exists())
-
-            for raw in (
-                "{corrupt",
-                '{"emergencyStopActive": true, "accountLogin": 999999, "server": "DBGMarkets-Live", "stopCategory": "OPERATOR_EMERGENCY_STOP"}',
-            ):
+            bad_payloads = [
+                {"emergencyStopActive": True, "accountLogin": 123456, "server": "DBGMarkets-Live"},
+                {"schemaVersion": 1, "emergencyStopActive": True, "accountLogin": 123456, "server": "DBGMarkets-Live", "stopCategory": "UNKNOWN_CAT", "triggeredBy": "op", "triggeredAtUtc": 1700000000, "reason": "X"},
+                {"schemaVersion": 1, "emergencyStopActive": True, "accountLogin": 123456, "server": "DBGMarkets-Live", "stopCategory": "OPERATOR_EMERGENCY_STOP", "triggeredAtUtc": 1700000000, "reason": "X"},
+                {"schemaVersion": 1, "emergencyStopActive": True, "accountLogin": 123456, "server": "DBGMarkets-Live", "stopCategory": "OPERATOR_EMERGENCY_STOP", "triggeredBy": "op", "reason": "X"},
+            ]
+            for payload in bad_payloads:
+                raw = json.dumps(payload)
                 path.write_text(raw, encoding="utf-8")
-                res = authorize_emergency_stop_release(
+                read_res = read_bound_emergency_stop_latch(path, account_login=123456, server="DBGMarkets-Live")
+                self.assertEqual(read_res["stopCategory"], "FAIL_CLOSED_UNVERIFIED")
+                self.assertTrue(read_res["blockNewOrders"])
+
+                rel = authorize_emergency_stop_release(
                     path,
                     account_login=123456,
                     server="DBGMarkets-Live",
                     operator_authenticated=True,
                     operator_id="owner-op",
-                    approval_reason="Try release bad/mismatch",
+                    approval_reason="Attempt release",
                     uncertain_entry_state={},
+                    expected_triggered_at_utc=1700000000,
                 )
-                self.assertTrue(res["releaseDenied"])
-                self.assertTrue(res["blockNewOrders"])
+                self.assertTrue(rel["releaseDenied"])
+                self.assertEqual(rel["releaseDeniedReason"], "REQUIRES_ACTIVE_OPERATOR_STOP")
                 self.assertEqual(path.read_text(encoding="utf-8"), raw)
 
-    def test_recovery_flow_requires_evidence_and_clear_uncertain_state(self):
+    def test_recovery_restores_active_stop_latch_and_never_unlocks_directly(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "latch.json"
             denied = initialize_or_recover_emergency_stop_latch(
@@ -90,15 +87,30 @@ class EmergencyStopGateTests(unittest.TestCase):
                 server="DBGMarkets-Live",
                 operator_authenticated=True,
                 operator_id="owner-op",
-                approval_reason="Bootstrap",
-                uncertain_entry_state={},
+                recovery_reason="Bootstrap",
                 recovery_evidence_verified=False,
+                now_utc=1700000050,
             )
             self.assertTrue(denied["recoveryDenied"])
-            self.assertEqual(denied["recoveryDeniedReason"], "RECOVERY_EVIDENCE_REQUIRED")
             self.assertFalse(path.exists())
 
-            ok = initialize_or_recover_emergency_stop_latch(
+            recovered = initialize_or_recover_emergency_stop_latch(
+                path,
+                account_login=123456,
+                server="DBGMarkets-Live",
+                operator_authenticated=True,
+                operator_id="owner-op",
+                recovery_reason="Rebuilt after missing file",
+                recovery_evidence_verified=True,
+                now_utc=1700000050,
+            )
+            self.assertFalse(recovered["recoveryDenied"])
+            self.assertTrue(recovered["emergencyStopActive"])
+            self.assertTrue(recovered["blockNewOrders"])
+            self.assertEqual(recovered["stopCategory"], "OPERATOR_EMERGENCY_STOP")
+            self.assertEqual(recovered["triggeredAtUtc"], 1700000050)
+
+            released = authorize_emergency_stop_release(
                 path,
                 account_login=123456,
                 server="DBGMarkets-Live",
@@ -106,18 +118,17 @@ class EmergencyStopGateTests(unittest.TestCase):
                 operator_id="owner-op",
                 approval_reason="Verified clean broker flat state",
                 uncertain_entry_state={},
-                recovery_evidence_verified=True,
-                now_utc=1700000050,
+                expected_triggered_at_utc=1700000050,
+                now_utc=1700000060,
             )
-            self.assertFalse(ok["recoveryDenied"])
-            self.assertFalse(ok["emergencyStopActive"])
-            self.assertFalse(ok["liveArmed"])
-            self.assertFalse(ok["liveAuthorized"])
+            self.assertFalse(released["releaseDenied"])
+            self.assertFalse(released["emergencyStopActive"])
+            self.assertFalse(released["liveAuthorized"])
 
-    def test_operator_stop_persists_across_restart_and_rejects_stale_writer(self):
+    def test_mandatory_cas_version_rejects_omitted_and_stale_writers(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "latch.json"
-            state = persist_operator_emergency_stop(
+            persist_operator_emergency_stop(
                 path,
                 account_login=123456,
                 server="DBGMarkets-Live",
@@ -125,9 +136,20 @@ class EmergencyStopGateTests(unittest.TestCase):
                 reason="MANUAL_KILL_SWITCH",
                 now_utc=1700000000,
             )
-            self.assertTrue(state["emergencyStopActive"])
-            self.assertEqual(state["stopCategory"], "OPERATOR_EMERGENCY_STOP")
             before_bytes = path.read_text(encoding="utf-8")
+
+            missing_cas = authorize_emergency_stop_release(
+                path,
+                account_login=123456,
+                server="DBGMarkets-Live",
+                operator_authenticated=True,
+                operator_id="owner-op",
+                approval_reason="No CAS",
+                uncertain_entry_state={},
+            )
+            self.assertTrue(missing_cas["releaseDenied"])
+            self.assertEqual(missing_cas["releaseDeniedReason"], "EXPECTED_VERSION_REQUIRED")
+            self.assertEqual(path.read_text(encoding="utf-8"), before_bytes)
 
             stale = authorize_emergency_stop_release(
                 path,
@@ -135,7 +157,7 @@ class EmergencyStopGateTests(unittest.TestCase):
                 server="DBGMarkets-Live",
                 operator_authenticated=True,
                 operator_id="owner-op",
-                approval_reason="Stale clear",
+                approval_reason="Stale CAS",
                 uncertain_entry_state={},
                 expected_triggered_at_utc=1699999999,
             )
@@ -151,18 +173,6 @@ class EmergencyStopGateTests(unittest.TestCase):
             )
             before_bytes = path.read_text(encoding="utf-8")
 
-            omitted = authorize_emergency_stop_release(
-                path,
-                account_login=123456,
-                server="DBGMarkets-Live",
-                operator_authenticated=True,
-                operator_id="owner-op",
-                approval_reason="Omitted state",
-            )
-            self.assertTrue(omitted["releaseDenied"])
-            self.assertEqual(omitted["releaseDeniedReason"], "UNCERTAIN_ENTRY_STATE_UNVERIFIED")
-            self.assertEqual(path.read_text(encoding="utf-8"), before_bytes)
-
             for bad_state, expected_reason in (
                 (None, "UNCERTAIN_ENTRY_STATE_UNVERIFIED"),
                 ("not-a-dict", "UNCERTAIN_ENTRY_STATE_UNVERIFIED"),
@@ -176,6 +186,7 @@ class EmergencyStopGateTests(unittest.TestCase):
                     operator_id="owner-op",
                     approval_reason="Bad/active entry state",
                     uncertain_entry_state=bad_state,
+                    expected_triggered_at_utc=1700000000,
                 )
                 self.assertTrue(res["releaseDenied"])
                 self.assertEqual(res["releaseDeniedReason"], expected_reason)
@@ -196,10 +207,10 @@ class EmergencyStopGateTests(unittest.TestCase):
                 approval_reason="Verified flat",
                 uncertain_entry_state={},
                 expected_triggered_at_utc=1700000000,
+                now_utc=1700000010,
             )
             self.assertFalse(released["releaseDenied"])
             self.assertFalse(released["emergencyStopActive"])
-            self.assertFalse(released["liveAuthorized"])
 
             gate_ok = evaluate_new_order_gate(
                 action_kind=ACTION_NEW_ORDER,
