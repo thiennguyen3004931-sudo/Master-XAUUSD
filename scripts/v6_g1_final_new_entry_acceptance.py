@@ -244,7 +244,8 @@ def evaluate_g1_final_new_entry_acceptance(
     persistence = verify_atomic_durable_stop_persistence(persistence_state)
     if not persistence["claimsMatch"]:
         return {**base, "reason": persistence["reason"]}
-    if persistence_state["stopRevision"] != release_auth.get("stopRevision") if isinstance(release_auth, dict) else True:
+    if (not isinstance(release_auth, dict)
+            or persistence_state["stopRevision"] != release_auth.get("stopRevision")):
         return {**base, "reason": "RELEASE_STOP_REVISION_MISMATCH"}
     host = verify_host_trusted_stop_release(
         host_acl_evidence=host_acl_evidence,
