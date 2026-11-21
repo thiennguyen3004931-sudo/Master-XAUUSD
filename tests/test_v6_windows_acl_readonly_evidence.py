@@ -69,6 +69,10 @@ class WindowsAclReadOnlyEvidenceTests(unittest.TestCase):
         result = self.collect(runner)
         self.assertTrue(result["collectionSucceeded"])
         self.assertFalse(result["hostAclIndependentlyVerified"])
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["admitted"])
+        self.assertFalse(result["liveExecutionWired"])
+        self.assertTrue(result["requiresHumanReview"])
         self.assertFalse(result["operatorIdentityVerified"])
         self.assertFalse(result["keyCustodyVerified"])
         self.assertFalse(result["liveAuthorized"])
@@ -87,6 +91,10 @@ class WindowsAclReadOnlyEvidenceTests(unittest.TestCase):
         self.assertIn("privacyWarning", result)
         self.assertIn("rawIcacls", result["pathEvidence"]["latch_file"])
         self.assertFalse(result["hostAclIndependentlyVerified"])
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["admitted"])
+        self.assertFalse(result["liveExecutionWired"])
+        self.assertTrue(result["requiresHumanReview"])
         self.assertFalse(result["liveAuthorized"])
 
     def test_missing_path_and_reparse_directory_fail_closed(self):
