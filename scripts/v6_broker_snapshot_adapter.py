@@ -62,6 +62,12 @@ def _positive_ticket(value) -> int | None:
         return None
 
 
+def _nonnegative_int(value) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 def _no_trade(code: str, reason: str, *, extra: dict | None = None) -> dict:
     payload = {
         "ok": False,
@@ -245,12 +251,34 @@ def _snapshot_pending_orders(broker) -> tuple[list[tuple], list[dict]] | None:
             ord_vol = _num(vol_raw, positive=True)
             ord_entry = _num(getattr(order, "price_open", None), positive=True)
             ord_sl = _num(getattr(order, "sl", None), positive=True)
+            # MT5 pending STOP_LIMIT has a second execution price. All of these
+            # fields can affect the order's future exposure or execution.
+            stoplimit_price = _num(getattr(order, "price_stoplimit", None))
+            take_profit = _num(getattr(order, "tp", None))
+            time_policy = _nonnegative_int(getattr(order, "type_time", None))
+            expiration = _nonnegative_int(getattr(order, "time_expiration", None))
+            order_state = _nonnegative_int(getattr(order, "state", None))
+            fill_policy = _nonnegative_int(getattr(order, "type_filling", None))
+            stoplimit_codes = (
+                getattr(broker, "ORDER_TYPE_BUY_STOP_LIMIT", None),
+                getattr(broker, "ORDER_TYPE_SELL_STOP_LIMIT", None),
+            )
         except Exception:
             return None
-        if ord_ticket is None or ord_ticket in seen_tickets or not ord_sym or ord_side is None or None in (ord_vol, ord_entry, ord_sl):
+        if (ord_ticket is None or ord_ticket in seen_tickets or not ord_sym
+                or ord_side is None or None in (
+                    ord_vol, ord_entry, ord_sl, stoplimit_price, take_profit,
+                    time_policy, expiration, order_state, fill_policy,
+                )):
+            return None
+        if raw_type in stoplimit_codes and stoplimit_price <= 0:
             return None
         seen_tickets.add(ord_ticket)
-        identities.append((ord_ticket, ord_sym.casefold(), raw_type, round(ord_vol, 8), round(ord_entry, 6), round(ord_sl, 6)))
+        identities.append((
+            ord_ticket, ord_sym.casefold(), raw_type, ord_vol, ord_entry,
+            ord_sl, stoplimit_price, take_profit, time_policy, expiration,
+            order_state, fill_policy,
+        ))
         records.append({
             "symbol": ord_sym,
             "side": ord_side,
