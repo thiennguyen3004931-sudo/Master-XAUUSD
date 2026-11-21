@@ -23,11 +23,15 @@ LABELS = ("state_directory", "latch_file", "uncertain_entry_file")
 def _block(reason: str) -> dict:
     return {
         "collectionSucceeded": False,
+        "ok": False,
+        "admitted": False,
+        "requiresHumanReview": True,
         "reason": reason,
         "hostAclIndependentlyVerified": False,
         "operatorIdentityVerified": False,
         "keyCustodyVerified": False,
         "liveAuthorized": False,
+        "liveExecutionWired": False,
         "scope": SCOPE,
     }
 
@@ -121,6 +125,9 @@ def collect_windows_acl_evidence(
 
     response = {
         "collectionSucceeded": True,
+        "ok": False,
+        "admitted": False,
+        "requiresHumanReview": True,
         "reason": "LOCAL_EVIDENCE_CAPTURED_REQUIRES_HUMAN_REVIEW",
         "evidenceSource": "LOCAL_WINDOWS_WHOAMI_ICACLS_READONLY",
         "scope": SCOPE,
@@ -128,6 +135,7 @@ def collect_windows_acl_evidence(
         "operatorIdentityVerified": False,
         "keyCustodyVerified": False,
         "liveAuthorized": False,
+        "liveExecutionWired": False,
         "permissionInterpretation": "UNVERIFIED",
         "principalEvidenceHashes": {
             label: hashlib.sha256(value.encode("utf-8")).hexdigest()
