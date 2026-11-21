@@ -1,6 +1,5 @@
 """Offline integration tests for runtime Emergency Stop latch enforcement in mt5-direct-probe.py (#7)."""
 import importlib.util
-import json
 import os
 import sys
 import tempfile
@@ -12,6 +11,11 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from scripts.v6_emergency_stop_gate import (
+    authorize_emergency_stop_release,
+    persist_operator_emergency_stop,
+)
 
 
 def _load_probe_module():
@@ -29,18 +33,13 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             latch_file = Path(folder) / "v6-emergency-stop-latch.json"
             with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
-                latch_file.write_text(
-                    json.dumps({
-                        "schemaVersion": 1,
-                        "accountLogin": 1001,
-                        "server": "Broker-Demo",
-                        "emergencyStopActive": True,
-                        "blockNewOrders": True,
-                        "stopCategory": "OPERATOR_STOP",
-                        "reason": "OPERATOR_EMERGENCY_STOP",
-                        "stopRevision": "rev-1",
-                    }),
-                    encoding="utf-8",
+                stop_state = persist_operator_emergency_stop(
+                    latch_file,
+                    account_login=1001,
+                    server="Broker-Demo",
+                    operator_id="op-1",
+                    reason="OPERATOR_EMERGENCY_STOP",
+                    now_utc=1700000000,
                 )
                 blocked = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
                 self.assertIsNotNone(blocked)
@@ -57,18 +56,24 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
                     self.assertIsNotNone(blocked_missing)
                     self.assertTrue(blocked_missing["blockNewOrders"])
 
-                latch_file.write_text(
-                    json.dumps({
-                        "schemaVersion": 1,
-                        "accountLogin": 1001,
-                        "server": "Broker-Demo",
-                        "emergencyStopActive": False,
-                        "blockNewOrders": False,
-                        "stopCategory": "NONE",
-                        "reason": "RELEASED",
-                        "stopRevision": "rev-2",
-                    }),
-                    encoding="utf-8",
+                stop_state = persist_operator_emergency_stop(
+                    latch_file,
+                    account_login=1001,
+                    server="Broker-Demo",
+                    operator_id="op-1",
+                    reason="OPERATOR_EMERGENCY_STOP",
+                    now_utc=1700000000,
+                )
+                authorize_emergency_stop_release(
+                    latch_file,
+                    account_login=1001,
+                    server="Broker-Demo",
+                    operator_authenticated=True,
+                    operator_id="op-1",
+                    approval_reason="VERIFIED_RECONCILED",
+                    uncertain_entry_state={},
+                    expected_stop_revision=stop_state["stopRevision"],
+                    now_utc=1700000010,
                 )
                 allowed = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
                 self.assertIsNone(allowed)
@@ -76,6 +81,16 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
     def test_protective_actions_in_probe_do_not_require_new_order_latch(self):
         probe = _load_probe_module()
         called = []
+        pos = SimpleNamespace(
+            ticket=99,
+            symbol="XAUUSD",
+            type=0,
+            volume=0.01,
+            price_open=2600.0,
+            sl=2590.0,
+            tp=2620.0,
+            magic=270715,
+        )
 
         class _MockMt5:
             TRADE_ACTION_SLTP = 6
@@ -83,16 +98,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
 
             @staticmethod
             def positions_get(ticket=None):
-                return [SimpleNamespace(
-                    ticket=ticket or 99,
-                    symbol="XAUUSD",
-                    type=0,
-                    volume=0.01,
-                    price_open=2600.0,
-                    sl=2590.0,
-                    tp=2620.0,
-                    magic=270715,
-                )]
+                return [pos]
 
             @staticmethod
             def symbol_info_tick(_sym):
@@ -109,21 +115,16 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as folder:
             latch_file = Path(folder) / "v6-emergency-stop-latch.json"
-            latch_file.write_text(
-                json.dumps({
-                    "schemaVersion": 1,
-                    "accountLogin": 1001,
-                    "server": "Broker-Demo",
-                    "emergencyStopActive": True,
-                    "blockNewOrders": True,
-                    "stopCategory": "OPERATOR_STOP",
-                    "reason": "OPERATOR_EMERGENCY_STOP",
-                    "stopRevision": "rev-1",
-                }),
-                encoding="utf-8",
+            persist_operator_emergency_stop(
+                latch_file,
+                account_login=1001,
+                server="Broker-Demo",
+                operator_id="op-1",
+                reason="OPERATOR_EMERGENCY_STOP",
+                now_utc=1700000000,
             )
             with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
-                res = probe.modify_position_sl_tp(_MockMt5(), 99, sl=2595.0, tp=2625.0)
+                res = probe.modify_position_sl_tp(_MockMt5(), pos, 2595.0, 2625.0, "TEST_SLTP")
                 self.assertTrue(res.get("ok"))
                 self.assertEqual(len(called), 1)
 
