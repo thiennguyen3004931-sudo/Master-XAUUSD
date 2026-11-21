@@ -125,7 +125,7 @@ class FinalNewOrderAdmissionContractTests(unittest.TestCase):
                 uncertain_entry_state={},
                 now_utc=1700000100,
             )
-            self.assertTrue(released["ok"])
+            self.assertFalse(released["ok"])
             self.assertTrue(released["tokenValidOffline"])
             self.assertTrue(released["releaseDenied"])
             self.assertFalse(released["releaseApplied"])
@@ -233,7 +233,8 @@ class FinalNewOrderAdmissionContractTests(unittest.TestCase):
 
     def test_claimed_acl_does_not_grant_host_verified_status(self):
         result = assess_caller_supplied_acl_claims(VALID_ACL)
-        self.assertTrue(result["ok"])
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["claimsMatch"])
         self.assertFalse(result["hostAclIndependentlyVerified"])
         self.assertEqual(result["evidenceSource"], "CALLER_SUPPLIED_NOT_WINDOWS_HOST_ATTESTED")
 
