@@ -76,6 +76,17 @@ class MockReadOnlyBroker:
         raise AssertionError("Read-only broker adapter must never call order_send")
 
 
+def make_pending_order(**overrides):
+    # MT5 Order readback fields needed for conservative inventory coherence.
+    payload = dict(
+        ticket=21, symbol="XAUUSD.G", type=2, volume_current=0.01,
+        price_open=3995.0, sl=3988.0, price_stoplimit=0.0, tp=0.0,
+        type_time=0, time_expiration=0, state=1, type_filling=0,
+    )
+    payload.update(overrides)
+    return SimpleNamespace(**payload)
+
+
 def base_call(broker, **overrides):
     kw = dict(
         broker=broker,
@@ -102,7 +113,7 @@ class BrokerSnapshotAdapterTests(unittest.TestCase):
             SimpleNamespace(ticket=12, symbol="EURUSD", type=0, volume=0.03, price_open=1.1000, sl=1.0950),
         ]
         broker._orders = [
-            SimpleNamespace(ticket=21, symbol="XAUUSD.G", type=2, volume_current=0.01, price_open=3995.0, sl=3988.0),
+            make_pending_order(ticket=21, symbol="XAUUSD.G", type=2, volume_current=0.01, price_open=3995.0, sl=3988.0),
         ]
         res = base_call(broker)
         self.assertTrue(res["ok"], res)
@@ -123,7 +134,7 @@ class BrokerSnapshotAdapterTests(unittest.TestCase):
 
             broker_ord = MockReadOnlyBroker()
             broker_ord._orders = [
-                SimpleNamespace(ticket=bad_ticket, symbol="XAUUSD.G", type=2, volume_current=0.01, price_open=3995.0, sl=3988.0)
+                make_pending_order(ticket=bad_ticket, symbol="XAUUSD.G", type=2, volume_current=0.01, price_open=3995.0, sl=3988.0)
             ]
             self.assertEqual(base_call(broker_ord)["status"], "BLOCKED_PENDING_EXPOSURE_UNVERIFIED")
 
@@ -161,11 +172,45 @@ class BrokerSnapshotAdapterTests(unittest.TestCase):
         broker = MockReadOnlyBroker()
         broker.ORDER_TYPE_BUY_LIMIT = None
         broker._orders = [
-            SimpleNamespace(ticket=21, symbol="XAUUSD.G", type=2, volume_current=0.01, price_open=3995.0, sl=3988.0)
+            make_pending_order(ticket=21, symbol="XAUUSD.G", type=2, volume_current=0.01, price_open=3995.0, sl=3988.0)
         ]
         res = base_call(broker)
         self.assertEqual(res["decision"], "NO_TRADE")
         self.assertEqual(res["status"], "BLOCKED_PENDING_EXPOSURE_UNVERIFIED")
+
+    def test_stop_limit_secondary_price_or_policy_drift_is_blocked(self):
+        for changed_field, altered in (
+            ("price_stoplimit", 3992.0), ("type_time", 2),
+            ("time_expiration", 1700010000), ("state", 3),
+            ("type_filling", 1), ("tp", 4010.0),
+        ):
+            with self.subTest(field=changed_field):
+                broker = MockReadOnlyBroker()
+                reads = {"count": 0}
+
+                def changing_order():
+                    reads["count"] += 1
+                    updated = {changed_field: altered} if reads["count"] > 1 else {}
+                    return [make_pending_order(type=6, price_stoplimit=3993.0, **updated)]
+
+                broker._on_orders_get = changing_order
+                res = base_call(broker)
+                self.assertEqual(res["decision"], "NO_TRADE")
+                self.assertEqual(res["status"], "BLOCKED_INVENTORY_SNAPSHOT_DRIFT")
+                self.assertIsNone(res["candidateVolume"])
+
+    def test_stop_limit_requires_explicit_execution_metadata(self):
+        broker = MockReadOnlyBroker()
+        broker._orders = [make_pending_order(type=6, price_stoplimit=0.0)]
+        self.assertEqual(base_call(broker)["status"], "BLOCKED_PENDING_EXPOSURE_UNVERIFIED")
+
+        for field in ("price_stoplimit", "tp", "type_time", "time_expiration", "state", "type_filling"):
+            with self.subTest(field=field):
+                broker = MockReadOnlyBroker()
+                broker._orders = [make_pending_order(**{field: None})]
+                res = base_call(broker)
+                self.assertEqual(res["decision"], "NO_TRADE")
+                self.assertEqual(res["status"], "BLOCKED_PENDING_EXPOSURE_UNVERIFIED")
 
     def test_exceptions_and_pre_pricing_drift_return_no_trade(self):
         broker = MockReadOnlyBroker()
