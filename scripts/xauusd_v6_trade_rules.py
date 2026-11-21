@@ -479,6 +479,16 @@ def select_tp_with_near_obstacle_check(
     if not isfinite(risk) or risk < 0.01:
         return {"ok": False, "tp": None, "tpSource": "INVALID_RISK", "reason": "Invalid SL risk distance"}
 
+    # A missing HTF series cannot establish an 'open-air' market.
+    # Do not manufacture fallback TP when neither H1 nor H4 was supplied.
+    if not h1 and not h4:
+        return {
+            "ok": False,
+            "tp": None,
+            "tpSource": "MISSING_HTF_DATA",
+            "reason": "Missing H1/H4 market data: cannot verify obstacles or fallback TP",
+        }
+
     cost = max(0.0, float(round_trip_cost or 0.0))
     obstacles = _extract_opposing_h1_h4_obstacles(side, entry, h1, h4)
 
