@@ -92,6 +92,7 @@ class AutoLotShadowContractP1Tests(unittest.TestCase):
         self.assertFalse(result["runtimePreSendAccepted"])
         self.assertFalse(result["liveAuthorized"])
         self.assertFalse(result["admitted"])
+        self.assertEqual(result["recommendedLot"], 0.0)
         self.assertFalse(result["brokerContractIndependentlyVerified"])
         self.assertFalse(result["brokerCostIndependentlyVerified"])
         self.assertEqual(result["activeSizingMode"], "FIXED_LOT")
@@ -105,8 +106,8 @@ class AutoLotShadowContractP1Tests(unittest.TestCase):
         self.assertTrue(result["shadowCandidateAvailable"])
         self.assertEqual(result["reason"], "UNVERIFIED_SHADOW_CANDIDATE_ONLY")
         self.assertEqual(result["symbolsIncluded"], ["EURUSD", "XAUUSD"])
-        self.assertGreater(result["recommendedLot"], 0.0)
-        self.assertLess(result["recommendedLot"], 0.20)
+        self.assertGreater(result["shadowEstimatedLot"], 0.0)
+        self.assertLess(result["shadowEstimatedLot"], 0.20)
         self.assertGreater(result["candidateRiskUsd"], 0.0)
 
     def test_unverified_account_clock_inventory_and_contract_fail_closed(self):
@@ -223,6 +224,7 @@ class AutoLotShadowContractP1Tests(unittest.TestCase):
             ({"expected_account_login": None}, "ACCOUNT_BINDING_MISMATCH"),
             ({"observed_account_login": True}, "ACCOUNT_BINDING_MISMATCH"),
             ({"broker_contract_attested": 1}, "BROKER_CONTRACT_CLAIM_MISSING"),
+            ({"snapshot_epoch_utc": 10**1000}, "INVALID_CLOCK_TIMESTAMP"),
         ):
             with self.subTest(changes=changes):
                 res = evaluate_trusted_clock_and_auth(**{**base, **changes})
@@ -235,7 +237,7 @@ class AutoLotShadowContractP1Tests(unittest.TestCase):
         result = evaluate_shadow_auto_lot_p1(**kw)
         self.assert_never_authorizes(result)
         self.assertTrue(result["shadowCandidateAvailable"])
-        self.assertEqual(result["recommendedLot"], 0.05)
+        self.assertEqual(result["shadowEstimatedLot"], 0.05)
         kw["volume_min"] = 0.015
         blocked = evaluate_shadow_auto_lot_p1(**kw)
         self.assert_never_authorizes(blocked)
