@@ -297,7 +297,14 @@ export function runBrokerFaithfulStopOutReplay(
       const snapBefore = accountSnapshot(tick);
       const projectedBalance = balance - halfComm - halfSlip;
       const projectedUsedMargin = snapBefore.usedMargin + requiredMargin;
-      const projectedEquity = snapBefore.equity - halfComm - halfSlip;
+      // The new position is marked to close at BID for BUY / ASK for SELL.
+      // Its entry spread loss is immediate equity drawdown and must count
+      // BEFORE deciding whether the order satisfies broker margin limits.
+      const immediateSpreadLoss = Math.max(0,
+        (tick.ask - tick.bid)
+          * intent.volume * contract.contractSize
+      );
+      const projectedEquity = snapBefore.equity - halfComm - halfSlip - immediateSpreadLoss;
       const freeMarginAfter = projectedEquity - projectedUsedMargin;
       const marginLevelAfter =
         projectedUsedMargin > 0 ? (projectedEquity / projectedUsedMargin) * 100 : Infinity;
