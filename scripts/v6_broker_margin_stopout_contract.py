@@ -1,17 +1,9 @@
-"""G3 P1 read-only broker margin, hedge & stop-out contract attestation (#52).
+"""G3 P1 *offline* broker margin and stop-out metadata plausibility checks (#52).
 
-Strictly READ-ONLY / SOURCE-ONLY:
-- NEVER imports MetaTrader5, NEVER calls `order_send`, NEVER mutates runtime/ARM/BOT_MODE.
-- Validates real broker account & symbol margin/stop-out contract metadata without
-  trusting bare caller booleans.
-- Fails closed on:
-  * unauthenticated or mismatched account/server,
-  * invalid/non-positive leverage, stop-out threshold, or tick/contract specs,
-  * `None` (unavailable) positions or fills inventory,
-  * opposing hedged positions when broker hedged-margin policy (`marginHedged`,
-    `hedgedMarginMode`) is unattested (`HEDGED_MARGIN_POLICY_UNVERIFIED`),
-  * missing independent out-of-sample tick+fill evidence (`brokerStopOutExecutionVerified`
-    remains `False` unless independent broker stop-out fills match tick replay).
+Inputs are plain caller-supplied dictionaries, NOT authenticated MT5 reads,
+independent broker fills, or out-of-sample evidence. Hashes only fingerprint
+the supplied values. No return value in this module can attest broker execution,
+authorize LIVE, import MT5, modify ARM, or submit an order.
 """
 from __future__ import annotations
 
@@ -21,187 +13,226 @@ import math
 from typing import Any
 
 SUPPORTED_MARGIN_SO_MODES = frozenset({"PERCENT", "MONEY"})
-SUPPORTED_ACCOUNT_MARGIN_MODES = frozenset({"RETAIL_NETTING", "EXCHANGE", "RETAIL_HEDGING"})
+SUPPORTED_ACCOUNT_MARGIN_MODES = frozenset({
+    "RETAIL_NETTING", "EXCHANGE", "RETAIL_HEDGING",
+})
+NON_AUTHORIZING = {
+    "readOnly": True,
+    "executionEnabled": False,
+    "runtimePreSendAccepted": False,
+    "liveAuthorized": False,
+    "admitted": False,
+    "brokerStopOutExecutionVerified": False,
+    "brokerMarginContractIndependentlyAttested": False,
+    "brokerFillSourceIndependentlyVerified": False,
+    "scope": "CALLER_SUPPLIED_OFFLINE_SCENARIO_NOT_BROKER_ATTESTED",
+}
 
 
-def _is_finite_pos(val: Any) -> bool:
-    return isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val) and val > 0.0
+def _pos(value: Any) -> bool:
+    try:
+        return (isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(float(value)) and value > 0)
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 
-def _is_finite_nonneg(val: Any) -> bool:
-    return isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val) and val >= 0.0
+def _nonneg(value: Any) -> bool:
+    try:
+        return (isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(float(value)) and value >= 0)
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 
-def attest_broker_margin_contract(
-    *,
-    account_info: dict[str, Any] | None,
-    symbol_info: dict[str, Any] | None,
-    expected_account_login: int,
-    expected_server: str,
-    now_utc: int | float,
-    max_snapshot_age_sec: int = 10,
-) -> dict[str, Any]:
-    """Validate real read-only broker margin/stop-out metadata from account & symbol dicts."""
-    if not isinstance(account_info, dict) or not isinstance(symbol_info, dict):
-        return {"attested": False, "reason": "MISSING_BROKER_METADATA_DICTS"}
-    if not isinstance(max_snapshot_age_sec, int) or isinstance(max_snapshot_age_sec, bool) or max_snapshot_age_sec <= 0:
-        return {"attested": False, "reason": "INVALID_MAX_SNAPSHOT_AGE"}
+def _ticket(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
-    login = account_info.get("login")
-    server = str(account_info.get("server") or "").strip()
-    if not isinstance(login, int) or isinstance(login, bool) or login <= 0 or login != int(expected_account_login):
-        return {"attested": False, "reason": "ACCOUNT_BINDING_MISMATCH"}
-    if not server or server != str(expected_server or "").strip():
-        return {"attested": False, "reason": "SERVER_BINDING_MISMATCH"}
 
-    snapshot_utc = account_info.get("snapshotEpochUtc")
-    if not _is_finite_pos(snapshot_utc) or not _is_finite_pos(now_utc):
-        return {"attested": False, "reason": "INVALID_SNAPSHOT_CLOCK"}
-    age_sec = float(now_utc) - float(snapshot_utc)
-    if age_sec < 0.0 or age_sec > float(max_snapshot_age_sec):
-        return {"attested": False, "reason": "SNAPSHOT_STALE_OR_FUTURE_SKEW", "ageSec": age_sec}
-
-    leverage = account_info.get("leverage")
-    margin_so_mode = str(account_info.get("marginSoMode") or "").strip().upper()
-    account_margin_mode = str(account_info.get("marginMode") or "").strip().upper()
-    margin_so_call = account_info.get("marginSoCall")
-    margin_so_stop_out = account_info.get("marginSoStopOut")
-    currency = str(account_info.get("currency") or "").strip().upper()
-
-    if not _is_finite_pos(leverage):
-        return {"attested": False, "reason": "INVALID_ACCOUNT_LEVERAGE"}
-    if not currency:
-        return {"attested": False, "reason": "MISSING_ACCOUNT_CURRENCY"}
-    if margin_so_mode not in SUPPORTED_MARGIN_SO_MODES:
-        return {"attested": False, "reason": "UNSUPPORTED_MARGIN_SO_MODE"}
-    if account_margin_mode not in SUPPORTED_ACCOUNT_MARGIN_MODES:
-        return {"attested": False, "reason": "UNSUPPORTED_ACCOUNT_MARGIN_MODE"}
-    if not (_is_finite_pos(margin_so_call) and _is_finite_pos(margin_so_stop_out)):
-        return {"attested": False, "reason": "INVALID_STOP_OUT_THRESHOLDS"}
-    if float(margin_so_stop_out) > float(margin_so_call):
-        return {"attested": False, "reason": "STOP_OUT_EXCEEDS_MARGIN_CALL"}
-
-    symbol = str(symbol_info.get("symbol") or "").strip()
-    contract_size = symbol_info.get("tradeContractSize")
-    tick_size = symbol_info.get("tradeTickSize")
-    tick_value = symbol_info.get("tradeTickValue")
-    margin_initial = symbol_info.get("marginInitial", 0.0)
-    margin_hedged = symbol_info.get("marginHedged")
-    margin_hedged_attested = isinstance(symbol_info.get("hedgedMarginPolicyAttested"), bool) and symbol_info.get("hedgedMarginPolicyAttested") is True
-
-    if not symbol or not (_is_finite_pos(contract_size) and _is_finite_pos(tick_size) and _is_finite_pos(tick_value)):
-        return {"attested": False, "reason": "INVALID_SYMBOL_CONTRACT_SPECS"}
-    if not _is_finite_nonneg(margin_initial):
-        return {"attested": False, "reason": "INVALID_SYMBOL_MARGIN_INITIAL"}
-
-    canonical = json.dumps(
-        {
-            "login": login,
-            "server": server,
-            "currency": currency,
-            "leverage": float(leverage),
-            "marginMode": account_margin_mode,
-            "marginSoMode": margin_so_mode,
-            "marginSoCall": float(margin_so_call),
-            "marginSoStopOut": float(margin_so_stop_out),
-            "symbol": symbol,
-            "tradeContractSize": float(contract_size),
-            "tradeTickSize": float(tick_size),
-            "tradeTickValue": float(tick_value),
-            "marginHedged": margin_hedged if _is_finite_nonneg(margin_hedged) else None,
-            "hedgedMarginPolicyAttested": margin_hedged_attested,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
+def _fail(reason: str, **extra: Any) -> dict[str, Any]:
     return {
-        "attested": True,
-        "reason": "BROKER_MARGIN_CONTRACT_ATTESTED",
-        "accountMarginMode": account_margin_mode,
-        "marginSoMode": margin_so_mode,
-        "marginSoCall": float(margin_so_call),
-        "marginSoStopOut": float(margin_so_stop_out),
-        "hedgedMarginPolicyVerified": bool(
-            account_margin_mode == "RETAIL_HEDGING"
-            and margin_hedged_attested
-            and _is_finite_nonneg(margin_hedged)
-        ),
-        "contractSha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "attested": False,
+        "metadataShapeValid": False,
+        "reason": reason,
+        "brokerSourceIndependentlyVerified": False,
+        "hedgedMarginPolicyVerified": False,
+        **extra,
     }
 
 
-def evaluate_g3_stopout_evidence_contract(
-    *,
-    account_info: dict[str, Any] | None,
+def attest_broker_margin_contract(
+    *, account_info: dict[str, Any] | None,
     symbol_info: dict[str, Any] | None,
-    expected_account_login: int,
-    expected_server: str,
+    expected_account_login: int, expected_server: str,
+    now_utc: int | float, max_snapshot_age_sec: int = 10,
+) -> dict[str, Any]:
+    """Validate *shape*, account-claim and freshness; never attest broker provenance."""
+    if not isinstance(account_info, dict) or not isinstance(symbol_info, dict):
+        return _fail("MISSING_BROKER_METADATA_DICTS")
+    if (not _ticket(expected_account_login)
+            or not _ticket(account_info.get("login"))
+            or account_info["login"] != expected_account_login):
+        return _fail("ACCOUNT_BINDING_MISMATCH")
+    server = account_info.get("server")
+    if (not isinstance(server, str) or not server.strip()
+            or not isinstance(expected_server, str) or not expected_server.strip()
+            or server.strip() != expected_server.strip()):
+        return _fail("SERVER_BINDING_MISMATCH")
+    if (not _pos(max_snapshot_age_sec) or max_snapshot_age_sec > 30
+            or not _pos(account_info.get("snapshotEpochUtc"))
+            or not _pos(now_utc)):
+        return _fail("INVALID_SNAPSHOT_CLOCK_OR_AGE_BOUND")
+    age = float(now_utc) - float(account_info["snapshotEpochUtc"])
+    if age < 0 or age > float(max_snapshot_age_sec):
+        return _fail("SNAPSHOT_STALE_OR_FUTURE_SKEW", ageSec=age)
+
+    margin_mode = account_info.get("marginMode")
+    stopout_mode = account_info.get("marginSoMode")
+    if not isinstance(margin_mode, str) or margin_mode not in SUPPORTED_ACCOUNT_MARGIN_MODES:
+        return _fail("UNSUPPORTED_ACCOUNT_MARGIN_MODE")
+    if not isinstance(stopout_mode, str) or stopout_mode not in SUPPORTED_MARGIN_SO_MODES:
+        return _fail("UNSUPPORTED_MARGIN_SO_MODE")
+    if not _pos(account_info.get("leverage")):
+        return _fail("INVALID_ACCOUNT_LEVERAGE")
+    currency = account_info.get("currency")
+    if not isinstance(currency, str) or not currency.strip():
+        return _fail("MISSING_ACCOUNT_CURRENCY")
+    so_call = account_info.get("marginSoCall")
+    so_out = account_info.get("marginSoStopOut")
+    if not _pos(so_call) or not _pos(so_out) or so_out > so_call:
+        return _fail("INVALID_STOP_OUT_THRESHOLDS")
+
+    symbol = symbol_info.get("symbol")
+    if not isinstance(symbol, str) or not symbol.strip():
+        return _fail("INVALID_SYMBOL_CONTRACT_SPECS")
+    for key in ("tradeContractSize", "tradeTickSize", "tradeTickValue"):
+        if not _pos(symbol_info.get(key)):
+            return _fail("INVALID_SYMBOL_CONTRACT_SPECS")
+    margin_initial = symbol_info.get("marginInitial")
+    if not _nonneg(margin_initial):
+        return _fail("INVALID_SYMBOL_MARGIN_INITIAL")
+    hedged_margin = symbol_info.get("marginHedged")
+    if hedged_margin is not None and not _nonneg(hedged_margin):
+        return _fail("INVALID_SYMBOL_HEDGED_MARGIN")
+
+    # Calling this function with dicts and a caller-controlled boolean does
+    # NOT establish that a field came from the broker or matches this account.
+    # The hash below is merely a deterministic fingerprint of supplied data.
+    normalized = {
+        "login": account_info["login"],
+        "server": server.strip(),
+        "currency": currency.strip().upper(),
+        "leverage": float(account_info["leverage"]),
+        "marginMode": margin_mode,
+        "marginSoMode": stopout_mode,
+        "marginSoCall": float(so_call),
+        "marginSoStopOut": float(so_out),
+        "symbol": symbol.strip(),
+        "tradeContractSize": float(symbol_info["tradeContractSize"]),
+        "tradeTickSize": float(symbol_info["tradeTickSize"]),
+        "tradeTickValue": float(symbol_info["tradeTickValue"]),
+        "marginInitial": float(margin_initial),
+        "marginHedged": float(hedged_margin) if hedged_margin is not None else None,
+    }
+    digest = hashlib.sha256(
+        json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "attested": False,
+        "metadataShapeValid": True,
+        "reason": "CALLER_SUPPLIED_MARGIN_METADATA_SHAPE_VALID_NOT_ATTESTED",
+        "contractSha256": digest,
+        "fingerprintIsBrokerAttestation": False,
+        "accountMarginMode": margin_mode,
+        "marginSoMode": stopout_mode,
+        "marginSoCall": float(so_call),
+        "marginSoStopOut": float(so_out),
+        "hedgedMarginPolicyVerified": False,
+        "brokerSourceIndependentlyVerified": False,
+        "claimedHedgePolicyFlag": symbol_info.get("hedgedMarginPolicyAttested") is True,
+    }
+
+
+def _ticket_sequence(items: list[dict[str, Any]], name: str) -> tuple[list[int] | None, str | None]:
+    ids: list[int] = []
+    for item in items:
+        if not isinstance(item, dict) or not _ticket(item.get("positionTicket")):
+            return None, "INVALID_" + name + "_TICKET"
+        ids.append(item["positionTicket"])
+    if len(set(ids)) != len(ids):
+        return None, "DUPLICATE_" + name + "_TICKET"
+    return ids, None
+
+
+def evaluate_g3_stopout_evidence_contract(
+    *, account_info: dict[str, Any] | None,
+    symbol_info: dict[str, Any] | None,
+    expected_account_login: int, expected_server: str,
     now_utc: int | float,
     positions: list[dict[str, Any]] | None,
     observed_stopout_fills: list[dict[str, Any]] | None,
     replayed_stopout_events: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
-    """Evaluate G3 (#52) read-only margin/hedge/stop-out attestation & out-of-sample fill match."""
-    envelope = {
-        "readOnly": True,
-        "executionEnabled": False,
-        "liveAuthorized": False,
-        "brokerStopOutExecutionVerified": False,
-    }
-
+    """Compare caller-claimed ticket order; NEVER verify actual broker stop-out."""
     contract = attest_broker_margin_contract(
-        account_info=account_info,
-        symbol_info=symbol_info,
+        account_info=account_info, symbol_info=symbol_info,
         expected_account_login=expected_account_login,
-        expected_server=expected_server,
-        now_utc=now_utc,
+        expected_server=expected_server, now_utc=now_utc,
     )
-    if not contract["attested"]:
-        return {**envelope, "admitted": False, "reason": contract["reason"], "contract": contract}
+    envelope = {**NON_AUTHORIZING, "contract": contract}
+    if not contract.get("metadataShapeValid"):
+        return {**envelope, "reason": contract["reason"],
+                "ticketSequenceMatches": False}
+    if not isinstance(positions, list) or not isinstance(observed_stopout_fills, list) or not isinstance(replayed_stopout_events, list):
+        return {**envelope, "reason": "BROKER_INVENTORY_OR_FILLS_UNAVAILABLE",
+                "ticketSequenceMatches": False}
 
-    if positions is None:
-        return {**envelope, "admitted": False, "reason": "POSITIONS_INVENTORY_UNAVAILABLE", "contract": contract}
-    if observed_stopout_fills is None or replayed_stopout_events is None:
-        return {**envelope, "admitted": False, "reason": "STOPOUT_EVIDENCE_MISSING", "contract": contract}
+    position_ids: set[int] = set()
+    has_buy = False
+    has_sell = False
+    for pos in positions:
+        if not isinstance(pos, dict) or not _ticket(pos.get("ticket")) or pos["ticket"] in position_ids:
+            return {**envelope, "reason": "INVALID_OR_DUPLICATE_POSITION",
+                    "ticketSequenceMatches": False}
+        kind = pos.get("type")
+        if not isinstance(kind, int) or isinstance(kind, bool) or kind not in (0, 1):
+            return {**envelope, "reason": "UNKNOWN_POSITION_TYPE",
+                    "ticketSequenceMatches": False}
+        position_ids.add(pos["ticket"])
+        has_buy |= kind == 0
+        has_sell |= kind == 1
 
-    has_buy = any(p.get("type") == 0 for p in positions)
-    has_sell = any(p.get("type") == 1 for p in positions)
-    if has_buy and has_sell and not contract["hedgedMarginPolicyVerified"]:
+    # Cross-side HEDGING requires a broker-validated actual collateral policy,
+    # not the caller's hedgedMarginPolicyAttested=True boolean.
+    if has_buy and has_sell:
+        return {**envelope, "reason": "HEDGED_MARGIN_POLICY_UNVERIFIED",
+                "ticketSequenceMatches": False}
+    if not observed_stopout_fills or not replayed_stopout_events:
+        return {**envelope, "reason": "NO_OUT_OF_SAMPLE_STOPOUT_FILLS_TO_VERIFY",
+                "ticketSequenceMatches": False}
+
+    observed_ids, obs_err = _ticket_sequence(observed_stopout_fills, "OBSERVED_FILL")
+    if obs_err:
+        return {**envelope, "reason": obs_err, "ticketSequenceMatches": False}
+    replayed_ids, replay_err = _ticket_sequence(replayed_stopout_events, "REPLAYED_EVENT")
+    if replay_err:
+        return {**envelope, "reason": replay_err, "ticketSequenceMatches": False}
+    if observed_ids != replayed_ids:
         return {
-            **envelope,
-            "admitted": False,
-            "reason": "HEDGED_MARGIN_POLICY_UNVERIFIED",
-            "contract": contract,
-        }
-
-    if len(observed_stopout_fills) == 0 or len(replayed_stopout_events) == 0:
-        return {
-            **envelope,
-            "admitted": False,
-            "reason": "NO_OUT_OF_SAMPLE_STOPOUT_FILLS_TO_VERIFY",
-            "contract": contract,
-        }
-
-    obs_tickets = [f.get("positionTicket") for f in observed_stopout_fills]
-    rep_tickets = [e.get("positionTicket") for e in replayed_stopout_events]
-    if any(not isinstance(t, int) or isinstance(t, bool) or t <= 0 for t in obs_tickets):
-        return {**envelope, "admitted": False, "reason": "INVALID_OBSERVED_FILL_TICKET", "contract": contract}
-    if obs_tickets != rep_tickets:
-        return {
-            **envelope,
-            "admitted": False,
-            "reason": "STOPOUT_SEQUENCE_MISMATCH",
-            "observedTickets": obs_tickets,
-            "replayedTickets": rep_tickets,
-            "contract": contract,
+            **envelope, "reason": "STOPOUT_TICKET_SEQUENCE_MISMATCH",
+            "ticketSequenceMatches": False,
+            "observedTickets": observed_ids, "replayedTickets": replayed_ids,
         }
 
     return {
         **envelope,
-        "brokerStopOutExecutionVerified": True,
-        "admitted": True,
-        "reason": "G3_BROKER_STOPOUT_EVIDENCE_VERIFIED",
-        "verifiedStopOutTickets": obs_tickets,
-        "contract": contract,
+        "reason": "CALLER_SUPPLIED_TICKET_ORDER_MATCH_ONLY_NOT_BROKER_VERIFIED",
+        "ticketSequenceMatches": True,
+        "matchedTicketCount": len(observed_ids),
+        "priceVolumeTimingMatchVerified": False,
+        "outOfSampleIndependentlyVerified": False,
+        # Actual broker fill receipts, timestamps, volumes, liquidation
+        # priority and symbol-level margin rules have NOT been compared.
     }
