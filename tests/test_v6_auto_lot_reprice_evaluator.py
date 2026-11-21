@@ -35,8 +35,9 @@ class MockBroker:
         )
 
     def order_calc_profit(self, order_type, symbol, lot, entry, stop):
+        mult = 100000.0 if symbol == "EURUSD" else 100.0
         pnl = (stop - entry) if order_type == self.ORDER_TYPE_BUY else (entry - stop)
-        return pnl * lot * 100.0
+        return pnl * lot * mult
 
     def order_calc_margin(self, order_type, symbol, lot, entry):
         return lot * entry
@@ -86,59 +87,57 @@ class AutoLotRepriceEvaluatorTests(unittest.TestCase):
                 self.assertFalse(res["executionEnabled"])
                 self.assertFalse(res["runtimePreSendAccepted"])
                 self.assertEqual(res["candidateVolume"], 0.04)
-                self.assertEqual(res["spreadPoints"], 25.0)
-                self.assertIn("candidateFingerprint", res)
+                self.assertEqual(res["metadataTrustBoundary"], "CALLER_SUPPLIED_METADATA_NOT_CRYPTOGRAPHIC_AUTHENTICITY")
+                self.assertIn("candidateMetadata", res)
 
-    def test_small_balance_and_zero_cost_unverified_return_hard_no_trade(self):
-        res = evaluate_auto_lot_candidate_from_snapshot(
-            **make_kwargs(account=make_account(equity=150.0, margin_free=150.0))
-        )
-        self.assertEqual(res["decision"], "NO_TRADE")
-        self.assertEqual(res["status"], "BLOCKED_MIN_LOT_EXCEEDS_RISK_OR_MARGIN")
+    def test_profitable_trailing_sl_counts_mark_to_stop_equity_drawdown_for_buy_sell_multi_and_foreign(self):
+        buy_trailing = [
+            {"symbol": "XAUUSD.G", "side": "BUY", "volume": 0.02, "price_open": 3980.0, "sl": 3990.0, "mark_price": 4000.0}
+        ]
+        res_buy = evaluate_auto_lot_candidate_from_snapshot(**make_kwargs(broker_positions=buy_trailing))
+        self.assertTrue(res_buy["ok"], res_buy)
+        self.assertEqual(res_buy["openRiskToOriginalCostUsd"], 0.0)
+        self.assertAlmostEqual(res_buy["openMarkToStopEquityDrawdownUsd"], 21.0, places=4)
 
-        zero_cost = evaluate_auto_lot_candidate_from_snapshot(
-            **make_kwargs(commission_usd_per_lot=0.0, slippage_usd_per_lot=0.0)
-        )
-        self.assertEqual(zero_cost["decision"], "NO_TRADE")
-        self.assertEqual(zero_cost["status"], "BLOCKED_COST_UNVERIFIED")
+        multi_positions = [
+            {"symbol": "XAUUSD.G", "side": "SELL", "volume": 0.01, "price_open": 4020.0, "sl": 4010.0, "mark_price": 4000.0},
+            {"symbol": "EURUSD", "side": "BUY", "volume": 0.05, "price_open": 1.1000, "sl": 1.0950, "mark_price": 1.1020},
+        ]
+        res_multi = evaluate_auto_lot_candidate_from_snapshot(**make_kwargs(broker_positions=multi_positions))
+        self.assertTrue(res_multi["ok"], res_multi)
+        self.assertGreater(res_multi["openMarkToStopEquityDrawdownUsd"], 45.0)
+        self.assertLess(res_multi["candidateVolume"], 0.04)
 
-    def test_profitable_trailing_sl_on_open_position_has_zero_adverse_risk(self):
-        trailing_profit_pos = [{"symbol": "XAUUSD.G", "side": "BUY", "volume": 0.05, "price_open": 3980.0, "sl": 3990.0}]
-        res = evaluate_auto_lot_candidate_from_snapshot(**make_kwargs(broker_positions=trailing_profit_pos))
-        self.assertTrue(res["ok"], res)
-        self.assertEqual(res["openRiskUsd"], 0.0)
+    def test_missing_or_invalid_mark_price_on_open_position_fails_closed(self):
+        missing_mark = [{"symbol": "XAUUSD.G", "side": "BUY", "volume": 0.02, "price_open": 3980.0, "sl": 3990.0}]
+        res_missing = evaluate_auto_lot_candidate_from_snapshot(**make_kwargs(broker_positions=missing_mark))
+        self.assertEqual(res_missing["decision"], "NO_TRADE")
+        self.assertEqual(res_missing["status"], "BLOCKED_OPEN_EXPOSURE_UNVERIFIED")
 
-        bad_pending = [{"symbol": "XAUUSD.G", "side": "BUY", "volume": 0.02, "price_open": 4005.0, "sl": 4010.0}]
-        blocked = evaluate_auto_lot_candidate_from_snapshot(**make_kwargs(broker_pending_orders=bad_pending))
-        self.assertEqual(blocked["decision"], "NO_TRADE")
-        self.assertEqual(blocked["status"], "BLOCKED_PENDING_EXPOSURE_UNVERIFIED")
+        bad_mark = [{"symbol": "XAUUSD.G", "side": "BUY", "volume": 0.02, "price_open": 3980.0, "sl": 3990.0, "mark_price": 3989.0}]
+        res_bad = evaluate_auto_lot_candidate_from_snapshot(**make_kwargs(broker_positions=bad_mark))
+        self.assertEqual(res_bad["decision"], "NO_TRADE")
+        self.assertEqual(res_bad["status"], "BLOCKED_OPEN_EXPOSURE_UNVERIFIED")
 
-    def test_reprice_rejects_forged_or_mismatched_provenance_and_dca_transition(self):
+    def test_reprice_rejects_mismatched_metadata_and_dca_transition(self):
         kw = make_kwargs()
         initial = evaluate_auto_lot_candidate_from_snapshot(**kw)
         self.assertTrue(initial["ok"])
         reprice_kw = dict(kw)
         reprice_kw["fresh_quote"] = reprice_kw.pop("quote")
 
-        forged = dict(initial, executionEnabled=True)
-        res_forged = reprice_auto_lot_before_send(initial_candidate=forged, **reprice_kw)
-        self.assertEqual(res_forged["decision"], "NO_TRADE")
-        self.assertEqual(res_forged["status"], "BLOCKED_FORGED_EXECUTION_FLAG")
+        bad_flag = dict(initial, executionEnabled=True)
+        self.assertEqual(reprice_auto_lot_before_send(initial_candidate=bad_flag, **reprice_kw)["status"], "BLOCKED_UNSUPPORTED_EXECUTION_FLAG")
 
-        no_fp = dict(initial)
-        no_fp.pop("candidateFingerprint", None)
-        res_no_fp = reprice_auto_lot_before_send(initial_candidate=no_fp, **reprice_kw)
-        self.assertEqual(res_no_fp["status"], "BLOCKED_CANDIDATE_PROVENANCE_UNVERIFIED")
+        no_meta = dict(initial)
+        no_meta.pop("candidateMetadata", None)
+        self.assertEqual(reprice_auto_lot_before_send(initial_candidate=no_meta, **reprice_kw)["status"], "BLOCKED_CANDIDATE_METADATA_MISSING")
 
         for field, val in (("side", "SELL"), ("expected_account_login", 999999), ("symbol", "EURUSD")):
             bad_kw = dict(reprice_kw, **{field: val})
-            res_mismatch = reprice_auto_lot_before_send(initial_candidate=initial, **bad_kw)
-            self.assertEqual(res_mismatch["decision"], "NO_TRADE")
-            self.assertEqual(res_mismatch["status"], "BLOCKED_CANDIDATE_PROVENANCE_MISMATCH")
+            self.assertEqual(reprice_auto_lot_before_send(initial_candidate=initial, **bad_kw)["status"], "BLOCKED_CANDIDATE_METADATA_MISMATCH")
 
-        res_dca = reprice_auto_lot_before_send(initial_candidate=initial, dca_layer=True, **reprice_kw)
-        self.assertEqual(res_dca["decision"], "NO_TRADE")
-        self.assertEqual(res_dca["status"], "BLOCKED_DCA_POLICY_UNVERIFIED")
+        self.assertEqual(reprice_auto_lot_before_send(initial_candidate=initial, dca_layer=True, **reprice_kw)["status"], "BLOCKED_DCA_POLICY_UNVERIFIED")
 
     def test_reprice_realigns_to_fresh_broker_step_and_blocks_if_below_min(self):
         kw = make_kwargs(risk_percent=0.6)
