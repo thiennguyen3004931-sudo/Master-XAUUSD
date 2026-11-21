@@ -20,7 +20,10 @@ DEAL = {
     "ticket": 201, "position_id": 301, "volume": 0.10, "magic": 270715,
     "symbol": "XAUUSD.G", "type": 0, "comment": INTENT["brokerComment"],
 }
-POSITION = {"ticket": 302, "identifier": 301, "magic": 270715, "symbol": "XAUUSD.G"}
+POSITION = {
+    "ticket": 302, "identifier": 301, "magic": 270715,
+    "symbol": "XAUUSD.G", "type": 0, "volume": 0.10,
+}
 
 
 def assess(**changes):
@@ -65,6 +68,46 @@ class UncertainEntryEvidenceTests(unittest.TestCase):
         self.assertEqual(history_only["status"], "BROKER_FULL_FILL_HISTORY_ONLY_REVIEW")
         with_position = assess(broker_deals=[DEAL], broker_positions=[POSITION])
         self.assertEqual(with_position["status"], "BROKER_FULL_FILL_POSITION_OBSERVED_REVIEW")
+
+    def test_opposite_side_or_incomplete_position_never_claims_readback(self):
+        incomplete = (
+            {"type": 1},
+            {"type": None},
+            {"ticket": None},
+            {"volume": 0.0},
+            {"volume": float("nan")},
+            {"magic": 0},
+            {"identifier": 999},
+        )
+        for overrides in incomplete:
+            with self.subTest(overrides=overrides):
+                position = {**POSITION, **overrides}
+                result = assess(broker_deals=[DEAL], broker_positions=[position])
+                self.assertEqual(result["status"], "BROKER_FULL_FILL_HISTORY_ONLY_REVIEW")
+                self.assertTrue(result["freezeNewOrders"])
+
+    def test_duplicate_or_ambiguous_position_link_is_history_only(self):
+        duplicate = assess(broker_deals=[DEAL], broker_positions=[POSITION, dict(POSITION)])
+        self.assertEqual(duplicate["status"], "BROKER_FULL_FILL_HISTORY_ONLY_REVIEW")
+
+        no_id = dict(DEAL, position_id=None)
+        missing_id = assess(broker_deals=[no_id], broker_positions=[POSITION])
+        self.assertEqual(missing_id["status"], "BROKER_FULL_FILL_HISTORY_ONLY_REVIEW")
+
+        # The sum can exactly match a single requested order, but distinct
+        # position IDs cannot establish unambiguous readback for that order.
+        split_a = dict(DEAL, ticket=201, volume=0.04, position_id=301)
+        split_b = dict(DEAL, ticket=202, volume=0.06, position_id=401)
+        multiple_ids = assess(broker_deals=[split_a, split_b], broker_positions=[POSITION])
+        self.assertEqual(multiple_ids["status"], "BROKER_FULL_FILL_HISTORY_ONLY_REVIEW")
+
+    def test_sell_position_matching_all_fields_is_observed_without_unlock(self):
+        intent = {**INTENT, "side": "SELL"}
+        deal = {**DEAL, "type": 1}
+        position = {**POSITION, "type": 1}
+        result = assess(intent=intent, broker_deals=[deal], broker_positions=[position])
+        self.assertEqual(result["status"], "BROKER_FULL_FILL_POSITION_OBSERVED_REVIEW")
+        self.assertTrue(result["freezeNewOrders"])
 
     def test_duplicate_or_invalid_broker_deal_blocks(self):
         self.assertEqual(assess(broker_deals=[DEAL, DEAL])["status"], "DUPLICATE_BROKER_RECORDS")
