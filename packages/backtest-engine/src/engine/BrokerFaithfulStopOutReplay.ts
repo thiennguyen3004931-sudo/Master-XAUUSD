@@ -20,6 +20,7 @@ export interface BrokerMarginContract {
   contractVerified: boolean;
   liquidationOrderVerified: boolean;
   costsVerified: boolean;
+  hedgedMarginReliefVerified?: boolean;
 }
 
 export interface BrokerReplayOrderIntent {
@@ -40,12 +41,16 @@ export interface BrokerReplayRequest {
 }
 
 export interface BrokerReplayFidelity {
-  scope: "TICK_ORDERED_BROKER_CONTRACT_REPLAY" | "REFUSED_UNVERIFIED_INPUTS";
-  brokerStopOutExecutionVerified: boolean;
+  scope:
+    | "ASSUMED_CONTRACT_TICK_SCENARIO_NOT_BROKER_ATTESTED"
+    | "REFUSED_UNVERIFIED_INPUTS";
+  brokerStopOutExecutionVerified: false;
   stopOutLiquidationSimulated: boolean;
   intrabarMarginStressSimulated: boolean;
   tickOrderedBidAskVerified: boolean;
   brokerTradingCostsVerified: boolean;
+  callerSuppliedContractAssumed: boolean;
+  hedgedMarginReliefVerified: false;
 }
 
 export interface CollateralLedgerEntry {
@@ -118,6 +123,8 @@ function refused(reason: string, initialBalance: number): BrokerReplayResult {
       intrabarMarginStressSimulated: false,
       tickOrderedBidAskVerified: false,
       brokerTradingCostsVerified: false,
+      callerSuppliedContractAssumed: false,
+      hedgedMarginReliefVerified: false,
     },
     finalBalance: safeBal,
     finalEquity: safeBal,
@@ -148,6 +155,28 @@ function computePositionFloatingPnl(
   return priceDiff * pos.volume * contractSize;
 }
 
+function isValidProtectiveStopsAtFill(
+  intent: BrokerReplayOrderIntent,
+  tick: BrokerTick
+): boolean {
+  if (intent.side === "BUY") {
+    if (intent.stopLoss !== undefined && intent.stopLoss >= tick.bid) {
+      return false;
+    }
+    if (intent.takeProfit !== undefined && intent.takeProfit <= tick.ask) {
+      return false;
+    }
+    return true;
+  }
+  if (intent.stopLoss !== undefined && intent.stopLoss <= tick.ask) {
+    return false;
+  }
+  if (intent.takeProfit !== undefined && intent.takeProfit >= tick.bid) {
+    return false;
+  }
+  return true;
+}
+
 export function runBrokerFaithfulStopOutReplay(
   request: BrokerReplayRequest
 ): BrokerReplayResult {
@@ -175,9 +204,6 @@ export function runBrokerFaithfulStopOutReplay(
     return refused("BROKER_CONTRACT_INVALID", request.initialBalance);
   }
 
-  // This model currently accounts each hedge independently. NETTING needs
-  // signed inventory, reductions/reversals and a different margin ledger;
-  // refuse rather than publish fictitious broker liquidation results.
   if (c.accountMode === "NETTING") {
     return refused("NETTING_REPLAY_NOT_IMPLEMENTED", request.initialBalance);
   }
@@ -210,7 +236,8 @@ export function runBrokerFaithfulStopOutReplay(
     if (
       !order ||
       typeof order.id !== "string" ||
-      !order.id.trim() || order.id !== order.id.trim() ||
+      !order.id.trim() ||
+      order.id !== order.id.trim() ||
       seenOrderIds.has(order.id) ||
       (order.side !== "BUY" && order.side !== "SELL") ||
       !isFinitePositive(order.volume) ||
@@ -222,8 +249,7 @@ export function runBrokerFaithfulStopOutReplay(
     }
     seenOrderIds.add(order.id);
   }
-  // The caller's array order is not execution chronology. On the same broker
-  // tick, process earlier submitted intents first (stable order on exact ties).
+
   const chronologicalOrders = [...request.orders].sort(
     (a, b) => a.submittedAtMs - b.submittedAtMs
   );
@@ -240,6 +266,7 @@ export function runBrokerFaithfulStopOutReplay(
     contractVerified: true,
     liquidationOrderVerified: true,
     costsVerified: c.costsVerified === true,
+    hedgedMarginReliefVerified: false,
   };
 
   let balance = request.initialBalance;
@@ -274,84 +301,6 @@ export function runBrokerFaithfulStopOutReplay(
   };
 
   for (const tick of ticks) {
-    for (const intent of chronologicalOrders) {
-      if (processedOrderIds.has(intent.id) || intent.submittedAtMs > tick.timestampMs) {
-        continue;
-      }
-      processedOrderIds.add(intent.id);
-
-      const fillPrice = intent.side === "BUY" ? tick.ask : tick.bid;
-      const halfComm = (contract.commissionPerLotRoundTrip * intent.volume) / 2;
-      const halfSlip = (contract.slippagePerLotRoundTrip * intent.volume) / 2;
-      const requiredMargin =
-        (intent.volume * contract.contractSize * fillPrice) / contract.leverage;
-
-      if (
-        contract.accountMode === "NETTING" &&
-        openPositions.some((p) => p.side !== intent.side)
-      ) {
-        rejectedOrderIds.push(intent.id);
-        continue;
-      }
-
-      const snapBefore = accountSnapshot(tick);
-      const projectedBalance = balance - halfComm - halfSlip;
-      const projectedUsedMargin = snapBefore.usedMargin + requiredMargin;
-      // The new position is marked to close at BID for BUY / ASK for SELL.
-      // Its entry spread loss is immediate equity drawdown and must count
-      // BEFORE deciding whether the order satisfies broker margin limits.
-      const immediateSpreadLoss = Math.max(0,
-        (tick.ask - tick.bid)
-          * intent.volume * contract.contractSize
-      );
-      const projectedEquity = snapBefore.equity - halfComm - halfSlip - immediateSpreadLoss;
-      const freeMarginAfter = projectedEquity - projectedUsedMargin;
-      const marginLevelAfter =
-        projectedUsedMargin > 0 ? (projectedEquity / projectedUsedMargin) * 100 : Infinity;
-
-      if (
-        projectedBalance <= 0 ||
-        freeMarginAfter < 0 ||
-        marginLevelAfter <= contract.stopOutLevelPct
-      ) {
-        rejectedOrderIds.push(intent.id);
-        continue;
-      }
-
-      balance = projectedBalance;
-      totalCommissions += halfComm;
-      totalSlippage += halfSlip;
-      openPositions.push({
-        id: intent.id,
-        side: intent.side,
-        volume: intent.volume,
-        entryPrice: fillPrice,
-        openedAtMs: tick.timestampMs,
-        stopLoss: intent.stopLoss,
-        takeProfit: intent.takeProfit,
-        isDcaLayer: Boolean(intent.isDcaLayer),
-        usedMargin: requiredMargin,
-      });
-
-      const snapAfter = accountSnapshot(tick);
-      ledger.push({
-        timestampMs: tick.timestampMs,
-        eventType: "ENTRY_FILL",
-        orderId: intent.id,
-        side: intent.side,
-        volume: intent.volume,
-        executionPrice: fillPrice,
-        grossPnl: 0,
-        commissionFee: round2(halfComm),
-        slippageFee: round2(halfSlip),
-        balanceAfter: round2(balance),
-        equityAfter: round2(snapAfter.equity),
-        usedMarginAfter: round2(snapAfter.usedMargin),
-        marginLevelPctAfter:
-          snapAfter.marginLevelPct === null ? null : round2(snapAfter.marginLevelPct),
-      });
-    }
-
     for (let i = openPositions.length - 1; i >= 0; i--) {
       const pos = openPositions[i]!;
       const closePrice = pos.side === "BUY" ? tick.bid : tick.ask;
@@ -471,6 +420,84 @@ export function runBrokerFaithfulStopOutReplay(
           snap.marginLevelPct === null ? null : round2(snap.marginLevelPct),
       });
     }
+
+    for (const intent of chronologicalOrders) {
+      if (processedOrderIds.has(intent.id) || intent.submittedAtMs > tick.timestampMs) {
+        continue;
+      }
+      processedOrderIds.add(intent.id);
+
+      if (!isValidProtectiveStopsAtFill(intent, tick)) {
+        rejectedOrderIds.push(intent.id);
+        continue;
+      }
+
+      if (openPositions.some((p) => p.side !== intent.side)) {
+        rejectedOrderIds.push(intent.id);
+        continue;
+      }
+
+      const fillPrice = intent.side === "BUY" ? tick.ask : tick.bid;
+      const halfComm = (contract.commissionPerLotRoundTrip * intent.volume) / 2;
+      const halfSlip = (contract.slippagePerLotRoundTrip * intent.volume) / 2;
+      const requiredMargin =
+        (intent.volume * contract.contractSize * fillPrice) / contract.leverage;
+
+      const snapBefore = accountSnapshot(tick);
+      const projectedBalance = balance - halfComm - halfSlip;
+      const projectedUsedMargin = snapBefore.usedMargin + requiredMargin;
+      const immediateSpreadLoss = Math.max(
+        0,
+        (tick.ask - tick.bid) * intent.volume * contract.contractSize
+      );
+      const projectedEquity =
+        snapBefore.equity - halfComm - halfSlip - immediateSpreadLoss;
+      const freeMarginAfter = projectedEquity - projectedUsedMargin;
+      const marginLevelAfter =
+        projectedUsedMargin > 0 ? (projectedEquity / projectedUsedMargin) * 100 : Infinity;
+
+      if (
+        projectedBalance <= 0 ||
+        freeMarginAfter < 0 ||
+        marginLevelAfter <= contract.stopOutLevelPct
+      ) {
+        rejectedOrderIds.push(intent.id);
+        continue;
+      }
+
+      balance = projectedBalance;
+      totalCommissions += halfComm;
+      totalSlippage += halfSlip;
+      openPositions.push({
+        id: intent.id,
+        side: intent.side,
+        volume: intent.volume,
+        entryPrice: fillPrice,
+        openedAtMs: tick.timestampMs,
+        stopLoss: intent.stopLoss,
+        takeProfit: intent.takeProfit,
+        isDcaLayer: Boolean(intent.isDcaLayer),
+        usedMargin: requiredMargin,
+      });
+
+      const snapAfter = accountSnapshot(tick);
+      ledger.push({
+        timestampMs: tick.timestampMs,
+        eventType: "ENTRY_FILL",
+        orderId: intent.id,
+        side: intent.side,
+        volume: intent.volume,
+        executionPrice: fillPrice,
+        grossPnl: 0,
+        commissionFee: round2(halfComm),
+        slippageFee: round2(halfSlip),
+        balanceAfter: round2(balance),
+        equityAfter: round2(snapAfter.equity),
+        usedMarginAfter: round2(snapAfter.usedMargin),
+        marginLevelPctAfter:
+          snapAfter.marginLevelPct === null ? null : round2(snapAfter.marginLevelPct),
+      });
+    }
   }
 
   const lastTick = ticks[ticks.length - 1]!;
@@ -478,14 +505,14 @@ export function runBrokerFaithfulStopOutReplay(
   return {
     ok: true,
     fidelity: {
-      scope: "TICK_ORDERED_BROKER_CONTRACT_REPLAY",
-      // Replay uses a supplied contract/tick stream, not broker liquidation
-      // receipts. Real broker stop-out execution remains unverified.
+      scope: "ASSUMED_CONTRACT_TICK_SCENARIO_NOT_BROKER_ATTESTED",
       brokerStopOutExecutionVerified: false,
       stopOutLiquidationSimulated: true,
       intrabarMarginStressSimulated: true,
       tickOrderedBidAskVerified: true,
       brokerTradingCostsVerified: contract.costsVerified,
+      callerSuppliedContractAssumed: true,
+      hedgedMarginReliefVerified: false,
     },
     finalBalance: round2(balance),
     finalEquity: round2(finalSnap.equity),
