@@ -21,9 +21,12 @@ env:
   GIT_CONFIG_KEY_0: core.longpaths
   GIT_CONFIG_VALUE_0: "true"
 
+# These PR checks test only source and build artifacts. Run on an ephemeral
+# GitHub-hosted Windows VM instead of a local broker-capable self-hosted runner.
+# Keep job IDs, shell contracts, builds and gates unchanged.
 jobs:
   source-safety-windows:
-    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    runs-on: windows-2025
     timeout-minutes: 10
     defaults:
       run:
@@ -41,7 +44,7 @@ jobs:
         run: .\scripts\test-phase7c-web-live-arm-demo-auto-source.ps1
 
   api-web-build:
-    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    runs-on: windows-2025
     timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
