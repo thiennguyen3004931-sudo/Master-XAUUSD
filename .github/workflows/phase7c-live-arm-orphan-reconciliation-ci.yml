@@ -15,9 +15,12 @@ concurrency:
 permissions:
   contents: read
 
+# These PR checks test only source and build artifacts. Run on an ephemeral
+# GitHub-hosted Windows VM instead of a local broker-capable self-hosted runner.
+# Keep job IDs, shell contracts, builds and gates unchanged.
 jobs:
   source-contract-windows:
-    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    runs-on: windows-2025
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +32,7 @@ jobs:
         run: .\scripts\test-phase7c-live-arm-orphan-reconciliation-source.ps1
 
   api-build:
-    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    runs-on: windows-2025
     timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +51,7 @@ jobs:
         run: node scripts/test-phase7b-api-node-production-runtime.mjs
 
   existing-live-arm-regression:
-    runs-on: [self-hosted, Windows, X64, xauusd-core-ci]
+    runs-on: windows-2025
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
