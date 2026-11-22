@@ -131,6 +131,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
             )
             raw = json.loads(latch_file.read_text(encoding="utf-8"))
             released_at = 1700000020
+            raw["stopRevision"] = stop_state["stopRevision"]
             raw["releaseProof"] = {
                 "operatorId": "op-1",
                 "releasedAtUtc": released_at,
