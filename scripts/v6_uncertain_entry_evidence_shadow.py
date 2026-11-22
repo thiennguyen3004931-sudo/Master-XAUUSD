@@ -99,6 +99,9 @@ def assess_uncertain_entry_evidence(
            or _positive_number(d.get("volume")) is None
            or type(d.get("type")) is not int or d["type"] != deal_type for d in deals):
         return _blocked("MATCHED_DEAL_INVALID")
+    # Only DEAL_ENTRY_IN establishes opening volume for this entry intent.
+    if any(type(d.get("entry")) is not int or d["entry"] != 0 for d in deals):
+        return _blocked("DEAL_ENTRY_NOT_VERIFIED_REVIEW")
     if any(_positive_ticket(p.get("ticket")) is None for p in pending):
         return _blocked("MATCHED_PENDING_INVALID")
     deal_ids = [_positive_ticket(d["ticket"]) for d in deals]
