@@ -97,7 +97,7 @@ def assess_uncertain_entry_evidence(
     deal_type = 0 if side == "BUY" else 1
     if any(_positive_ticket(d.get("ticket")) is None
            or _positive_number(d.get("volume")) is None
-           or d.get("type") != deal_type for d in deals):
+           or type(d.get("type")) is not int or d["type"] != deal_type for d in deals):
         return _blocked("MATCHED_DEAL_INVALID")
     if any(_positive_ticket(p.get("ticket")) is None for p in pending):
         return _blocked("MATCHED_PENDING_INVALID")
