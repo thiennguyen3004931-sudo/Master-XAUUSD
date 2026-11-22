@@ -118,6 +118,8 @@ def _verify_trusted_release_proof(
     release_hmac_key: bytes | None,
     max_age_sec: int = 300,
 ) -> tuple[bool, str]:
+    if not isinstance(latch, dict):
+        return False, "LATCH_SCHEMA_UNVERIFIED"
     if latch.get("emergencyStopActive") is not False or latch.get("blockNewOrders") is not False:
         return False, "EMERGENCY_STOP_ACTIVE"
     if latch.get("accountLogin") != int(account_login) or str(latch.get("server") or "").strip() != str(server).strip():
@@ -126,9 +128,15 @@ def _verify_trusted_release_proof(
     proof = latch.get("releaseProof")
     if not isinstance(proof, dict):
         return False, "MISSING_TRUSTED_RELEASE_PROOF"
-    if host_dpapi_verifier is None or not release_hmac_key:
+    if (not callable(host_dpapi_verifier)
+            or not isinstance(release_hmac_key, bytes)
+            or len(release_hmac_key) < 16):
         return False, "WINDOWS_DPAPI_AND_KEY_CUSTODY_UNVERIFIED"
-    if host_dpapi_verifier(latch) is not True:
+    try:
+        verifier_claim = host_dpapi_verifier(latch)
+    except Exception:
+        return False, "HOST_DPAPI_VERIFIER_EXCEPTION"
+    if verifier_claim is not True:
         return False, "HOST_DPAPI_ACL_VERIFICATION_FAILED"
 
     released_at = proof.get("releasedAtUtc")
@@ -207,6 +215,13 @@ def execute_linearized_new_order(
                     "ok": False,
                     "submitted": False,
                     "status": "BLOCKED_STOP_LATCH_CORRUPT",
+                    "liveAuthorized": False,
+                }
+            if not isinstance(latch, dict):
+                return {
+                    "ok": False,
+                    "submitted": False,
+                    "status": "BLOCKED_STOP_LATCH_INVALID_SHAPE",
                     "liveAuthorized": False,
                 }
 
