@@ -21,6 +21,11 @@ from scripts.v6_emergency_stop_gate import (
     persist_operator_emergency_stop,
 )
 
+try:
+    from tests.test_v6_mt5_execution import MockBroker
+except ImportError:
+    from test_v6_mt5_execution import MockBroker
+
 
 def _load_probe_module():
     probe_path = ROOT / "scripts" / "mt5-direct-probe.py"
@@ -57,8 +62,10 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
         probe = _load_probe_module()
         with tempfile.TemporaryDirectory() as folder:
             latch_file = Path(folder) / "v6-emergency-stop-latch.json"
-            key_file = Path(folder) / "v6-stop-release.key"
-            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
+            intent_file = Path(folder) / "v6-stop-intent.flag"
+            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
+                probe, "STOP_INTENT_FILE", intent_file
+            ):
                 blocked_missing = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
                 self.assertTrue(blocked_missing["blockNewOrders"])
 
@@ -104,6 +111,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
         probe = _load_probe_module()
         with tempfile.TemporaryDirectory() as folder:
             latch_file = Path(folder) / "v6-emergency-stop-latch.json"
+            intent_file = Path(folder) / "v6-stop-intent.flag"
             key_file = Path(folder) / "v6-stop-release.key"
             secret = b"dpapi-sealed-test-key-32-bytes!!"
             key_file.write_bytes(secret)
@@ -141,7 +149,9 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
             acl_ok = lambda _p: {"windowsHostAclVerified": True, "reparseOrSymlinkDetected": False}
             acl_bad = lambda _p: {"windowsHostAclVerified": False, "reparseOrSymlinkDetected": False}
 
-            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
+            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
+                probe, "STOP_INTENT_FILE", intent_file
+            ):
                 self.assertIsNotNone(
                     probe._check_runtime_emergency_stop_latch(
                         1001, "Broker-Demo", now_utc=released_at + 5, host_acl_checker=acl_bad
@@ -164,7 +174,10 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
         probe = _load_probe_module()
         with tempfile.TemporaryDirectory() as folder:
             latch_file = Path(folder) / "unavailable-stop.json"
-            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
+            intent_file = Path(folder) / "v6-stop-intent.flag"
+            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
+                probe, "STOP_INTENT_FILE", intent_file
+            ):
                 missing = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
                 self.assertTrue(missing["blockNewOrders"])
                 self.assertEqual(missing["reason"], "STOP_LATCH_MISSING_UNVERIFIED")
@@ -187,6 +200,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
         probe = _load_probe_module()
         with tempfile.TemporaryDirectory() as folder:
             latch_file = Path(folder) / "v6-emergency-stop-latch.json"
+            intent_file = Path(folder) / "v6-stop-intent.flag"
             persist_operator_emergency_stop(
                 latch_file,
                 account_login=1001,
@@ -209,7 +223,9 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
                 )
                 writer_done.set()
 
-            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
+            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
+                probe, "STOP_INTENT_FILE", intent_file
+            ):
                 t = threading.Thread(target=_write_stop, daemon=True)
                 t.start()
                 self.assertTrue(writer_done.wait(timeout=2.0))
@@ -246,58 +262,39 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
 
                 res = probe.modify_position_sl_tp(_MockMt5(), pos, 2595.0, 2625.0, "TEST_SLTP")
                 self.assertEqual(len(called), 1)
+                self.assertEqual(called[0]["action"], _MockMt5.TRADE_ACTION_SLTP)
+                self.assertEqual(called[0]["position"], 99)
+                self.assertEqual(called[0]["sl"], 2595.0)
+                self.assertEqual(called[0]["tp"], 2625.0)
                 self.assertNotEqual(res.get("status"), "BLOCKED_EMERGENCY_STOP_LATCH")
 
-    def test_stop_intent_flag_blocks_runtime_latch_and_close_position_stays_unblocked(self):
+    def test_execute_order_public_entry_blocked_by_stop_intent_with_zero_order_send(self):
         probe = _load_probe_module()
         with tempfile.TemporaryDirectory() as folder:
-            latch_file = Path(folder) / "v6-emergency-stop-latch.json"
-            intent_file = Path(folder) / "v6-stop-intent.flag"
+            rt = Path(folder)
+            latch_file = rt / "v6-emergency-stop-latch.json"
+            intent_file = rt / "v6-stop-intent.flag"
             intent_file.write_text('{"stopIntentActive": true}', encoding="utf-8")
+            broker = MockBroker()
 
-            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
-                probe, "STOP_INTENT_FILE", intent_file
+            with patch.object(probe, "RUNTIME_DIR", rt), patch.object(
+                probe, "EMERGENCY_STOP_LATCH_FILE", latch_file
+            ), patch.object(probe, "STOP_INTENT_FILE", intent_file), patch.object(
+                probe, "DAILY_RISK_STATE_FILE", rt / "v6-daily-risk-state.json"
             ):
-                blocked = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
-                self.assertIsNotNone(blocked)
-                self.assertTrue(blocked["blockNewOrders"])
-                self.assertFalse(blocked["liveAuthorized"])
-                self.assertEqual(blocked["reason"], "STOP_INTENT_ACTIVE_FAIL_CLOSED")
-
-                called = []
-                pos = SimpleNamespace(
-                    ticket=105, symbol="XAUUSD", type=0, volume=0.01,
-                    price_open=2600.0, sl=2590.0, tp=2620.0, magic=270715,
+                res = probe.execute_order(
+                    broker,
+                    "XAUUSD.G",
+                    {"side": "BUY", "volume": 0.02, "slDistance": 6.8, "tpDistance": 16.0},
                 )
-
-                class _MockMt5Close:
-                    TRADE_ACTION_DEAL = 1
-                    ORDER_TYPE_BUY = 0
-                    ORDER_TYPE_SELL = 1
-                    ORDER_TIME_GTC = 0
-                    ORDER_FILLING_IOC = 1
-                    TRADE_RETCODE_DONE = 10009
-
-                    @staticmethod
-                    def positions_get(ticket=None):
-                        return [pos] if not called else []
-
-                    @staticmethod
-                    def symbol_info_tick(_sym):
-                        return SimpleNamespace(bid=2605.0, ask=2605.5)
-
-                    @staticmethod
-                    def symbol_info(_sym):
-                        return SimpleNamespace(digits=2, point=0.01, trade_stops_level=0, filling_mode=2)
-
-                    @staticmethod
-                    def order_send(req):
-                        called.append(req)
-                        return SimpleNamespace(retcode=10009, comment="Done")
-
-                close_res = probe.close_position_by_ticket(_MockMt5Close(), 105)
-                self.assertEqual(len(called), 1)
-                self.assertNotEqual(close_res.get("status"), "BLOCKED_EMERGENCY_STOP_LATCH")
+            self.assertFalse(res.get("ok"))
+            self.assertFalse(res.get("submitted"))
+            self.assertEqual(res.get("status"), "BLOCKED_EMERGENCY_STOP_LATCH")
+            self.assertEqual(
+                (res.get("emergencyStopLatch") or {}).get("reason"),
+                "STOP_INTENT_ACTIVE_FAIL_CLOSED",
+            )
+            self.assertEqual(broker.sent, [])
 
 
 if __name__ == "__main__":
