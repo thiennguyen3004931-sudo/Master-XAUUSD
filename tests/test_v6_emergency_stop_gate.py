@@ -47,6 +47,7 @@ DEAL = {
     "magic": 270715,
     "symbol": "XAUUSD.G",
     "type": 0,
+    "entry": 0,
     "comment": INTENT["brokerComment"],
 }
 POSITION = {
