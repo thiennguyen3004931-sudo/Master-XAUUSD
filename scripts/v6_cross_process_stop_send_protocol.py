@@ -179,7 +179,17 @@ def execute_linearized_new_order(
     before_admission_reservation_hook: Callable[[], None] | None = None,
     after_final_stop_check_hook: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
-    """Execute a mock/offline new order under cross-process STOP/send linearization."""
+    """Execute a mock-only request; never grant MT5 runtime authority."""
+    if (
+        type(account_login) is not int or account_login <= 0
+        or not isinstance(server, str) or not server.strip()
+        or not isinstance(request_id, str) or not request_id.strip()
+    ):
+        return {
+            "ok": False, "submitted": False,
+            "status": "BLOCKED_INVALID_ACCOUNT_SERVER_OR_REQUEST_ID",
+            "liveAuthorized": False,
+        }
     ts = int(time.time() if now_utc is None else now_utc)
     entry_lock_path = runtime_dir / "v6-new-order-execution.lock"
     latch_lock_path = runtime_dir / "v6-emergency-stop-latch.json.lock"
@@ -264,6 +274,15 @@ def execute_linearized_new_order(
                         "ok": False,
                         "submitted": False,
                         "status": "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY",
+                        "liveAuthorized": False,
+                    }
+                if u_state:
+                    # Account/server switches cannot silently ignore another
+                    # outstanding unknown entry in this shared runtime state.
+                    return {
+                        "ok": False,
+                        "submitted": False,
+                        "status": "BLOCKED_UNCERTAIN_OTHER_ACCOUNT_ENTRY",
                         "liveAuthorized": False,
                     }
             else:
