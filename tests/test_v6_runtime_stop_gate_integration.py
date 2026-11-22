@@ -249,55 +249,55 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
                 self.assertNotEqual(res.get("status"), "BLOCKED_EMERGENCY_STOP_LATCH")
 
     def test_stop_intent_flag_blocks_runtime_latch_and_close_position_stays_unblocked(self):
-        probe = _load_probe_module()
-       with tempfile.TemporaryDirectory() as folder:
-            latch_file = Path(folder) / "v6-emergency-stop-latch.json"
-            intent_file = Path(folder) / "v6-stop-intent.flag"
-            intent_file.write_text('{"stopIntentActive": true}', encoding="utf-8")
+    probe = _load_probe_module()
+   with tempfile.TemporaryDirectory() as folder:
+        latch_file = Path(folder) / "v6-emergency-stop-latch.json"
+        intent_file = Path(folder) / "v6-stop-intent.flag"
+        intent_file.write_text('{"stopIntentActive": true}', encoding="utf-8")
 
-            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
-                probe, "STOP_INTENT_FILE", intent_file
-            ):
-                blocked = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
-                self.assertIsNotNone(blocked)
-                self.assertTrue(blocked["blockNewOrders"])
-                self.assertFalse(blocked["liveAuthorized"])
-                self.assertEqual(blocked["reason"], "STOP_INTENT_ACTIVE_FAIL_CLOSED")
+        with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
+            probe, "STOP_INTENT_FILE", intent_file
+        ):
+            blocked = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
+            self.assertIsNotNone(blocked)
+            self.assertTrue(blocked["blockNewOrders"])
+            self.assertFalse(blocked["liveAuthorized"])
+            self.assertEqual(blocked["reason"], "STOP_INTENT_ACTIVE_FAIL_CLOSED")
 
-                called = []
-                pos = SimpleNamespace(
-                    ticket=105, symbol="XAUUSD", type=0, volume=0.01,
-                    price_open=2600.0, sl=2590.0, tp=2620.0, magic=270715,
-                )
+            called = []
+            pos = SimpleNamespace(
+                ticket=105, symbol="XAUUSD", type=0, volume=0.01,
+                price_open=2600.0, sl=2590.0, tp=2620.0, magic=270715,
+            )
 
-                class _MockMt5Close:
-                    TRADE_ACTION_DEAL = 1
-                    ORDER_TYPE_BUY = 0
-                    ORDER_TYPE_SELL = 1
-                    ORDER_TIME_GTC = 0
-                    ORDER_FILLING_IOC = 1
-                    TRADE_RETCODE_DONE = 10009
+            class _MockMt5Close:
+                TRADE_ACTION_DEAL = 1
+                ORDER_TYPE_BUY = 0
+                ORDER_TYPE_SELL = 1
+                ORDER_TIME_GTC = 0
+                ORDER_FILLING_IOC = 1
+                TRADE_RETCODE_DONE = 10009
 
-                    @staticmethod
-                    def positions_get(ticket=None):
-                        return [pos] if not called else []
+                @staticmethod
+                def positions_get(ticket=None):
+                    return [pos] if not called else []
 
-                    @staticmethod
-                    def symbol_info_tick(_sym):
-                        return SimpleNamespace(bid=2605.0, ask=2605.5)
+                @staticmethod
+                def symbol_info_tick(_sym):
+                    return SimpleNamespace(bid=2605.0, ask=2605.5)
 
-                    @staticmethod
-                    def symbol_info(_sym):
-                        return SimpleNamespace(digits=2, point=0.01, trade_stops_level=0, filling_mode=2)
+                @staticmethod
+                def symbol_info(_sym):
+                    return SimpleNamespace(digits=2, point=0.01, trade_stops_level=0, filling_mode=2)
 
-                    @staticmethod
-                    def order_send(req):
-                        called.append(req)
-                        return SimpleNamespace(retcode=10009, comment="Done")
+                @staticmethod
+                def order_send(req):
+                    called.append(req)
+                    return SimpleNamespace(retcode=10009, comment="Done")
 
-                close_res = probe.close_position_by_ticket(_MockMt5Close(), 105)
-                self.assertEqual(len(called), 1)
-                self.assertNotEqual(close_res.get("status"), "BLOCKED_EMERGENCY_STOP_LATCH")
-                
+            close_res = probe.close_position_by_ticket(_MockMt5Close(), 105)
+            self.assertEqual(len(called), 1)
+            self.assertNotEqual(close_res.get("status"), "BLOCKED_EMERGENCY_STOP_LATCH")
+            
 if __name__ == "__main__":
-    unittest.main()
+unittest.main()
