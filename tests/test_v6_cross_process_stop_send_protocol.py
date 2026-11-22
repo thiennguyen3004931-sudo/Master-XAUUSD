@@ -386,6 +386,49 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
             self.assertEqual(result["status"], "BLOCKED_STOP_LATCH_INVALID_SHAPE")
             self.assertEqual(calls, [])
 
+    def test_account_switch_and_invalid_binding_do_not_create_new_send(self):
+        with tempfile.TemporaryDirectory() as folder:
+            rt = Path(folder) / "runtime"
+            rt.mkdir()
+            _write_trusted_clear_latch(rt)
+            calls = []
+
+            for login, server, req_id in (
+                (True, "Broker-Demo", "bool-login"),
+                (0, "Broker-Demo", "zero-login"),
+                (1001, "", "no-server"),
+                (1001, "Broker-Demo", ""),
+            ):
+                with self.subTest(login=login, server=server, req_id=req_id):
+                    blocked = execute_linearized_new_order(
+                        runtime_dir=rt,
+                        account_login=login, server=server, request_id=req_id,
+                        mock_order_send=lambda req: calls.append(req),
+                        host_dpapi_verifier=lambda _l: True,
+                        release_hmac_key=KEY, now_utc=1700000105,
+                    )
+                    self.assertFalse(blocked["submitted"])
+                    self.assertEqual(
+                        blocked["status"], "BLOCKED_INVALID_ACCOUNT_SERVER_OR_REQUEST_ID"
+                    )
+            self.assertEqual(calls, [])
+
+            # An unreconciled order tied to another broker account must
+            # quarantine the entire shared runtime until independently read back.
+            _atomic_write_json(rt / "v6-uncertain-entry-state.json", {
+                "2002|Broker-Demo": {"requestId": "unknown-elsewhere", "status": "PENDING_SEND"}
+            })
+            blocked = execute_linearized_new_order(
+                runtime_dir=rt, account_login=1001, server="Broker-Demo",
+                request_id="after-account-switch",
+                mock_order_send=lambda req: calls.append(req),
+                host_dpapi_verifier=lambda _l: True,
+                release_hmac_key=KEY, now_utc=1700000105,
+            )
+            self.assertFalse(blocked["submitted"])
+            self.assertEqual(blocked["status"], "BLOCKED_UNCERTAIN_OTHER_ACCOUNT_ENTRY")
+            self.assertEqual(calls, [])
+
     def test_invalid_uncertain_inventory_shape_blocks_without_dispatch(self):
         with tempfile.TemporaryDirectory() as folder:
             rt = Path(folder) / "runtime"
