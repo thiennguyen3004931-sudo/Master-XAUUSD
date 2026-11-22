@@ -18,7 +18,7 @@ INTENT = {
 }
 DEAL = {
     "ticket": 201, "position_id": 301, "volume": 0.10, "magic": 270715,
-    "symbol": "XAUUSD.G", "type": 0, "comment": INTENT["brokerComment"],
+    "symbol": "XAUUSD.G", "type": 0, "entry": 0, "comment": INTENT["brokerComment"],
 }
 POSITION = {
     "ticket": 302, "identifier": 301, "magic": 270715,
@@ -64,6 +64,16 @@ class UncertainEntryEvidenceTests(unittest.TestCase):
         result = assess(broker_pending_orders=[pending])
         self.assertEqual(result["status"], "BROKER_PENDING_ORDER_REVIEW")
         self.assertEqual(result["matchedPendingCount"], 1)
+
+    def test_exit_reversal_and_unknown_entry_never_prove_opening_volume(self):
+        for entry in (1, 2, 3, None, False, 0.0, "0"):
+            with self.subTest(entry=repr(entry)):
+                deal = dict(DEAL, entry=entry)
+                if entry is None:
+                    del deal["entry"]
+                result = assess(broker_deals=[deal], broker_positions=[POSITION])
+                self.assertEqual(result["status"], "DEAL_ENTRY_NOT_VERIFIED_REVIEW")
+                self.assertIsNone(result["observedDealVolume"])
 
     def test_partial_and_overfill_both_stay_frozen(self):
         partial = dict(DEAL, volume=0.04)
