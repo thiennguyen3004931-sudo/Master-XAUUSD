@@ -57,6 +57,7 @@ ONE_PRICE_UNIT_USD_PER_OZ = 1.0
 
 RUNTIME_DIR = Path(__file__).resolve().parent.parent / ".runtime"
 EMERGENCY_STOP_LATCH_FILE = RUNTIME_DIR / "v6-emergency-stop-latch.json"
+STOP_INTENT_FILE = RUNTIME_DIR / "v6-stop-intent.flag"
 _ENTRY_LOCK_STATE = threading.local()
 
 try:
@@ -91,6 +92,21 @@ def _check_runtime_emergency_stop_latch(
     a non-blocked return here would be unsafe until a separate vetted
     runtime integration provides shared STOP/send ordering.
     """
+    try:
+        if STOP_INTENT_FILE.exists():
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_INTENT_ACTIVE_FAIL_CLOSED",
+                "liveAuthorized": False,
+            }
+    except Exception:
+        return {
+            "emergencyStopActive": True,
+            "blockNewOrders": True,
+            "reason": "STOP_INTENT_CHECK_EXCEPTION_FAIL_CLOSED",
+            "liveAuthorized": False,
+        }
     try:
         with _latch_file_lock(EMERGENCY_STOP_LATCH_FILE):
             latch = _read_bound_emergency_stop_latch(
