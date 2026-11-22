@@ -116,9 +116,6 @@ def _validate_uncertain_entry_record(raw_key, raw_record) -> tuple[int, str] | N
         return None
     rec_login = _positive_int(raw_record.get("accountLogin"))
     rec_server = raw_record.get("server")
-    symbol = raw_record.get("symbol")
-    side = raw_record.get("side")
-    comment = raw_record.get("brokerComment")
     status = raw_record.get("status")
     created_at = _positive_int(raw_record.get("createdAtUtc"))
     if (
@@ -126,17 +123,32 @@ def _validate_uncertain_entry_record(raw_key, raw_record) -> tuple[int, str] | N
         or not isinstance(rec_server, str)
         or not rec_server.strip()
         or rec_server.strip().casefold() != server_part.casefold()
-        or not isinstance(symbol, str)
-        or not symbol.strip()
-        or side not in ("BUY", "SELL")
-        or not isinstance(comment, str)
-        or not (1 <= len(comment.strip()) <= 31)
-        or status != "ENTRY_IN_FLIGHT"
         or created_at is None
     ):
         return None
-    return key_login, server_part
 
+    if status == "ENTRY_IN_FLIGHT":
+        symbol = raw_record.get("symbol")
+        side = raw_record.get("side")
+        comment = raw_record.get("brokerComment")
+        if (
+            not isinstance(symbol, str)
+            or not symbol.strip()
+            or side not in ("BUY", "SELL")
+            or not isinstance(comment, str)
+            or not (1 <= len(comment.strip()) <= 31)
+        ):
+            return None
+        return key_login, server_part
+
+    if status == "PENDING_SEND":
+        request_id = raw_record.get("requestId")
+        if not isinstance(request_id, str) or not request_id.strip():
+            return None
+        return key_login, server_part
+
+    return None
+        
 
 def _has_active_uncertain_entry(uncertain_entry_state, *, login: int, server: str) -> tuple[bool, str]:
     """Fail-closed validation of the entire uncertain-entry state dictionary."""
@@ -144,16 +156,18 @@ def _has_active_uncertain_entry(uncertain_entry_state, *, login: int, server: st
         return True, "UNCERTAIN_ENTRY_STATE_UNVERIFIED"
 
     target_server = server.strip().casefold()
-    matched_target = False
+    freeze_required = False
     for raw_key, raw_record in uncertain_entry_state.items():
         validated = _validate_uncertain_entry_record(raw_key, raw_record)
         if validated is None:
             return True, "UNCERTAIN_ENTRY_STATE_MALFORMED"
         key_login, key_server = validated
-        if key_login == login and key_server.casefold() == target_server:
-            matched_target = True
+        same_account = key_login == login and key_server.casefold() == target_server
+        # The send protocol reserves the shared inventory across account switches.
+        if same_account or raw_record["status"] == "PENDING_SEND":
+            freeze_required = True
 
-    if matched_target:
+    if freeze_required:
         return True, "UNCERTAIN_ENTRY_FREEZE_ACTIVE"
     return False, "UNCERTAIN_ENTRY_CLEAR"
 
