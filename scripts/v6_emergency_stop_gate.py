@@ -156,16 +156,18 @@ def _has_active_uncertain_entry(uncertain_entry_state, *, login: int, server: st
         return True, "UNCERTAIN_ENTRY_STATE_UNVERIFIED"
 
     target_server = server.strip().casefold()
-    matched_target = False
+    freeze_required = False
     for raw_key, raw_record in uncertain_entry_state.items():
         validated = _validate_uncertain_entry_record(raw_key, raw_record)
         if validated is None:
             return True, "UNCERTAIN_ENTRY_STATE_MALFORMED"
         key_login, key_server = validated
-        if key_login == login and key_server.casefold() == target_server:
-            matched_target = True
+        same_account = key_login == login and key_server.casefold() == target_server
+        # The send protocol reserves the shared inventory across account switches.
+        if same_account or raw_record["status"] == "PENDING_SEND":
+            freeze_required = True
 
-    if matched_target:
+    if freeze_required:
         return True, "UNCERTAIN_ENTRY_FREEZE_ACTIVE"
     return False, "UNCERTAIN_ENTRY_CLEAR"
 

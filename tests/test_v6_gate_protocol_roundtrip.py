@@ -134,6 +134,31 @@ class GateProtocolRoundTripTests(unittest.TestCase):
             )
             self.assertTrue(rel_denied["releaseDenied"])
 
+    def test_foreign_pending_send_keeps_stop_active_after_account_or_server_switch(self):
+        pending = {"accountLogin": 1001, "server": "Broker-A", "createdAtUtc": 1700000000,
+                   "status": "PENDING_SEND", "requestId": "original-request"}
+        other = dict(pending, accountLogin=1003, requestId="second-request")
+        for login, server in ((1002, "Broker-A"), (1001, "Broker-B")):
+            with self.subTest(login=login, server=server), tempfile.TemporaryDirectory() as folder:
+                rt = Path(folder)
+                inventory = rt / "v6-uncertain-entry-state.json"
+                inventory.write_text(json.dumps({"1003|Broker-A": other, "1001|Broker-A": pending}),
+                                     encoding="utf-8")
+                latch = rt / "v6-emergency-stop-latch.json"
+                stop = persist_operator_emergency_stop(latch, account_login=login, server=server,
+                                                       operator_id="offline")
+                before = latch.read_bytes()
+                state = json.loads(inventory.read_text(encoding="utf-8"))
+                result = authorize_emergency_stop_release(
+                    latch, account_login=login, server=server, operator_authenticated=True,
+                    operator_id="offline", approval_reason="review",
+                    expected_stop_revision=stop["stopRevision"], uncertain_entry_state=state,
+                )
+                self.assertTrue(result["releaseDenied"])
+                self.assertEqual(result["releaseDeniedReason"], "UNCERTAIN_ENTRY_FREEZE_ACTIVE")
+                self.assertEqual(latch.read_bytes(), before)
+                self.assertEqual(state["1001|Broker-A"]["requestId"], "original-request")
+
     def test_distinguishes_entry_in_flight_and_blocks_missing_linkage_as_malformed(self):
         valid_flight = {
             "1001|Broker-Demo": {
