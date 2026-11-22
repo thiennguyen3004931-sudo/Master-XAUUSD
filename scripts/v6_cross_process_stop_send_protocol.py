@@ -237,6 +237,13 @@ def execute_linearized_new_order(
                         "status": "BLOCKED_ENTRY_STATE_CORRUPT",
                         "liveAuthorized": False,
                     }
+                if not isinstance(u_state, dict):
+                    return {
+                        "ok": False,
+                        "submitted": False,
+                        "status": "BLOCKED_ENTRY_STATE_INVALID_SHAPE",
+                        "liveAuthorized": False,
+                    }
                 if key in u_state:
                     return {
                         "ok": False,
