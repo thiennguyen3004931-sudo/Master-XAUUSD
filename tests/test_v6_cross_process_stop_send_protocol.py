@@ -4,6 +4,7 @@ import hmac
 import json
 import subprocess
 import sys
+import threading
 import tempfile
 import time
 import unittest
@@ -104,6 +105,42 @@ Path(out_str).write_text(json.dumps(res))
 """
 
 
+_CHILD_EXACT_INTERLEAVE = """
+import json, sys, time
+from pathlib import Path
+root, rt_text, mode, ready_text, go_text, out_text, key_text = sys.argv[1:8]
+sys.path.insert(0, root)
+from scripts.v6_cross_process_stop_send_protocol import execute_linearized_new_order
+calls = []
+def rendezvous():
+    Path(ready_text).write_text("ready")
+    deadline = time.time() + 8.0
+    while not Path(go_text).exists() and time.time() < deadline:
+        time.sleep(0.01)
+    if not Path(go_text).exists():
+        raise TimeoutError("parent did not release barrier")
+def mock_send(req):
+    calls.append(req)
+    return {"retcode": 10009, "order": 73}
+kwargs = {
+    "before_admission_reservation_hook": rendezvous if mode == "before" else None,
+    "after_final_stop_check_hook": rendezvous if mode == "after" else None,
+}
+result = execute_linearized_new_order(
+    runtime_dir=Path(rt_text),
+    account_login=1001,
+    server="Broker-Demo",
+    request_id="req-interleave",
+    mock_order_send=mock_send,
+    host_dpapi_verifier=lambda _l: True,
+    release_hmac_key=key_text.encode("utf-8"),
+    now_utc=1700000105,
+    **kwargs
+)
+Path(out_text).write_text(json.dumps({"result": result, "calls": calls}))
+"""
+
+
 class CrossProcessStopSendProtocolTests(unittest.TestCase):
     def test_two_process_stop_before_send_blocks_child_sender_with_zero_orders(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -193,6 +230,133 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
             )
             self.assertFalse(retry["submitted"])
             self.assertEqual(retry["status"], "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY")
+
+
+    def _interleave_stop_with_child(self, mode: str):
+        with tempfile.TemporaryDirectory() as folder:
+            rt = Path(folder) / "runtime"
+            rt.mkdir()
+            _write_trusted_clear_latch(rt, now_utc=1700000100)
+            ready = rt / "ready.flag"
+            go = rt / "go.flag"
+            out = rt / "child.json"
+            proc = subprocess.Popen([
+                sys.executable, "-c", _CHILD_EXACT_INTERLEAVE,
+                str(ROOT), str(rt), mode, str(ready), str(go), str(out),
+                KEY.decode("utf-8"),
+            ])
+            try:
+                deadline = time.monotonic() + 7.0
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(ready.exists(), "child did not reach interleave barrier")
+                written = []
+                errors = []
+
+                def issue_stop():
+                    try:
+                        written.append(persist_nonblocking_stop_intent_and_latch(
+                            runtime_dir=rt,
+                            account_login=1001, server="Broker-Demo",
+                            operator_id="op-deterministic-stop",
+                            now_utc=1700000106,
+                        ))
+                    except Exception as exc:
+                        errors.append(type(exc).__name__)
+
+                writer = threading.Thread(target=issue_stop, daemon=True)
+                writer.start()
+                stop_flag = rt / "v6-stop-intent.flag"
+                deadline = time.monotonic() + 7.0
+                while not stop_flag.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(stop_flag.exists(), "STOP intent was not published")
+                go.write_text("release")
+                self.assertEqual(proc.wait(timeout=7.0), 0)
+                writer.join(timeout=7.0)
+                self.assertFalse(writer.is_alive(), "STOP latch writer hung")
+                self.assertFalse(errors)
+                self.assertEqual(len(written), 1)
+                self.assertTrue(written[0]["blockNewOrders"])
+                data = json.loads(out.read_text(encoding="utf-8"))
+                return data, rt
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=3.0)
+
+    def test_two_process_stop_after_latch_read_but_before_admission_blocks(self):
+        result, _rt = self._interleave_stop_with_child("before")
+        self.assertFalse(result["result"]["submitted"])
+        self.assertEqual(result["result"]["status"], "BLOCKED_STOP_INTENT_DURING_ADMISSION")
+        self.assertEqual(result["calls"], [])
+
+    def test_two_process_stop_after_admission_can_precede_mock_broker_callback(self):
+        # This is deliberately a NEGATIVE guarantee demonstration: broker IO
+        # may occur after STOP even when the request was reserved BEFORE STOP.
+        # Never claim on-wire STOP priority from an admission protocol.
+        result, _rt = self._interleave_stop_with_child("after")
+        self.assertTrue(result["result"]["submitted"])
+        self.assertTrue(result["result"]["uncertain"])
+        self.assertEqual(result["result"]["status"], "MOCK_ACK_NOT_BROKER_ATTESTED")
+        self.assertFalse(result["result"]["ok"])
+        self.assertFalse(result["result"]["brokerFillIndependentlyVerified"])
+        self.assertEqual(len(result["calls"]), 1)
+
+    def test_mock_done_ack_does_not_clear_pending_or_prove_real_fill(self):
+        with tempfile.TemporaryDirectory() as folder:
+            rt = Path(folder) / "runtime"
+            rt.mkdir()
+            _write_trusted_clear_latch(rt)
+            calls = []
+            res = execute_linearized_new_order(
+                runtime_dir=rt,
+                account_login=1001,
+                server="Broker-Demo",
+                request_id="mock-success",
+                mock_order_send=lambda req: calls.append(req) or {"retcode": 10009, "order": 73},
+                host_dpapi_verifier=lambda _l: True,
+                release_hmac_key=KEY,
+                now_utc=1700000105,
+            )
+            self.assertTrue(res["submitted"])
+            self.assertFalse(res["ok"])
+            self.assertTrue(res["uncertain"])
+            self.assertEqual(res["status"], "MOCK_ACK_NOT_BROKER_ATTESTED")
+            self.assertFalse(res["brokerFillIndependentlyVerified"])
+            self.assertEqual(len(calls), 1)
+            pending = json.loads((rt / "v6-uncertain-entry-state.json").read_text(encoding="utf-8"))
+            self.assertEqual(pending["1001|Broker-Demo"]["status"], "PENDING_SEND")
+            retry = execute_linearized_new_order(
+                runtime_dir=rt,
+                account_login=1001,
+                server="Broker-Demo",
+                request_id="same-unknown-retry",
+                mock_order_send=lambda req: calls.append(req),
+                host_dpapi_verifier=lambda _l: True,
+                release_hmac_key=KEY,
+                now_utc=1700000106,
+            )
+            self.assertFalse(retry["submitted"])
+            self.assertEqual(retry["status"], "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY")
+            self.assertEqual(len(calls), 1)
+
+    def test_invalid_uncertain_inventory_shape_blocks_without_dispatch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            rt = Path(folder) / "runtime"
+            rt.mkdir()
+            _write_trusted_clear_latch(rt)
+            (rt / "v6-uncertain-entry-state.json").write_text("[]", encoding="utf-8")
+            calls = []
+            res = execute_linearized_new_order(
+                runtime_dir=rt, account_login=1001, server="Broker-Demo",
+                request_id="unknown-inventory", mock_order_send=lambda req: calls.append(req),
+                host_dpapi_verifier=lambda _l: True,
+                release_hmac_key=KEY, now_utc=1700000105,
+            )
+            self.assertFalse(res["submitted"])
+            self.assertEqual(res["status"], "BLOCKED_ENTRY_STATE_INVALID_SHAPE")
+            self.assertEqual(calls, [])
 
     def test_fails_closed_without_host_dpapi_verifier(self):
         with tempfile.TemporaryDirectory() as folder:
