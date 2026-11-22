@@ -51,6 +51,14 @@ class UncertainEntryEvidenceTests(unittest.TestCase):
         self.assertEqual(assess(snapshot_server="Other-Broker")["status"], "ACCOUNT_SERVER_MISMATCH")
         self.assertEqual(assess(intent={})["status"], "INTENT_UNVERIFIED")
 
+    def test_deal_direction_requires_an_integer_enum(self):
+        for side, direction in (("BUY", 0), ("SELL", 1)):
+            for invalid in (bool(direction), float(direction)):
+                with self.subTest(side=side, invalid=repr(invalid)):
+                    result = assess(intent=dict(INTENT, side=side),
+                                    broker_deals=[dict(DEAL, type=invalid)])
+                    self.assertEqual(result["status"], "MATCHED_DEAL_INVALID")
+
     def test_pending_order_blocks_even_with_no_deal(self):
         pending = dict(DEAL, ticket=401)
         result = assess(broker_pending_orders=[pending])
