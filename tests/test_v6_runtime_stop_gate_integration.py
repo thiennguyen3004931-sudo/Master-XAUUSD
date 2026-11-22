@@ -58,9 +58,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             latch_file = Path(folder) / "v6-emergency-stop-latch.json"
             key_file = Path(folder) / "v6-stop-release.key"
-            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
-                probe, "STOP_RELEASE_KEY_FILE", key_file
-            ):
+            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
                 blocked_missing = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
                 self.assertTrue(blocked_missing["blockNewOrders"])
 
@@ -102,7 +100,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
                 self.assertTrue(blocked_clear["blockNewOrders"])
                 self.assertEqual(blocked_clear["reason"], "STOP_RELEASE_HOST_AUTH_UNVERIFIED")
 
-    def test_verified_windows_acl_and_hmac_release_allows_only_when_valid_and_fresh(self):
+    def test_spoofed_windows_acl_and_valid_hmac_never_authorize_runtime_entry(self):
         probe = _load_probe_module()
         with tempfile.TemporaryDirectory() as folder:
             latch_file = Path(folder) / "v6-emergency-stop-latch.json"
@@ -143,24 +141,47 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
             acl_ok = lambda _p: {"windowsHostAclVerified": True, "reparseOrSymlinkDetected": False}
             acl_bad = lambda _p: {"windowsHostAclVerified": False, "reparseOrSymlinkDetected": False}
 
-            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
-                probe, "STOP_RELEASE_KEY_FILE", key_file
-            ):
+            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
                 self.assertIsNotNone(
                     probe._check_runtime_emergency_stop_latch(
                         1001, "Broker-Demo", now_utc=released_at + 5, host_acl_checker=acl_bad
                     )
                 )
-                self.assertIsNone(
-                    probe._check_runtime_emergency_stop_latch(
-                        1001, "Broker-Demo", now_utc=released_at + 5, host_acl_checker=acl_ok
-                    )
+                forged = probe._check_runtime_emergency_stop_latch(
+                    1001, "Broker-Demo", now_utc=released_at + 5, host_acl_checker=acl_ok
                 )
+                self.assertIsNotNone(forged)
+                self.assertTrue(forged["blockNewOrders"])
+                self.assertFalse(forged["liveAuthorized"])
+                self.assertEqual(forged["reason"], "STOP_RELEASE_HOST_AUTH_UNVERIFIED")
                 self.assertIsNotNone(
                     probe._check_runtime_emergency_stop_latch(
                         1001, "Broker-Demo", now_utc=released_at + 999, host_acl_checker=acl_ok
                     )
                 )
+
+    def test_missing_corrupt_and_reader_failure_always_denied_without_order(self):
+        probe = _load_probe_module()
+        with tempfile.TemporaryDirectory() as folder:
+            latch_file = Path(folder) / "unavailable-stop.json"
+            with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file):
+                missing = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
+                self.assertTrue(missing["blockNewOrders"])
+                self.assertEqual(missing["reason"], "STOP_LATCH_MISSING_UNVERIFIED")
+                latch_file.write_text("bad-json", encoding="utf-8")
+                bad = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
+                self.assertTrue(bad["blockNewOrders"])
+                for exc in (PermissionError("no ACL"), RuntimeError("I/O failed")):
+                    with self.subTest(exc=type(exc).__name__), patch.object(
+                        probe, "_read_bound_emergency_stop_latch", side_effect=exc
+                    ):
+                        blocked = probe._check_runtime_emergency_stop_latch(
+                            1001, "Broker-Demo"
+                        )
+                        self.assertTrue(blocked["blockNewOrders"])
+                        self.assertEqual(
+                            blocked["reason"], "STOP_LATCH_READ_EXCEPTION_FAIL_CLOSED"
+                        )
 
     def test_concurrent_emergency_stop_write_does_not_deadlock_and_protective_sltp_unblocked(self):
         probe = _load_probe_module()
