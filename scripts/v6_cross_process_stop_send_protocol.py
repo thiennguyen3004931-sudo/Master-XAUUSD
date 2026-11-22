@@ -168,6 +168,8 @@ def execute_linearized_new_order(
     release_hmac_key: bytes | None = None,
     now_utc: int | None = None,
     pre_send_hook: Callable[[], None] | None = None,
+    before_admission_reservation_hook: Callable[[], None] | None = None,
+    after_final_stop_check_hook: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Execute a mock/offline new order under cross-process STOP/send linearization."""
     ts = int(time.time() if now_utc is None else now_utc)
@@ -245,6 +247,10 @@ def execute_linearized_new_order(
             else:
                 u_state = {}
 
+            # This hook is ONLY for deterministic offline race tests.
+            if before_admission_reservation_hook is not None:
+                before_admission_reservation_hook()
+
             # Linearization point: STOP flag or PENDING_SEND reservation
             # is committed first under the same cross-process admission lock.
             # A reserved request can remain in-flight after STOP publication.
@@ -274,6 +280,11 @@ def execute_linearized_new_order(
                 "liveAuthorized": False,
             }
 
+        # Test-only interleave proves that a request admitted BEFORE STOP
+        # can reach a MOCK broker callback AFTER STOP. Physical send ordering
+        # is outside this protocol's guarantee; keep uncertain evidence.
+        if after_final_stop_check_hook is not None:
+            after_final_stop_check_hook()
         try:
             ack = mock_order_send({"requestId": str(request_id), "accountLogin": int(account_login), "server": str(server)})
         except Exception as exc:
