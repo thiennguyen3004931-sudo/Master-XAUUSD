@@ -1,5 +1,7 @@
 name: V6 Audit & Regression CI
-
+permissions:
+  contents: read
+  
 on:
   push:
     branches: ["main", "fix/v6-audit-remediation"]
