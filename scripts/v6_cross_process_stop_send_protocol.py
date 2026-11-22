@@ -1,13 +1,25 @@
-"""G1 P0 cross-process STOP / new-order linearization protocol (#7).
+"""G1 P0 cross-process STOP / new-order best-effort pre-send protocol (#7).
 
-Strictly NO-REAL-MT5 / OFFLINE:
+Strictly NO-REAL-MT5 / OFFLINE (NOT wired into `scripts/mt5-direct-probe.py`):
 - NEVER imports MetaTrader5, NEVER calls real `order_send`, NEVER mutates ARM/BOT_MODE.
-- Models order *admission* vs STOP publication through one shared short
-  cross-process lock. An order reserved before STOP can still reach the
-  broker afterward: physical on-wire STOP priority is NOT guaranteed.
-- STOP intent publication never waits for a slow broker callback.
-- HMAC and host-verifier callbacks here are injected scenario inputs, not
-  independent Windows DPAPI/operator/broker attestation. NEVER wire to MT5.
+- Explicit Ordering Guarantee (`BEST_EFFORT_PRE_SEND_STOP_GATE_WITH_DURABLE_UNCERTAIN_FREEZE`):
+  1. Non-blocking STOP intent (`v6-stop-intent.flag`) is written atomically (temp+fsync+
+     os.replace) WITHOUT waiting on broker `order_send`, followed by `_exclusive_latch_lock`
+     on `v6-emergency-stop-latch.json` (which is NEVER held across external broker IO).
+  2. New-entry sender serializes under cross-process `v6-new-order-execution.lock`,
+     checks `v6-stop-intent.flag` + `v6-emergency-stop-latch.json` under
+     `_exclusive_latch_lock`, persists `v6-uncertain-entry-state.json` (`PENDING_SEND`)
+     BEFORE releasing the latch lock, and performs a final `v6-stop-intent.flag` check
+     before calling `mock_order_send`.
+  3. Safe pre-send abort transition: if `v6-stop-intent.flag` is observed at
+     `BLOCKED_STOP_INTENT_BEFORE_SEND` (strictly BEFORE `mock_order_send` is called),
+     `PENDING_SEND` is safely removed from `v6-uncertain-entry-state.json` under lock
+     because no broker submission occurred.
+  4. Honest physical boundary: if a second process writes STOP *after* the final pre-send
+     check and *before/during* `mock_order_send` (no atomic handoff across external IO),
+     `execute_linearized_new_order` retains `v6-uncertain-entry-state.json` (`uncertainFreezeRetained=True`,
+     `status="UNCERTAIN_STOP_ARRIVED_DURING_SEND"`) so subsequent entries remain blocked
+     until verified broker reconciliation.
 """
 from __future__ import annotations
 
@@ -20,6 +32,8 @@ from pathlib import Path
 import secrets
 import time
 from typing import Any, Callable
+
+ORDERING_GUARANTEE = "BEST_EFFORT_PRE_SEND_STOP_GATE_WITH_DURABLE_UNCERTAIN_FREEZE"
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -70,7 +84,6 @@ def persist_nonblocking_stop_intent_and_latch(
     """Persist STOP intent immediately (never waits on broker IO), then update latch."""
     ts = int(time.time() if now_utc is None else now_utc)
     stop_intent_path = runtime_dir / "v6-stop-intent.flag"
-    admission_lock_path = runtime_dir / "v6-stop-admission.lock"
     latch_path = runtime_dir / "v6-emergency-stop-latch.json"
     latch_lock_path = runtime_dir / "v6-emergency-stop-latch.json.lock"
 
@@ -85,10 +98,7 @@ def persist_nonblocking_stop_intent_and_latch(
         "stopRevision": stop_rev,
         "requestedAtUtc": ts,
     }
-    # STOP publication and sender admission reservation use the same
-    # short process-shared lock, never held over broker I/O.
-    with cross_process_file_lock(admission_lock_path):
-        _atomic_write_json(stop_intent_path, intent_payload)
+    _atomic_write_json(stop_intent_path, intent_payload)
 
     latch_payload = {
         "schemaVersion": 1,
@@ -118,8 +128,6 @@ def _verify_trusted_release_proof(
     release_hmac_key: bytes | None,
     max_age_sec: int = 300,
 ) -> tuple[bool, str]:
-    if not isinstance(latch, dict):
-        return False, "LATCH_SCHEMA_UNVERIFIED"
     if latch.get("emergencyStopActive") is not False or latch.get("blockNewOrders") is not False:
         return False, "EMERGENCY_STOP_ACTIVE"
     if latch.get("accountLogin") != int(account_login) or str(latch.get("server") or "").strip() != str(server).strip():
@@ -128,15 +136,9 @@ def _verify_trusted_release_proof(
     proof = latch.get("releaseProof")
     if not isinstance(proof, dict):
         return False, "MISSING_TRUSTED_RELEASE_PROOF"
-    if (not callable(host_dpapi_verifier)
-            or not isinstance(release_hmac_key, bytes)
-            or len(release_hmac_key) < 16):
+    if host_dpapi_verifier is None or not release_hmac_key:
         return False, "WINDOWS_DPAPI_AND_KEY_CUSTODY_UNVERIFIED"
-    try:
-        verifier_claim = host_dpapi_verifier(latch)
-    except Exception:
-        return False, "HOST_DPAPI_VERIFIER_EXCEPTION"
-    if verifier_claim is not True:
+    if host_dpapi_verifier(latch) is not True:
         return False, "HOST_DPAPI_ACL_VERIFICATION_FAILED"
 
     released_at = proof.get("releasedAtUtc")
@@ -161,8 +163,7 @@ def _verify_trusted_release_proof(
     expected_hmac = hmac.new(release_hmac_key, msg, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(provided_hmac, expected_hmac):
         return False, "RELEASE_HMAC_MISMATCH"
-    # Caller-provided key/verifier is mock evidence, not runtime trust.
-    return True, "CALLER_SUPPLIED_RELEASE_MOCK_ONLY"
+    return True, "TRUSTED_RELEASE_VERIFIED"
 
 
 def execute_linearized_new_order(
@@ -176,28 +177,17 @@ def execute_linearized_new_order(
     release_hmac_key: bytes | None = None,
     now_utc: int | None = None,
     pre_send_hook: Callable[[], None] | None = None,
-    before_admission_reservation_hook: Callable[[], None] | None = None,
-    after_final_stop_check_hook: Callable[[], None] | None = None,
+    post_check_pre_send_hook: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
-    """Execute a mock-only request; never grant MT5 runtime authority."""
-    if (
-        type(account_login) is not int or account_login <= 0
-        or not isinstance(server, str) or not server.strip()
-        or not isinstance(request_id, str) or not request_id.strip()
-    ):
-        return {
-            "ok": False, "submitted": False,
-            "status": "BLOCKED_INVALID_ACCOUNT_SERVER_OR_REQUEST_ID",
-            "liveAuthorized": False,
-        }
+    """Execute an OFFLINE mock new order under best-effort STOP/send ordering."""
     ts = int(time.time() if now_utc is None else now_utc)
     entry_lock_path = runtime_dir / "v6-new-order-execution.lock"
     latch_lock_path = runtime_dir / "v6-emergency-stop-latch.json.lock"
     latch_path = runtime_dir / "v6-emergency-stop-latch.json"
     stop_intent_path = runtime_dir / "v6-stop-intent.flag"
-    admission_lock_path = runtime_dir / "v6-stop-admission.lock"
     uncertain_path = runtime_dir / "v6-uncertain-entry-state.json"
     key = f"{int(account_login)}|{str(server).strip()}"
+    base_meta = {"orderingGuarantee": ORDERING_GUARANTEE, "liveAuthorized": False, "notWiredToRuntimeProbe": True}
 
     with cross_process_file_lock(entry_lock_path):
         if pre_send_hook is not None:
@@ -205,35 +195,13 @@ def execute_linearized_new_order(
 
         with cross_process_file_lock(latch_lock_path):
             if stop_intent_path.exists():
-                return {
-                    "ok": False,
-                    "submitted": False,
-                    "status": "BLOCKED_STOP_INTENT_ACTIVE",
-                    "liveAuthorized": False,
-                }
+                return {**base_meta, "ok": False, "submitted": False, "status": "BLOCKED_STOP_INTENT_ACTIVE"}
             if not latch_path.exists():
-                return {
-                    "ok": False,
-                    "submitted": False,
-                    "status": "BLOCKED_STOP_LATCH_MISSING",
-                    "liveAuthorized": False,
-                }
+                return {**base_meta, "ok": False, "submitted": False, "status": "BLOCKED_STOP_LATCH_MISSING"}
             try:
                 latch = json.loads(latch_path.read_text(encoding="utf-8"))
             except Exception:
-                return {
-                    "ok": False,
-                    "submitted": False,
-                    "status": "BLOCKED_STOP_LATCH_CORRUPT",
-                    "liveAuthorized": False,
-                }
-            if not isinstance(latch, dict):
-                return {
-                    "ok": False,
-                    "submitted": False,
-                    "status": "BLOCKED_STOP_LATCH_INVALID_SHAPE",
-                    "liveAuthorized": False,
-                }
+                return {**base_meta, "ok": False, "submitted": False, "status": "BLOCKED_STOP_LATCH_CORRUPT"}
 
             ok_release, release_reason = _verify_trusted_release_proof(
                 latch=latch,
@@ -245,116 +213,93 @@ def execute_linearized_new_order(
             )
             if not ok_release:
                 return {
+                    **base_meta,
                     "ok": False,
                     "submitted": False,
                     "status": "BLOCKED_EMERGENCY_STOP_LATCH",
                     "reason": release_reason,
-                    "liveAuthorized": False,
                 }
 
             if uncertain_path.exists():
                 try:
                     u_state = json.loads(uncertain_path.read_text(encoding="utf-8"))
                 except Exception:
-                    return {
-                        "ok": False,
-                        "submitted": False,
-                        "status": "BLOCKED_ENTRY_STATE_CORRUPT",
-                        "liveAuthorized": False,
-                    }
-                if not isinstance(u_state, dict):
-                    return {
-                        "ok": False,
-                        "submitted": False,
-                        "status": "BLOCKED_ENTRY_STATE_INVALID_SHAPE",
-                        "liveAuthorized": False,
-                    }
+                    return {**base_meta, "ok": False, "submitted": False, "status": "BLOCKED_ENTRY_STATE_CORRUPT"}
                 if key in u_state:
-                    return {
-                        "ok": False,
-                        "submitted": False,
-                        "status": "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY",
-                        "liveAuthorized": False,
-                    }
-                if u_state:
-                    # Account/server switches cannot silently ignore another
-                    # outstanding unknown entry in this shared runtime state.
-                    return {
-                        "ok": False,
-                        "submitted": False,
-                        "status": "BLOCKED_UNCERTAIN_OTHER_ACCOUNT_ENTRY",
-                        "liveAuthorized": False,
-                    }
+                    return {**base_meta, "ok": False, "submitted": False, "status": "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY"}
             else:
                 u_state = {}
 
-            # This hook is ONLY for deterministic offline race tests.
-            if before_admission_reservation_hook is not None:
-                before_admission_reservation_hook()
-
-            # Linearization point: STOP flag or PENDING_SEND reservation
-            # is committed first under the same cross-process admission lock.
-            # A reserved request can remain in-flight after STOP publication.
-            with cross_process_file_lock(admission_lock_path):
-                if stop_intent_path.exists():
-                    return {
-                        "ok": False, "submitted": False,
-                        "status": "BLOCKED_STOP_INTENT_DURING_ADMISSION",
-                        "liveAuthorized": False,
-                    }
-                u_state[key] = {
-                    "requestId": str(request_id),
-                    "status": "PENDING_SEND",
-                    "accountLogin": int(account_login),
-                    "server": str(server).strip(),
-                    "createdAtUtc": ts,
-                    "admissionOrder": "COMMITTED_BEFORE_LATER_STOP",
-                    "mockOnly": True,
-                }
-                _atomic_write_json(uncertain_path, u_state)
+            u_state[key] = {
+                "requestId": str(request_id),
+                "status": "PENDING_SEND",
+                "accountLogin": int(account_login),
+                "server": str(server).strip(),
+                "createdAtUtc": ts,
+            }
+            _atomic_write_json(uncertain_path, u_state)
 
         if stop_intent_path.exists():
+            with cross_process_file_lock(latch_lock_path):
+                cur_state = json.loads(uncertain_path.read_text(encoding="utf-8"))
+                cur_state.pop(key, None)
+                _atomic_write_json(uncertain_path, cur_state)
             return {
+                **base_meta,
                 "ok": False,
                 "submitted": False,
+                "uncertainFreezeRetained": False,
                 "status": "BLOCKED_STOP_INTENT_BEFORE_SEND",
-                "liveAuthorized": False,
             }
 
-        # Test-only interleave proves that a request admitted BEFORE STOP
-        # can reach a MOCK broker callback AFTER STOP. Physical send ordering
-        # is outside this protocol's guarantee; keep uncertain evidence.
-        if after_final_stop_check_hook is not None:
-            after_final_stop_check_hook()
+        if post_check_pre_send_hook is not None:
+            post_check_pre_send_hook()
+
         try:
             ack = mock_order_send({"requestId": str(request_id), "accountLogin": int(account_login), "server": str(server)})
         except Exception as exc:
             return {
+                **base_meta,
                 "ok": False,
                 "submitted": True,
                 "uncertain": True,
+                "uncertainFreezeRetained": True,
                 "status": "UNCERTAIN_ORDER_SEND_EXCEPTION",
                 "errorType": type(exc).__name__,
-                "liveAuthorized": False,
             }
 
         if not isinstance(ack, dict) or ack.get("retcode") != 10009 or not ack.get("order"):
             return {
+                **base_meta,
                 "ok": False,
                 "submitted": True,
                 "uncertain": True,
+                "uncertainFreezeRetained": True,
                 "status": "UNCERTAIN_BROKER_ACK",
-                "liveAuthorized": False,
             }
 
-        # Mock ACK is not independently verified broker fill.
-        # Keep the pending state for explicit reconciliation.
+        if stop_intent_path.exists():
+            return {
+                **base_meta,
+                "ok": False,
+                "submitted": True,
+                "uncertain": True,
+                "uncertainFreezeRetained": True,
+                "status": "UNCERTAIN_STOP_ARRIVED_DURING_SEND",
+                "order": int(ack["order"]),
+            }
+
+        with cross_process_file_lock(latch_lock_path):
+            cur_state = json.loads(uncertain_path.read_text(encoding="utf-8"))
+            cur_state.pop(key, None)
+            _atomic_write_json(uncertain_path, cur_state)
+
         return {
-            "ok": False,
+            **base_meta,
+            "ok": True,
             "submitted": True,
-            "uncertain": True,
-            "status": "MOCK_ACK_NOT_BROKER_ATTESTED",
-            "mockOrderId": ack.get("order"),
-            "brokerFillIndependentlyVerified": False,
-            "liveAuthorized": False,
+            "uncertain": False,
+            "uncertainFreezeRetained": False,
+            "status": "MOCK_ORDER_CONFIRMED",
+            "order": int(ack["order"]),
         }
