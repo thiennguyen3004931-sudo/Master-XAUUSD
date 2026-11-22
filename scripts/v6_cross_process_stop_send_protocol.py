@@ -304,50 +304,50 @@ def execute_linearized_new_order(
                 }
                 _atomic_write_json(uncertain_path, u_state)
 
-            if stop_intent_path.exists():
-                # Strictly before mock_order_send: cancel ONLY this exact request_id reservation.
-                with cross_process_file_lock(admission_lock_path):
-                    if uncertain_path.exists():
-                        cur_state = json.loads(uncertain_path.read_text(encoding="utf-8"))
-                        if isinstance(cur_state, dict) and cur_state.get(key, {}).get("requestId") == str(request_id):
-                            cur_state.pop(key, None)
-                            _atomic_write_json(uncertain_path, cur_state)
-                return {
-                    "ok": False,
-                    "submitted": False,
-                    "status": "BLOCKED_STOP_INTENT_BEFORE_SEND",
-                    "liveAuthorized": False,
-                }
+        if stop_intent_path.exists():
+            # Strictly before mock_order_send: cancel ONLY this exact request_id reservation.
+            with cross_process_file_lock(admission_lock_path):
+                if uncertain_path.exists():
+                    cur_state = json.loads(uncertain_path.read_text(encoding="utf-8"))
+                    if isinstance(cur_state, dict) and cur_state.get(key, {}).get("requestId") == str(request_id):
+                        cur_state.pop(key, None)
+                        _atomic_write_json(uncertain_path, cur_state)
+            return {
+                "ok": False,
+                "submitted": False,
+                "status": "BLOCKED_STOP_INTENT_BEFORE_SEND",
+                "liveAuthorized": False,
+            }
 
-            if after_final_stop_check_hook is not None:
-                after_final_stop_check_hook()
-            try:
-                ack = mock_order_send({"requestId": str(request_id), "accountLogin": int(account_login), "server": str(server)})
-            except Exception as exc:
-                return {
-                    "ok": False,
-                    "submitted": True,
-                    "uncertain": True,
-                    "status": "UNCERTAIN_ORDER_SEND_EXCEPTION",
-                    "errorType": type(exc).__name__,
-                    "liveAuthorized": False,
-                }
-
-            if not isinstance(ack, dict) or ack.get("retcode") != 10009 or not ack.get("order"):
-                return {
-                    "ok": False,
-                    "submitted": True,
-                    "uncertain": True,
-                    "status": "UNCERTAIN_BROKER_ACK",
-                    "liveAuthorized": False,
-                }
-
+        if after_final_stop_check_hook is not None:
+            after_final_stop_check_hook()
+        try:
+            ack = mock_order_send({"requestId": str(request_id), "accountLogin": int(account_login), "server": str(server)})
+        except Exception as exc:
             return {
                 "ok": False,
                 "submitted": True,
                 "uncertain": True,
-                "status": "MOCK_ACK_NOT_BROKER_ATTESTED",
-                "mockOrderId": ack.get("order"),
-                "brokerFillIndependentlyVerified": False,
+                "status": "UNCERTAIN_ORDER_SEND_EXCEPTION",
+                "errorType": type(exc).__name__,
                 "liveAuthorized": False,
-              }
+            }
+
+        if not isinstance(ack, dict) or ack.get("retcode") != 10009 or not ack.get("order"):
+            return {
+                "ok": False,
+                "submitted": True,
+                "uncertain": True,
+                "status": "UNCERTAIN_BROKER_ACK",
+                "liveAuthorized": False,
+            }
+
+        return {
+            "ok": False,
+            "submitted": True,
+            "uncertain": True,
+            "status": "MOCK_ACK_NOT_BROKER_ATTESTED",
+            "mockOrderId": ack.get("order"),
+            "brokerFillIndependentlyVerified": False,
+            "liveAuthorized": False,
+          }
