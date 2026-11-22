@@ -2022,6 +2022,9 @@ def _entry_fill_evidence(mt5, intent):
             if (deal.comment == intent["brokerComment"] and deal.symbol == intent["symbol"]
                     and deal.magic == 270715 and deal.type == {"BUY": 0, "SELL": 1}[intent["side"]]
                     and deal.ticket > 0 and deal.volume > 0 and isfinite(deal.volume)):
+                entry = getattr(deal, "entry", None)
+                if type(entry) is not int or entry != 0:  # DEAL_ENTRY_IN
+                    return unknown
                 ticket = int(deal.ticket)
                 fill = (float(deal.volume), getattr(deal, "position_id", None))
                 if ticket in fills and fills[ticket] != fill:

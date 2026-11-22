@@ -658,9 +658,16 @@ class ExecutionRiskTest(unittest.TestCase):
                                magic=270715, comment=broker.sent[0]["comment"])
         restarted = MockBroker()
         restarted.history_deals_get = lambda *args: [deal]
-        for comment, expected in [("unrelated", "UNVERIFIED"),
-                                  (broker.sent[0]["comment"], "EXECUTION_OBSERVED")]:
+        for comment, entry, expected in [
+                ("unrelated", 0, "UNVERIFIED"),
+                (broker.sent[0]["comment"], None, "UNVERIFIED"),
+                (broker.sent[0]["comment"], 1, "UNVERIFIED"),
+                (broker.sent[0]["comment"], 2, "UNVERIFIED"),
+                (broker.sent[0]["comment"], 3, "UNVERIFIED"),
+                (broker.sent[0]["comment"], False, "UNVERIFIED"),
+                (broker.sent[0]["comment"], 0, "EXECUTION_OBSERVED")]:
             deal.comment = comment
+            deal.entry = entry
             result = engine.execute_order(restarted, "XAUUSD.G", cfg)
             self.assertEqual(result["fillEvidence"]["status"], expected)
             self.assertEqual(result["status"], "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY")
