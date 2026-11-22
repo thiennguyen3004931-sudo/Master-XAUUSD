@@ -24,7 +24,7 @@ from typing import Any, Callable
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
     data = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     with open(tmp_path, "w", encoding="utf-8") as fh:
         fh.write(data)
@@ -85,8 +85,6 @@ def persist_nonblocking_stop_intent_and_latch(
         "stopRevision": stop_rev,
         "requestedAtUtc": ts,
     }
-    # STOP publication and sender admission reservation use the same
-    # short process-shared lock, never held over broker I/O.
     with cross_process_file_lock(admission_lock_path):
         _atomic_write_json(stop_intent_path, intent_payload)
 
@@ -161,7 +159,6 @@ def _verify_trusted_release_proof(
     expected_hmac = hmac.new(release_hmac_key, msg, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(provided_hmac, expected_hmac):
         return False, "RELEASE_HMAC_MISMATCH"
-    # Caller-provided key/verifier is mock evidence, not runtime trust.
     return True, "CALLER_SUPPLIED_RELEASE_MOCK_ONLY"
 
 
@@ -171,7 +168,7 @@ def execute_linearized_new_order(
     account_login: int,
     server: str,
     request_id: str,
-    mock_order_send: Callable[[dict[str, Any]], dict[str, Any] | None],
+    mock_order_send: Callable[[dict[str, Any]], dict[str, Any]] | None,
     host_dpapi_verifier: Callable[[dict[str, Any]], bool] | None = None,
     release_hmac_key: bytes | None = None,
     now_utc: int | None = None,
@@ -277,8 +274,6 @@ def execute_linearized_new_order(
                         "liveAuthorized": False,
                     }
                 if u_state:
-                    # Account/server switches cannot silently ignore another
-                    # outstanding unknown entry in this shared runtime state.
                     return {
                         "ok": False,
                         "submitted": False,
@@ -288,13 +283,9 @@ def execute_linearized_new_order(
             else:
                 u_state = {}
 
-            # This hook is ONLY for deterministic offline race tests.
             if before_admission_reservation_hook is not None:
                 before_admission_reservation_hook()
 
-            # Linearization point: STOP flag or PENDING_SEND reservation
-            # is committed first under the same cross-process admission lock.
-            # A reserved request can remain in-flight after STOP publication.
             with cross_process_file_lock(admission_lock_path):
                 if stop_intent_path.exists():
                     return {
@@ -314,6 +305,13 @@ def execute_linearized_new_order(
                 _atomic_write_json(uncertain_path, u_state)
 
         if stop_intent_path.exists():
+            # Strictly before mock_order_send: cancel ONLY this exact request_id reservation.
+            with cross_process_file_lock(admission_lock_path):
+                if uncertain_path.exists():
+                    cur_state = json.loads(uncertain_path.read_text(encoding="utf-8"))
+                    if isinstance(cur_state, dict) and cur_state.get(key, {}).get("requestId") == str(request_id):
+                        cur_state.pop(key, None)
+                        _atomic_write_json(uncertain_path, cur_state)
             return {
                 "ok": False,
                 "submitted": False,
@@ -321,9 +319,6 @@ def execute_linearized_new_order(
                 "liveAuthorized": False,
             }
 
-        # Test-only interleave proves that a request admitted BEFORE STOP
-        # can reach a MOCK broker callback AFTER STOP. Physical send ordering
-        # is outside this protocol's guarantee; keep uncertain evidence.
         if after_final_stop_check_hook is not None:
             after_final_stop_check_hook()
         try:
@@ -347,8 +342,6 @@ def execute_linearized_new_order(
                 "liveAuthorized": False,
             }
 
-        # Mock ACK is not independently verified broker fill.
-        # Keep the pending state for explicit reconciliation.
         return {
             "ok": False,
             "submitted": True,
@@ -357,4 +350,4 @@ def execute_linearized_new_order(
             "mockOrderId": ack.get("order"),
             "brokerFillIndependentlyVerified": False,
             "liveAuthorized": False,
-        }
+          }

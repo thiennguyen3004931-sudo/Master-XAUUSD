@@ -466,6 +466,38 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
             self.assertEqual(res["reason"], "WINDOWS_DPAPI_AND_KEY_CUSTODY_UNVERIFIED")
             self.assertEqual(calls, [])
 
+    def test_safe_pre_send_abort_clears_only_matching_request_reservation(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            rt = Path(folder) / "runtime"
+            rt.mkdir()
+            _write_trusted_clear_latch(rt, now_utc=1700000100)
+            calls = []
+            exists_calls = {"n": 0}
+            orig_exists = Path.exists
 
+            def _fake_exists(p: Path) -> bool:
+                if p.name == "v6-stop-intent.flag":
+                    exists_calls["n"] += 1
+                    if exists_calls["n"] >= 3:
+                        return True
+                return orig_exists(p)
+
+            with patch.object(Path, "exists", _fake_exists):
+                res = execute_linearized_new_order(
+                    runtime_dir=rt,
+                    account_login=1001,
+                    server="Broker-Demo",
+                    request_id="req-abort-pre",
+                    mock_order_send=lambda r: calls.append(r) or {"retcode": 10009, "order": 1},
+                    host_dpapi_verifier=lambda _l: True,
+                    release_hmac_key=KEY,
+                    now_utc=1700000105,
+                )
+            self.assertFalse(res["submitted"])
+            self.assertEqual(res["status"], "BLOCKED_STOP_INTENT_BEFORE_SEND")
+            self.assertEqual(calls, [])
+            self.assertEqual(json.loads((rt / "v6-uncertain-entry-state.json").read_text(encoding="utf-8")), {})
+            
 if __name__ == "__main__":
     unittest.main()
