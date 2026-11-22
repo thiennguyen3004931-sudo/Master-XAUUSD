@@ -341,6 +341,51 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
             self.assertEqual(retry["status"], "BLOCKED_UNCERTAIN_PREVIOUS_ENTRY")
             self.assertEqual(len(calls), 1)
 
+    def test_mock_host_verifier_exception_and_invalid_latch_shape_fail_closed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            rt = Path(folder) / "runtime"
+            rt.mkdir()
+            _write_trusted_clear_latch(rt)
+            calls = []
+
+            def failing_verifier(_latch):
+                raise PermissionError("DPAPI unavailable")
+
+            result = execute_linearized_new_order(
+                runtime_dir=rt, account_login=1001,
+                server="Broker-Demo", request_id="host-verifier-error",
+                mock_order_send=lambda req: calls.append(req),
+                host_dpapi_verifier=failing_verifier,
+                release_hmac_key=KEY, now_utc=1700000105,
+            )
+            self.assertFalse(result["submitted"])
+            self.assertEqual(result["status"], "BLOCKED_EMERGENCY_STOP_LATCH")
+            self.assertEqual(result["reason"], "HOST_DPAPI_VERIFIER_EXCEPTION")
+            self.assertEqual(calls, [])
+
+            result = execute_linearized_new_order(
+                runtime_dir=rt, account_login=1001,
+                server="Broker-Demo", request_id="bad-key",
+                mock_order_send=lambda req: calls.append(req),
+                host_dpapi_verifier=lambda _l: True,
+                release_hmac_key="mock-key-string", now_utc=1700000105,
+            )
+            self.assertFalse(result["submitted"])
+            self.assertEqual(result["reason"], "WINDOWS_DPAPI_AND_KEY_CUSTODY_UNVERIFIED")
+            self.assertEqual(calls, [])
+
+            (rt / "v6-emergency-stop-latch.json").write_text("[]", encoding="utf-8")
+            result = execute_linearized_new_order(
+                runtime_dir=rt, account_login=1001,
+                server="Broker-Demo", request_id="bad-latch-list",
+                mock_order_send=lambda req: calls.append(req),
+                host_dpapi_verifier=lambda _l: True,
+                release_hmac_key=KEY, now_utc=1700000105,
+            )
+            self.assertFalse(result["submitted"])
+            self.assertEqual(result["status"], "BLOCKED_STOP_LATCH_INVALID_SHAPE")
+            self.assertEqual(calls, [])
+
     def test_invalid_uncertain_inventory_shape_blocks_without_dispatch(self):
         with tempfile.TemporaryDirectory() as folder:
             rt = Path(folder) / "runtime"
