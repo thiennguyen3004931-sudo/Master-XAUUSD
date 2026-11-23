@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Read-only Windows SID-based Effective ACL & DPAPI readiness probe for V6 G1/G4 (#7)."""
+"""Read-only Windows SID ACE-policy screen and current-user DPAPI probe for V6 G1/G4 (#7).
+
+This is not a Windows Authz AccessCheck, service-token verification, or trusted
+operator CLEAR. All production effective-access and LIVE verdicts remain blocked.
+"""
 
 from __future__ import annotations
 
@@ -110,7 +114,11 @@ def evaluate_sid_acl_rules(
     trusted_extra_sids: Iterable[str] = (),
     forbid_any_broad_allow: bool = False,
 ) -> dict[str, Any]:
-    """Evaluate Windows SID-resolved ACL rules fail-closed without leaking raw usernames."""
+    """Screen SID-resolved ACE rules; cannot prove effective service-token access.
+
+    Inherited ACE order, group memberships, restricted tokens and Windows Authz
+    AccessCheck are not modeled. Never report effective ACL verified here.
+    """
     norm_owner = _normalize_sid(owner_sid)
     norm_user = _normalize_sid(current_user_sid)
     allowed_sids = set(TRUSTED_SYSTEM_SIDS)
@@ -210,6 +218,7 @@ def evaluate_sid_acl_rules(
             if sid_hash not in unexpected_write_sids:
                 unexpected_write_sids.append(sid_hash)
 
+    ace_policy_screened = False
     if not owner_ok:
         status = "UNSAFE"
         reason = "UNTRUSTED_OWNER_SID"
@@ -227,9 +236,12 @@ def evaluate_sid_acl_rules(
         reason = "OPERATOR_WRITE_EXPLICITLY_DENIED"
         verified = False
     else:
-        status = "VERIFIED"
-        reason = "SID_EFFECTIVE_ACL_STRICT_OPERATOR_ONLY"
-        verified = True
+        # ACE policy checks are a preliminary screen only. No Windows
+        # AccessCheck or actual V6 service token is evaluated in this probe.
+        status = "ACE_POLICY_SCREENED_ONLY"
+        reason = "SID_ACE_RULES_SCREENED_NOT_EFFECTIVE_ACCESS"
+        verified = False
+        ace_policy_screened = True
 
     return {
         "pathLabel": path_label,
@@ -239,6 +251,7 @@ def evaluate_sid_acl_rules(
         "broadWriteGrants": sorted(broad_write_grants),
         "unexpectedWriteSids": sorted(unexpected_write_sids),
         "ruleCount": len(rules),
+        "acePolicyScreened": ace_policy_screened,
         "status": status,
         "reason": reason,
         "verified": verified,
@@ -347,7 +360,11 @@ class _DATA_BLOB(ctypes.Structure):
 
 
 def check_windows_dpapi_current_user_readiness() -> dict[str, Any]:
-    """Run an in-memory DPAPI CurrentUser sentinel round-trip without touching secrets or disk."""
+    """Exercise DPAPI with a synthetic CurrentUser sentinel (no app secret/file writes).
+
+    Windows may load or create OS-managed user-profile/master-key material.
+    This is NOT verification of the V6 service identity or operator key blob.
+    """
     if platform.system() != "Windows":
         return {
             "supported": False,
@@ -435,85 +452,78 @@ def classify_effective_acl_and_dpapi(
     dpapi_key_blob_present: bool,
     dpapi_key_blob_acl: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Classify overall Windows effective ACL & DPAPI readiness fail-closed."""
-    is_windows = str(platform_name).strip().lower() == "windows"
-    if not is_windows:
-        return {
-            "effectiveAclVerified": False,
-            "dpapiReady": False,
-            "dpapiKeyBlobVerified": False,
-            "status": "UNSUPPORTED_PLATFORM",
-            "reason": "WINDOWS_HOST_REQUIRED_FOR_EFFECTIVE_ACL_AND_DPAPI",
-            "liveAuthorized": False,
-        }
+    """Classify preliminary host observations, never production authorization.
 
-    all_targets_verified = bool(target_results) and all(
-        bool(item.get("verified")) for item in target_results
+    Get-Acl exposes ACE rules, not the effective access of the *running V6
+    service* under a verified Windows token. A sentinel round-trip with
+    CurrentUser DPAPI only probes this caller's identity; it does not prove
+    service identity or access to an actual protected operator key.
+    """
+    is_windows = str(platform_name).strip().lower() == "windows"
+    ace_screened = bool(target_results) and all(
+        item.get("acePolicyScreened") is True for item in target_results
     )
-    dpapi_ready = bool(dpapi_status.get("supported")) and bool(
-        dpapi_status.get("roundTripPassed")
+    caller_dpapi_observed = (
+        dpapi_status.get("supported") is True
+        and dpapi_status.get("roundTripPassed") is True
     )
-    blob_acl_verified = bool(
+    blob_ace_screened = bool(
         dpapi_key_blob_present
         and isinstance(dpapi_key_blob_acl, Mapping)
-        and dpapi_key_blob_acl.get("verified") is True
+        and dpapi_key_blob_acl.get("acePolicyScreened") is True
     )
-
-    if not all_targets_verified:
-        failing_reasons = [
-            f"{item.get('pathLabel', 'unknown')}:{item.get('reason', 'UNVERIFIED')}"
-            for item in target_results
-            if not item.get("verified")
-        ]
-        return {
-            "effectiveAclVerified": False,
-            "dpapiReady": dpapi_ready,
-            "dpapiKeyBlobVerified": blob_acl_verified,
-            "status": "BLOCKED",
-            "reason": ";".join(failing_reasons) if failing_reasons else "ACL_TARGETS_UNVERIFIED",
-            "liveAuthorized": False,
-        }
-
-    if not dpapi_ready:
-        return {
-            "effectiveAclVerified": True,
-            "dpapiReady": False,
-            "dpapiKeyBlobVerified": blob_acl_verified,
-            "status": "BLOCKED",
-            "reason": str(dpapi_status.get("reason") or "DPAPI_NOT_READY"),
-            "liveAuthorized": False,
-        }
-
-    if not dpapi_key_blob_present:
-        return {
-            "effectiveAclVerified": True,
-            "dpapiReady": True,
-            "dpapiKeyBlobVerified": False,
-            "status": "PARTIAL_HOST_READY_KEY_BLOB_MISSING",
-            "reason": "DPAPI_OPERATOR_KEY_BLOB_NOT_PROVISIONED",
-            "liveAuthorized": False,
-        }
-
-    if not blob_acl_verified:
-        return {
-            "effectiveAclVerified": True,
-            "dpapiReady": True,
-            "dpapiKeyBlobVerified": False,
-            "status": "BLOCKED",
-            "reason": str(
-                (dpapi_key_blob_acl or {}).get("reason") or "DPAPI_KEY_BLOB_ACL_UNVERIFIED"
-            ),
-            "liveAuthorized": False,
-        }
-
-    return {
-        "effectiveAclVerified": True,
-        "dpapiReady": True,
-        "dpapiKeyBlobVerified": True,
-        "status": "HOST_ACL_AND_DPAPI_VERIFIED",
-        "reason": "WINDOWS_SID_ACL_AND_DPAPI_CURRENT_USER_VERIFIED",
+    # None of these proxy observations supplies service-token AccessCheck,
+    # cryptographic release custody, or trusted CLEAR authorization.
+    verdict: dict[str, Any] = {
+        "effectiveAclVerified": False,
+        "dpapiReady": False,
+        "dpapiKeyBlobVerified": False,
+        "acePolicyScreened": ace_screened if is_windows else False,
+        "dpapiProbeCurrentUserRoundTripObserved": (
+            caller_dpapi_observed if is_windows else False
+        ),
+        "dpapiKeyBlobAcePolicyScreened": blob_ace_screened if is_windows else False,
         "liveAuthorized": False,
     }
+    if not is_windows:
+        verdict.update(
+            status="UNSUPPORTED_PLATFORM",
+            reason="WINDOWS_HOST_REQUIRED_FOR_ACL_AND_DPAPI_PROBE",
+        )
+    elif not ace_screened:
+        failures = [
+            f"{item.get('pathLabel', 'unknown')}:{item.get('reason', 'UNVERIFIED')}"
+            for item in target_results
+            if item.get("acePolicyScreened") is not True
+        ]
+        verdict.update(
+            status="BLOCKED",
+            reason=";".join(failures) if failures else "ACL_TARGETS_NOT_SCREENED",
+        )
+    elif not caller_dpapi_observed:
+        verdict.update(
+            status="BLOCKED",
+            reason=str(dpapi_status.get("reason") or "DPAPI_CURRENT_USER_PROBE_UNVERIFIED"),
+        )
+    elif not dpapi_key_blob_present:
+        verdict.update(
+            status="PARTIAL_ACE_SCREEN_ONLY_KEY_BLOB_MISSING",
+            reason="DPAPI_OPERATOR_KEY_BLOB_NOT_PROVISIONED",
+        )
+    elif not blob_ace_screened:
+        verdict.update(
+            status="BLOCKED",
+            reason=str(
+                (dpapi_key_blob_acl or {}).get("reason")
+                or "DPAPI_KEY_BLOB_ACE_POLICY_NOT_SCREENED"
+            ),
+        )
+    else:
+        verdict.update(
+            status="UNVERIFIED_SERVICE_EFFECTIVE_ACCESS_AND_DPAPI_IDENTITY",
+            reason="ACE_SCREEN_AND_PROBE_USER_DPAPI_NOT_SERVICE_TOKEN_AUTHZ",
+        )
+    return verdict
 
 
 def build_probe_report(
@@ -523,7 +533,10 @@ def build_probe_report(
     dpapi_key_blob_path: Path | None = None,
     now_utc: int | None = None,
 ) -> dict[str, Any]:
-    """Run read-only Windows SID ACL & DPAPI probe and return hashed report."""
+    """Collect preliminary host observations with no application file writes.
+
+    DPAPI may access OS-managed profile state; never claim service token access.
+    """
     ts = int(time.time()) if now_utc is None else int(now_utc)
     plat = platform.system()
     rt_dir = runtime_dir if runtime_dir is not None else (repo_root / ".runtime")
@@ -638,6 +651,9 @@ def build_probe_report(
         "effectiveAclVerified": classification["effectiveAclVerified"],
         "dpapiReady": classification["dpapiReady"],
         "dpapiKeyBlobVerified": classification["dpapiKeyBlobVerified"],
+        "acePolicyScreened": classification["acePolicyScreened"],
+        "dpapiProbeCurrentUserRoundTripObserved": classification["dpapiProbeCurrentUserRoundTripObserved"],
+        "dpapiKeyBlobAcePolicyScreened": classification["dpapiKeyBlobAcePolicyScreened"],
         "status": classification["status"],
         "reason": classification["reason"],
         "liveAuthorized": False,
@@ -649,7 +665,7 @@ def build_probe_report(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Read-only Windows SID-based Effective ACL & DPAPI probe for Master-XAUUSD V6."
+        description="Preliminary Windows SID ACE screening and current-user DPAPI sentinel; NOT effective service access."
     )
     parser.add_argument(
         "--repo-root",
