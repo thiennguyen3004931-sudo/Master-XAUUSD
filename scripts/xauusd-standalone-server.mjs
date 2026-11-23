@@ -24,6 +24,8 @@ import { fileURLToPath } from "node:url";
 import { parseRequiredTicket, parseOptionalBoolean } from "./v6-api-input-guards.mjs";
 import { getV6ExecutionSizingDisclosure } from "./v6-execution-sizing-disclosure.mjs";
 import { getV6BrokerStatusEvidence, readExplicitBacktestStartingBalance } from "./v6-broker-status-evidence.mjs";
+import { resolveAllowedOriginValue } from "./v6-api-cors-origin-policy.mjs";
+import { createV6ReplayGuard } from "./v6-control-replay-guard.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -479,36 +481,9 @@ export function verifyControlTokenHeader(suppliedHeader, expectedToken = CONTROL
   return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
 }
 
-const seenReplayNonces = new Map();
-const REPLAY_WINDOW_MS = 300_000;
-
-export function verifyReplayGuard(req) {
-  const rawNonce = String(req?.headers?.["x-v6-nonce"] || "").trim();
-  const rawTs = String(req?.headers?.["x-v6-timestamp"] || "").trim();
-  const strictReplay = String(process.env.V6_STRICT_REPLAY_GUARD || "").trim() === "true";
-  if (!rawNonce && !rawTs) {
-    if (strictReplay && req?.method === "POST") {
-      return { ok: false, status: 400, error: "REPLAY_HEADERS_REQUIRED", message: "Thiếu x-v6-nonce hoặc x-v6-timestamp cho thao tác điều khiển." };
-    }
-    return { ok: true };
-  }
-  if (!rawNonce || !rawTs) {
-    return { ok: false, status: 400, error: "REPLAY_HEADERS_INCOMPLETE", message: "Phải cung cấp cả x-v6-nonce và x-v6-timestamp." };
-  }
-  const tsNum = Number(rawTs);
-  const now = Date.now();
-  if (!Number.isFinite(tsNum) || Math.abs(now - tsNum) > REPLAY_WINDOW_MS) {
-    return { ok: false, status: 401, error: "REQUEST_TIMESTAMP_EXPIRED", message: "Timestamp yêu cầu điều khiển đã hết hạn hoặc lệch quá 300 giây." };
-  }
-  for (const [k, exp] of seenReplayNonces.entries()) {
-    if (now > exp) seenReplayNonces.delete(k);
-  }
-  if (seenReplayNonces.has(rawNonce)) {
-    return { ok: false, status: 409, error: "REPLAY_DETECTED", message: "Từ chối request lặp lại (replay nonce đã được sử dụng)." };
-  }
-  seenReplayNonces.set(rawNonce, now + REPLAY_WINDOW_MS * 2);
-  return { ok: true };
-}
+// Mutation API calls always require nonce + timestamp; this is per-process
+// replay protection, not trusted STOP/CLEAR or durable broker idempotency.
+export const verifyReplayGuard = createV6ReplayGuard();
 
 export function resolveAuthRole(req, tokenOverride = undefined) {
   const suppliedHeader = String(req?.headers?.["x-v6-control-token"] || "").trim();
@@ -1734,25 +1709,22 @@ function getLanIps() {
 }
 
 function resolveAllowedOrigin(req) {
-  const origin = String(req?.headers?.origin || "").trim();
-  if (!origin) return "http://127.0.0.1:5717";
-  if (
-    origin.startsWith("http://127.0.0.1:") ||
-    origin.startsWith("http://localhost:") ||
-    origin.endsWith(".trycloudflare.com")
-  ) {
-    return origin;
-  }
-  return "http://127.0.0.1:5717";
+  return resolveAllowedOriginValue(req?.headers?.origin, {
+    webPort: WEB_PORT,
+    apiPort: API_PORT,
+    configuredOrigins: process.env.V6_ALLOWED_ORIGINS || "",
+  });
 }
 
 function sendJson(res, status, payload, req = null) {
   const body = JSON.stringify(payload);
+  const corsOrigin = resolveAllowedOrigin(req);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
-    "access-control-allow-origin": resolveAllowedOrigin(req),
+    ...(corsOrigin ? { "access-control-allow-origin": corsOrigin } : {}),
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token",
+    "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token, x-v6-nonce, x-v6-timestamp",
+    "vary": "Origin",
     "cache-control": "no-store",
   });
   res.end(body);
@@ -1894,10 +1866,18 @@ function buildStatusPayload(probe) {
 
 export async function handleApiRequest(req, res) {
   if (req.method === "OPTIONS") {
+    const corsOrigin = resolveAllowedOrigin(req);
+    if (!corsOrigin) {
+      res.writeHead(403, { "vary": "Origin", "cache-control": "no-store" });
+      res.end();
+      return;
+    }
     res.writeHead(204, {
-      "access-control-allow-origin": resolveAllowedOrigin(req),
+      "access-control-allow-origin": corsOrigin,
       "access-control-allow-methods": "GET, POST, OPTIONS",
-      "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token",
+      "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token, x-v6-nonce, x-v6-timestamp",
+      "vary": "Origin",
+      "cache-control": "no-store",
     });
     res.end();
     return;
