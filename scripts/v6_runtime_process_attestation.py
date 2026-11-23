@@ -6,10 +6,11 @@ Strictly READ-ONLY / NO-ORDER / NO-SECRETS:
 - NEVER trusts caller-supplied booleans (such as `matchesExpectedRepoRoot=True`).
 - Explicitly separates:
   * `workingTreeHeadObserved` (`git rev-parse HEAD` on disk — observation only),
-  * `releaseManifestMatched` (exact SHA-256 comparison against an explicit manifest),
+  * `releaseManifestCheck` (local Git commit blob SHA-256 comparison; not host proof),
   * `portOwnerObserved` (read-only listener PID/owner hashes observed on 3711/5717/8765),
-  * `gatewayProcessIdentified` (requires non-conflicting single listener with verified
-    executable/script digest & endpoint role, NOT web-only 5717 without trade bridge 8765),
+  * `standaloneProcessCandidateObserved` (same PID/owner/executable on default
+    API 3711 and WEB 5717; optional Phase7C port 8765 is NOT required),
+  * `gatewayProcessIdentified` (always False until independent host script binding),
   * `activeRuntimeReleaseVerified` (always `False` / `UNVERIFIED` unless full independent
     host PID -> executable -> release manifest binding is verified without drift).
 - Separates static `sourceSizingModeHint` from `effectivePreSendSizingMode` (kept
@@ -27,10 +28,12 @@ import subprocess
 import time
 from typing import Any, Callable
 
+# Default ports from xauusd-standalone-server.mjs. Deployments may override
+# API_PORT / WEB_PORT; an absent default listener is not proof no server exists.
 V6_PORT_ROLES = {
-    3711: "AUX_OR_LEGACY_SERVICE",
-    5717: "WEB_UI_CONTROL_SERVER",
-    8765: "TRADE_GATEWAY_BRIDGE",
+    3711: "V6_STANDALONE_API_DEFAULT",
+    5717: "V6_STANDALONE_WEB_DEFAULT",
+    8765: "OPTIONAL_PHASE7C_MT5_BRIDGE",
 }
 V6_MONITORED_PORTS = tuple(V6_PORT_ROLES.keys())
 ATTESTATION_SCOPE = "READONLY_PROCESS_PORT_RELEASE_ATTESTATION_NO_ORDER"
@@ -121,6 +124,45 @@ def verify_release_manifest_digests(
     if mismatches:
         return {"matched": False, "reason": "RELEASE_MANIFEST_DIGEST_MISMATCH", "mismatchedModules": mismatches}
     return {"matched": True, "reason": "RELEASE_MANIFEST_MATCHED", "mismatchedModules": []}
+
+
+def derive_local_git_commit_manifest(
+    repo_root: Path, expected_release_sha: str
+) -> tuple[dict[str, str] | None, str]:
+    """Hash core module blobs from a local immutable Git commit object.
+
+    This proves only that disk files match the locally available Git object.
+    It does NOT authenticate the origin of the Git repository, the owner of a
+    running process, the active release, or permission to trade.
+    """
+    sha = str(expected_release_sha or "").strip()
+    if len(sha) != 40:
+        return None, "INVALID_RELEASE_SHA"
+    try:
+        int(sha, 16)
+    except ValueError:
+        return None, "INVALID_RELEASE_SHA"
+
+    try:
+        commit = subprocess.run(
+            ["git", "cat-file", "-t", sha], cwd=str(repo_root),
+            capture_output=True, check=False, timeout=5,
+        )
+        if commit.returncode != 0 or commit.stdout.strip() != b"commit":
+            return None, "LOCAL_GIT_COMMIT_OBJECT_UNAVAILABLE"
+
+        manifest: dict[str, str] = {}
+        for rel in CORE_MODULE_PATHS:
+            blob = subprocess.run(
+                ["git", "show", f"{sha}:{rel}"], cwd=str(repo_root),
+                capture_output=True, check=False, timeout=5,
+            )
+            if blob.returncode != 0:
+                return None, "LOCAL_GIT_MODULE_OBJECT_UNAVAILABLE"
+            manifest[rel] = hashlib.sha256(blob.stdout).hexdigest()
+        return manifest, "LOCAL_GIT_COMMIT_BLOBS_HASHED"
+    except (OSError, subprocess.TimeoutExpired):
+        return None, "LOCAL_GIT_OBJECT_READ_FAILED"
 
 
 def _normalize_listener_entries(raw_entry: Any) -> list[dict[str, Any]]:
@@ -267,12 +309,23 @@ def collect_runtime_process_attestation(
     expected_sha = str(expected_release_sha or "").strip()
     git_state = inspect_working_tree_git_state(repo_root, cmd_runner=cmd_runner)
     digests = inspect_redacted_module_digests(repo_root)
-    manifest_check = verify_release_manifest_digests(digests, expected_release_manifest)
+    if expected_release_manifest is None:
+        # Git commit blobs are a local, source-only reference, not a signed
+        # external release attestation or proof of code loaded by a process.
+        manifest, manifest_reason = derive_local_git_commit_manifest(repo_root, expected_sha)
+        manifest_provenance = (
+            "LOCAL_GIT_COMMIT_OBJECT_UNTRUSTED" if manifest is not None else "UNAVAILABLE"
+        )
+    else:
+        manifest = expected_release_manifest
+        manifest_reason = "CALLER_SUPPLIED_MANIFEST_NOT_INDEPENDENT"
+        manifest_provenance = "CALLER_SUPPLIED_UNTRUSTED"
+    manifest_check = verify_release_manifest_digests(digests, manifest)
     port_state = inspect_port_owners(V6_MONITORED_PORTS, port_inspector=port_inspector)
     arm_sizing = inspect_readonly_arm_and_sizing_source(repo_root)
 
+    p3711 = port_state["ports"].get("3711", {})
     p5717 = port_state["ports"].get("5717", {})
-    p8765 = port_state["ports"].get("8765", {})
 
     port_owner_observed = bool(
         port_state["status"] == "OBSERVED"
@@ -282,39 +335,59 @@ def collect_runtime_process_attestation(
         )
     )
 
-    gw_listeners = p8765.get("listeners", [])
-    gw_single = len(gw_listeners) == 1
-    gw_pid = gw_listeners[0]["pid"] if gw_single else None
+    api_listeners = p3711.get("listeners", [])
+    web_listeners = p5717.get("listeners", [])
+    api_single = len(api_listeners) == 1
+    web_single = len(web_listeners) == 1
+    same_pid = bool(
+        api_single and web_single
+        and api_listeners[0]["pid"] == web_listeners[0]["pid"]
+    )
+    gateway_pid = api_listeners[0]["pid"] if same_pid else None
     pid_changed = bool(
         isinstance(previous_gateway_pid, int)
         and not isinstance(previous_gateway_pid, bool)
         and previous_gateway_pid > 0
-        and gw_pid is not None
-        and gw_pid != previous_gateway_pid
+        and gateway_pid is not None
+        and gateway_pid != previous_gateway_pid
     )
-    gateway_process_identified = bool(
+    same_owner = bool(
+        same_pid
+        and api_listeners[0].get("ownerHash") is not None
+        and api_listeners[0]["ownerHash"] == web_listeners[0].get("ownerHash")
+    )
+    same_executable = bool(
+        same_pid
+        and api_listeners[0].get("executableSha256") is not None
+        and api_listeners[0]["executableSha256"] == web_listeners[0].get("executableSha256")
+    )
+    standalone_candidate_observed = bool(
         port_state["status"] == "OBSERVED"
-        and gw_single
-        and not p8765.get("multipleListeners")
-        and gw_listeners[0].get("ownerHash") is not None
-        and gw_listeners[0].get("executableSha256") is not None
+        and same_owner and same_executable
         and not pid_changed
+        and not p3711.get("multipleListeners")
+        and not p5717.get("multipleListeners")
     )
 
+    # Port/PID/executable evidence does not identify the loaded Node script or
+    # the Python MT5 subprocess. Never claim active gateway identity from it.
+    gateway_process_identified = False
     active_runtime_release_verified = False
 
     if not manifest_check["matched"]:
         reason = manifest_check["reason"]
     elif not (len(expected_sha) == 40 and git_state["workingTreeHeadObserved"] == expected_sha and git_state["workingTreeClean"]):
         reason = "WORKING_TREE_SHA_OR_CLEANLINESS_UNVERIFIED"
-    elif p8765.get("multipleListeners") or p5717.get("multipleListeners"):
-        reason = "MULTIPLE_PORT_LISTENERS_AMBIGUOUS"
-    elif not p8765.get("listening"):
-        reason = "TRADE_GATEWAY_PORT_8765_ABSENT_WEB_ONLY_INSUFFICIENT"
+    elif p3711.get("multipleListeners") or p5717.get("multipleListeners"):
+        reason = "MULTIPLE_V6_DEFAULT_LISTENERS_AMBIGUOUS"
+    elif not p3711.get("listening") or not p5717.get("listening"):
+        reason = "V6_DEFAULT_API_OR_WEB_LISTENER_NOT_OBSERVED"
+    elif not same_pid:
+        reason = "V6_DEFAULT_API_WEB_PIDS_DIFFER_OR_UNVERIFIED"
     elif pid_changed:
-        reason = "GATEWAY_PID_CHANGED_REQUIRES_REATTESTATION"
-    elif not gateway_process_identified:
-        reason = "GATEWAY_PROCESS_EXECUTABLE_OR_OWNER_UNVERIFIED"
+        reason = "V6_STANDALONE_PID_CHANGED_REQUIRES_REATTESTATION"
+    elif not standalone_candidate_observed:
+        reason = "V6_STANDALONE_PROCESS_OWNER_OR_EXE_UNVERIFIED"
     else:
         reason = "READONLY_OBSERVATION_REQUIRES_INDEPENDENT_HOST_RUNTIME_ATTESTATION"
 
@@ -329,8 +402,11 @@ def collect_runtime_process_attestation(
         "workingTreeClean": git_state["workingTreeClean"],
         "moduleDigestsSha256": digests,
         "releaseManifestCheck": manifest_check,
+        "manifestProvenance": manifest_provenance,
+        "manifestDerivationReason": manifest_reason,
         "portAttestation": port_state,
         "portOwnerObserved": port_owner_observed,
+        "standaloneProcessCandidateObserved": standalone_candidate_observed,
         "gatewayProcessIdentified": gateway_process_identified,
         "gatewayPidChanged": pid_changed,
         "armAndSizingSource": arm_sizing,
