@@ -88,6 +88,24 @@ class TestBacktestAntiLookaheadAndStress(unittest.TestCase):
         self.assertIsNone(rep["inSampleSummary"]["netPnlAfterCostsUsd"])
         self.assertFalse(rep["liveAuthorized"])
 
+    def test_empty_event_and_empty_out_of_sample_are_not_evidence(self) -> None:
+        no_events = bt.verify_no_lookahead([])
+        self.assertFalse(no_events["passed"])
+        self.assertEqual(no_events["reason"], "EMPTY_SIGNAL_EVENTS_UNVERIFIED")
+        rep = bt.evaluate_stress_and_walkforward_report(
+            in_sample_trades=[{"netPnlAfterCostsUsd": 90.0}],
+            out_of_sample_trades=[],
+            stress_scenarios=_all_stress_pass(),
+            broker_stopout_verified=True,
+            contains_demo_or_synthetic_data=False,
+        )
+        self.assertEqual(rep["status"], "UNVERIFIED")
+        self.assertEqual(rep["reason"], "EMPTY_IN_SAMPLE_OR_OUT_OF_SAMPLE_TRADES")
+        self.assertIsNone(rep["outOfSampleSummary"]["winRate"])
+        self.assertIsNone(rep["outOfSampleSummary"]["netPnlAfterCostsUsd"])
+        self.assertFalse(rep["brokerStopOutVerified"])
+        self.assertFalse(rep["liveAuthorized"])
+
     def test_unverified_broker_stopout_always_reports_unverified(self) -> None:
         rep = bt.evaluate_stress_and_walkforward_report(
             in_sample_trades=[{"netPnlAfterCostsUsd": 120.0}, {"netPnlAfterCostsUsd": -40.0}],
