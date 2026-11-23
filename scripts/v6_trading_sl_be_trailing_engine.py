@@ -219,6 +219,21 @@ def compute_next_protective_sl(
     else:
         initial_r = None
 
+    if not initial_risk_consistent:
+        # An inconsistent immutable initial R is not proof of a legitimate
+        # trading state. Block ALL offline SL proposals (including M5/M15),
+        # not only break-even, until entry metadata is reconciled.
+        return {
+            "shouldModify": False,
+            "evaluationScope": "OFFLINE_PROTECTIVE_SL_PROPOSAL_NO_MT5_ORDER",
+            "initialRiskUsd": None,
+            "direction": direction,
+            "previousSl": round(cur_sl_f, 4),
+            "nextSl": round(cur_sl_f, 4),
+            "reason": "IMMUTABLE_INITIAL_RISK_MISMATCH",
+            "liveAuthorized": False,
+        }
+
     profit_usd = (bid_f - entry_f) if direction == "BUY" else (entry_f - ask_f)
     trigger = (
         max(initial_r, float(be_trigger_usd))
