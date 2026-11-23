@@ -1,4 +1,4 @@
-"""Unit tests for V6 Standalone Protective SL/TP Broker Readback & Reconciliation Contract."""
+"""Tests: caller-provided SLTP readback claims NEVER become broker proof."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ def _expected(**overrides):
     base = {
         "ticket": 123456,
         "magic": 600001,
+        "accountLogin": 5201362,
+        "server": "DBGMarkets-Live",
         "symbol": "XAUUSD.G",
         "direction": "BUY",
         "previousSl": 2643.0,
@@ -33,6 +35,8 @@ def _readback(**overrides):
         "positionExists": True,
         "ticket": 123456,
         "magic": 600001,
+        "accountLogin": 5201362,
+        "server": "DBGMarkets-Live",
         "symbol": "XAUUSD.G",
         "direction": "BUY",
         "sl": 2650.2,
@@ -44,84 +48,109 @@ def _readback(**overrides):
     return base
 
 
+def _check(expected=None, readback=None, **kwargs):
+    return rec.reconcile_sltp_broker_readback(
+        expected_state=_expected() if expected is None else expected,
+        broker_readback=_readback() if readback is None else readback,
+        now_utc=1795420003,
+        **kwargs,
+    )
+
+
 class TestSltpReadbackReconciliationContract(unittest.TestCase):
-    def test_confirmed_target_sltp_and_partial_volume_reduction(self) -> None:
-        ok = rec.reconcile_sltp_broker_readback(
-            expected_state=_expected(),
-            broker_readback=_readback(),
-            now_utc=1795420003,
-        )
-        self.assertTrue(ok["reconciled"])
-        self.assertEqual(ok["status"], "RECONCILED_TARGET_CONFIRMED")
-        self.assertFalse(ok["retryRequired"])
-        self.assertFalse(ok["liveAuthorized"])
+    def test_exact_caller_match_and_partial_volume_are_not_broker_verified(self):
+        exact = _check()
+        self.assertEqual(exact["status"], "CALLER_TARGET_FIELDS_MATCH_UNVERIFIED")
+        self.assertTrue(exact["candidateFieldsMatch"])
+        self.assertFalse(exact["reconciled"])
+        self.assertFalse(exact["retryRequired"])
+        self.assertTrue(exact["reconciliationRequired"])
+        self.assertTrue(exact["blockNewOrders"])
+        self.assertFalse(exact["brokerReadbackProvenanceVerified"])
+        self.assertFalse(exact["brokerAcknowledgementVerified"])
+        self.assertFalse(exact["liveAuthorized"])
 
-        partial = rec.reconcile_sltp_broker_readback(
-            expected_state=_expected(),
-            broker_readback=_readback(volume=0.05),
-            now_utc=1795420003,
-        )
-        self.assertTrue(partial["reconciled"])
-        self.assertEqual(partial["status"], "RECONCILED_PARTIAL_VOLUME_AND_TARGET_SL_CONFIRMED")
+        partial = _check(readback=_readback(volume=0.05))
+        self.assertEqual(partial["status"], "CALLER_PARTIAL_VOLUME_TARGET_MATCH_UNVERIFIED")
+        self.assertTrue(partial["candidateFieldsMatch"])
+        self.assertFalse(partial["reconciled"])
         self.assertEqual(partial["observedVolume"], 0.05)
+        self.assertTrue(partial["blockNewOrders"])
+        self.assertFalse(partial["liveAuthorized"])
 
-    def test_sl_not_applied_triggers_retry_without_closing_position(self) -> None:
-        drift = rec.reconcile_sltp_broker_readback(
-            expected_state=_expected(),
-            broker_readback=_readback(sl=2643.0),
-            now_utc=1795420003,
-        )
+    def test_no_sl_change_is_not_automatic_retry_permission(self):
+        drift = _check(readback=_readback(sl=2643.0))
+        self.assertEqual(drift["status"], "SL_DRIFT_UNVERIFIED_RECONCILE_BEFORE_RETRY")
         self.assertFalse(drift["reconciled"])
-        self.assertEqual(drift["status"], "DRIFT_SL_NOT_APPLIED_RETRY_REQUIRED")
-        self.assertTrue(drift["retryRequired"])
+        self.assertFalse(drift["retryRequired"])
+        self.assertTrue(drift["reconciliationRequired"])
+        self.assertTrue(drift["blockNewOrders"])
         self.assertFalse(drift["positionAutoClosed"])
+        self.assertFalse(drift["newOrderSubmitted"])
 
-    def test_sl_widened_or_tp_wiped_escalates_and_blocks_new_orders(self) -> None:
-        widened = rec.reconcile_sltp_broker_readback(
-            expected_state=_expected(),
-            broker_readback=_readback(sl=2640.0),
-            now_utc=1795420003,
-        )
-        self.assertFalse(widened["reconciled"])
-        self.assertEqual(widened["status"], "UNSAFE_SL_WIDENED_OR_TP_WIPED_ESCALATE")
-        self.assertTrue(widened["escalationRequired"])
-        self.assertTrue(widened["blockNewOrders"])
+    def test_widened_stop_and_wiped_tp_escalate(self):
+        wide = _check(readback=_readback(sl=2640.0))
+        self.assertFalse(wide["reconciled"])
+        self.assertEqual(wide["status"], "UNSAFE_SL_WIDENED_OR_TP_WIPED_ESCALATE")
+        self.assertTrue(wide["escalationRequired"])
+        self.assertTrue(wide["blockNewOrders"])
+        self.assertFalse(wide["retryRequired"])
 
-        wiped_tp = rec.reconcile_sltp_broker_readback(
-            expected_state=_expected(),
-            broker_readback=_readback(tp=None),
-            now_utc=1795420003,
-        )
-        self.assertEqual(wiped_tp["status"], "UNSAFE_SL_WIDENED_OR_TP_WIPED_ESCALATE")
-        self.assertTrue(wiped_tp["escalationRequired"])
+        wiped = _check(readback=_readback(tp=None))
+        self.assertEqual(wiped["status"], "UNSAFE_SL_WIDENED_OR_TP_WIPED_ESCALATE")
+        self.assertTrue(wiped["escalationRequired"])
+        self.assertTrue(wiped["blockNewOrders"])
 
-    def test_closed_position_requires_closing_deal_evidence_and_stale_snapshot_fails_closed(self) -> None:
-        closed_ok = rec.reconcile_sltp_broker_readback(
-            expected_state=_expected(),
-            broker_readback=_readback(positionExists=False),
-            now_utc=1795420003,
+    def test_spoofed_closing_deal_boolean_never_reconciles_position(self):
+        claimed = _check(
+            readback=_readback(positionExists=False),
             closing_deal_observed=True,
         )
-        self.assertTrue(closed_ok["reconciled"])
-        self.assertEqual(closed_ok["status"], "RECONCILED_POSITION_CLOSED_AT_BROKER")
+        self.assertEqual(claimed["status"], "CALLER_CLOSING_DEAL_CLAIM_UNVERIFIED")
+        self.assertFalse(claimed["reconciled"])
+        self.assertFalse(claimed["candidateFieldsMatch"])
+        self.assertFalse(claimed["closingDealProvenanceVerified"])
+        self.assertFalse(claimed["retryRequired"])
+        self.assertTrue(claimed["blockNewOrders"])
+        self.assertFalse(claimed["liveAuthorized"])
 
-        closed_missing = rec.reconcile_sltp_broker_readback(
-            expected_state=_expected(),
-            broker_readback=_readback(positionExists=False),
-            now_utc=1795420003,
-            closing_deal_observed=False,
-        )
-        self.assertFalse(closed_missing["reconciled"])
-        self.assertEqual(closed_missing["status"], "MISSING_POSITION_WITHOUT_CLOSING_DEAL")
-        self.assertTrue(closed_missing["escalationRequired"])
+        absent = _check(readback=_readback(positionExists=False))
+        self.assertFalse(absent["reconciled"])
+        self.assertEqual(absent["status"], "MISSING_POSITION_WITHOUT_CLOSING_DEAL")
+        self.assertTrue(absent["escalationRequired"])
+        self.assertTrue(absent["blockNewOrders"])
 
-        stale = rec.reconcile_sltp_broker_readback(
-            expected_state=_expected(),
-            broker_readback=_readback(snapshotTimestampUtc=1795419900),
-            now_utc=1795420003,
-        )
+        stale = _check(readback=_readback(snapshotTimestampUtc=1795419900))
         self.assertFalse(stale["reconciled"])
         self.assertEqual(stale["status"], "SNAPSHOT_STALE_OR_UNVERIFIED_FAIL_CLOSED")
+        self.assertFalse(stale["retryRequired"])
+        self.assertTrue(stale["blockNewOrders"])
+
+    def test_account_server_ticket_and_volume_increase_block(self):
+        for snap in (
+            _readback(accountLogin=1),
+            _readback(server="Other"),
+            _readback(ticket=234567),
+            _readback(symbol="GOLD"),
+            _readback(direction="SELL"),
+            _readback(magic=999),
+        ):
+            with self.subTest(snap=snap):
+                report = _check(readback=snap)
+                self.assertEqual(report["status"], "IDENTITY_MISMATCH_FAIL_CLOSED")
+                self.assertFalse(report["reconciled"])
+                self.assertTrue(report["blockNewOrders"])
+
+        for expected in (_expected(accountLogin=None), _expected(server="")):
+            result = _check(expected=expected)
+            self.assertEqual(result["status"], "INVALID_EXPECTED_STATE_FAIL_CLOSED")
+            self.assertTrue(result["blockNewOrders"])
+
+        larger = _check(readback=_readback(volume=0.12))
+        self.assertEqual(larger["status"], "POSITION_VOLUME_INCREASED_UNVERIFIED_ESCALATE")
+        self.assertTrue(larger["escalationRequired"])
+        self.assertTrue(larger["blockNewOrders"])
+        self.assertFalse(larger["retryRequired"])
 
 
 if __name__ == "__main__":
