@@ -173,6 +173,39 @@ class TestBreakEvenAndTrailingMonotonicity(unittest.TestCase):
         self.assertIsNone(tampered["initialRiskUsd"])
         self.assertEqual(tampered["nextSl"], 2643.0)
 
+    def test_inconsistent_entry_risk_blocks_even_fresh_m5_m15_proposals(self) -> None:
+        # Regression: an invalid initial risk must not silently fall through
+        # to another trailing candidate when the indicator inputs look valid.
+        for direction in ("BUY", "SELL"):
+            with self.subTest(direction=direction):
+                buy = direction == "BUY"
+                pos = {
+                    "magic": BOT_MAGIC,
+                    "direction": direction,
+                    "entryPrice": 2650.0,
+                    "initialSl": 2643.0 if buy else 2657.0,
+                    "initialRiskUsd": 4.0,
+                    "currentSl": 2643.0 if buy else 2657.0,
+                }
+                result = eng.compute_next_protective_sl(
+                    position=pos,
+                    bot_magic=BOT_MAGIC,
+                    current_bid=2670.0 if buy else 2630.0,
+                    current_ask=2670.2 if buy else 2630.2,
+                    m5_new_structure_sl=2658.0 if buy else 2640.0,
+                    m5_structure_candle_closed=True,
+                    m5_structure_stale=False,
+                    m15_fast_move_active=True,
+                    m15_candle_closed=True,
+                    m15_signal_stale=False,
+                    favorable_extreme_price=2675.0 if buy else 2625.0,
+                )
+                self.assertFalse(result["shouldModify"])
+                self.assertEqual(result["reason"], "IMMUTABLE_INITIAL_RISK_MISMATCH")
+                self.assertEqual(result["nextSl"], pos["currentSl"])
+                self.assertIsNone(result["initialRiskUsd"])
+                self.assertFalse(result["liveAuthorized"])
+
     def test_foreign_magic_and_nan_freeze_fail_closed(self) -> None:
         foreign = {"magic": 999999, "direction": "SELL", "entryPrice": 2650.0, "currentSl": 2657.0}
         rf = eng.compute_next_protective_sl(
