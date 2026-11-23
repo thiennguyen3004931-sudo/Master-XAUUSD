@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+"""Read-only Windows Service-Token Win32 AccessCheck & DPAPI Attestation (Stream B/A — Issue #7)."""
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+from ctypes import wintypes
+import hashlib
+import json
+from pathlib import Path
+import platform
+import time
+from typing import Any, Mapping, Sequence
+
+
+SCHEMA_VERSION = 1
+SCOPE = "READONLY_WINDOWS_SERVICE_TOKEN_WIN32_ACCESSCHECK_AND_DPAPI_NO_ORDER"
+
+TOKEN_DUPLICATE = 0x0002
+TOKEN_QUERY = 0x0008
+SECURITY_IMPERSONATION = 2
+OWNER_SECURITY_INFORMATION = 0x00000001
+GROUP_SECURITY_INFORMATION = 0x00000002
+DACL_SECURITY_INFORMATION = 0x00000004
+FILE_GENERIC_READ = 0x00120089
+FILE_GENERIC_WRITE = 0x00120116
+FILE_GENERIC_EXECUTE = 0x001200A0
+FILE_ALL_ACCESS = 0x001F01FF
+FILE_READ_DATA = 0x00000001
+FILE_WRITE_DATA = 0x00000002
+
+
+class _GENERIC_MAPPING(ctypes.Structure):
+    _fields_ = [
+        ("GenericRead", wintypes.DWORD),
+        ("GenericWrite", wintypes.DWORD),
+        ("GenericExecute", wintypes.DWORD),
+        ("GenericAll", wintypes.DWORD),
+    ]
+
+
+class _LUID(ctypes.Structure):
+    _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", wintypes.LONG)]
+
+
+class _LUID_AND_ATTRIBUTES(ctypes.Structure):
+    _fields_ = [("Luid", _LUID), ("Attributes", wintypes.DWORD)]
+
+
+class _PRIVILEGE_SET(ctypes.Structure):
+    _fields_ = [
+        ("PrivilegeCount", wintypes.DWORD),
+        ("Control", wintypes.DWORD),
+        ("Privilege", _LUID_AND_ATTRIBUTES * 1),
+    ]
+
+
+class _DATA_BLOB(ctypes.Structure):
+    _fields_ = [
+        ("cbData", wintypes.DWORD),
+        ("pbData", ctypes.POINTER(ctypes.c_byte)),
+    ]
+
+
+def _sha256_canonical(payload: Mapping[str, Any]) -> str:
+    body = {k: v for k, v in payload.items() if k != "reportSha256"}
+    encoded = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def evaluate_accesscheck_result(
+    *,
+    path_label: str,
+    exists: bool,
+    access_check_succeeded: bool,
+    read_granted: bool,
+    write_granted: bool,
+    require_write: bool,
+    broad_principal_screen_passed: bool = False,
+) -> dict[str, Any]:
+    """Evaluate Win32 AccessCheck effective-rights output for a single runtime path."""
+    if not exists:
+        return {
+            "pathLabel": path_label,
+            "exists": False,
+            "accessCheckExecuted": False,
+            "readGranted": False,
+            "writeGranted": False,
+            "verified": False,
+            "status": "MISSING",
+            "reason": "TARGET_PATH_NOT_FOUND",
+        }
+
+    if not access_check_succeeded:
+        return {
+            "pathLabel": path_label,
+            "exists": True,
+            "accessCheckExecuted": False,
+            "readGranted": False,
+            "writeGranted": False,
+            "verified": False,
+            "status": "UNVERIFIED",
+            "reason": "WIN32_ACCESSCHECK_CALL_FAILED",
+        }
+
+    if not read_granted:
+        return {
+            "pathLabel": path_label,
+            "exists": True,
+            "accessCheckExecuted": True,
+            "readGranted": False,
+            "writeGranted": bool(write_granted),
+            "verified": False,
+            "status": "BLOCKED",
+            "reason": "SERVICE_TOKEN_LACKS_EFFECTIVE_READ",
+        }
+
+    if require_write and not write_granted:
+        return {
+            "pathLabel": path_label,
+            "exists": True,
+            "accessCheckExecuted": True,
+            "readGranted": True,
+            "writeGranted": False,
+            "verified": False,
+            "status": "BLOCKED",
+            "reason": "SERVICE_TOKEN_LACKS_EFFECTIVE_WRITE",
+        }
+
+    if not broad_principal_screen_passed:
+        return {
+            "pathLabel": path_label,
+            "exists": True,
+            "accessCheckExecuted": True,
+            "readGranted": True,
+            "writeGranted": bool(write_granted),
+            "verified": False,
+            "status": "PARTIAL_ACCESSCHECK_ONLY",
+            "reason": "BROAD_PRINCIPAL_ACE_SCREEN_NOT_CONFIRMED",
+        }
+
+    return {
+        "pathLabel": path_label,
+        "exists": True,
+        "accessCheckExecuted": True,
+        "readGranted": True,
+        "writeGranted": bool(write_granted),
+        "verified": True,
+        "status": "VERIFIED",
+        "reason": "WIN32_SERVICE_TOKEN_ACCESSCHECK_VERIFIED",
+    }
+
+
+def classify_service_token_attestation(
+    *,
+    platform_name: str,
+    target_results: Sequence[Mapping[str, Any]],
+    dpapi_roundtrip_ok: bool,
+    declared_release_sha: str | None,
+    observed_release_sha: str | None,
+) -> dict[str, Any]:
+    """Classify overall Windows service-token AccessCheck + DPAPI + release attestation."""
+    if str(platform_name).strip().lower() != "windows":
+        return {
+            "serviceTokenAccessCheckVerified": False,
+            "dpapiServiceIdentityVerified": False,
+            "releaseShaMatched": False,
+            "status": "UNSUPPORTED_PLATFORM",
+            "reason": "WINDOWS_HOST_REQUIRED",
+            "liveAuthorized": False,
+        }
+
+    all_targets_ok = bool(target_results) and all(
+        item.get("verified") is True for item in target_results
+    )
+    decl = str(declared_release_sha or "").strip().lower()
+    obs = str(observed_release_sha or "").strip().lower()
+    release_matched = bool(decl and obs and decl == obs)
+
+    if not all_targets_ok:
+        failing = [
+            f"{item.get('pathLabel', 'unknown')}:{item.get('reason', 'UNVERIFIED')}"
+            for item in target_results
+            if item.get("verified") is not True
+        ]
+        return {
+            "serviceTokenAccessCheckVerified": False,
+            "dpapiServiceIdentityVerified": bool(dpapi_roundtrip_ok),
+            "releaseShaMatched": release_matched,
+            "status": "BLOCKED",
+            "reason": ";".join(failing) if failing else "NO_TARGETS_VERIFIED",
+            "liveAuthorized": False,
+        }
+
+    if not dpapi_roundtrip_ok:
+        return {
+            "serviceTokenAccessCheckVerified": True,
+            "dpapiServiceIdentityVerified": False,
+            "releaseShaMatched": release_matched,
+            "status": "BLOCKED",
+            "reason": "DPAPI_SERVICE_IDENTITY_ROUNDTRIP_FAILED",
+            "liveAuthorized": False,
+        }
+
+    if not release_matched:
+        return {
+            "serviceTokenAccessCheckVerified": True,
+            "dpapiServiceIdentityVerified": True,
+            "releaseShaMatched": False,
+            "status": "BLOCKED",
+            "reason": "DECLARED_RELEASE_SHA_MISMATCH_OR_MISSING",
+            "liveAuthorized": False,
+        }
+
+    return {
+        "serviceTokenAccessCheckVerified": True,
+        "dpapiServiceIdentityVerified": True,
+        "releaseShaMatched": True,
+        "status": "SERVICE_TOKEN_ACCESSCHECK_AND_DPAPI_VERIFIED",
+        "reason": "WINDOWS_SERVICE_TOKEN_ATTESTATION_PASSED_READONLY",
+        "liveAuthorized": False,
+    }
+
+
+def _win32_access_check_path(target: Path, desired_access: int) -> tuple[bool, bool]:
+    """Run advapi32!AccessCheck on target path using duplicated current process token."""
+    if platform.system() != "Windows" or not target.exists():
+        return (False, False)
+    try:
+        advapi32 = ctypes.windll.advapi32
+        kernel32 = ctypes.windll.kernel32
+
+        sec_info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+        needed = wintypes.DWORD(0)
+        advapi32.GetFileSecurityW(str(target), sec_info, None, 0, ctypes.byref(needed))
+        if needed.value == 0:
+            return (False, False)
+
+        sd_buf = ctypes.create_string_buffer(needed.value)
+        if not advapi32.GetFileSecurityW(str(target), sec_info, sd_buf, needed.value, ctypes.byref(needed)):
+            return (False, False)
+
+        h_token = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(
+            kernel32.GetCurrentProcess(),
+            TOKEN_QUERY | TOKEN_DUPLICATE,
+            ctypes.byref(h_token),
+        ):
+            return (False, False)
+
+        h_imp = wintypes.HANDLE()
+        try:
+            if not advapi32.DuplicateToken(h_token, SECURITY_IMPERSONATION, ctypes.byref(h_imp)):
+                return (False, False)
+            try:
+                mapping = _GENERIC_MAPPING(
+                    FILE_GENERIC_READ,
+                    FILE_GENERIC_WRITE,
+                    FILE_GENERIC_EXECUTE,
+                    FILE_ALL_ACCESS,
+                )
+                priv_set = _PRIVILEGE_SET()
+                priv_len = wintypes.DWORD(ctypes.sizeof(priv_set))
+                granted = wintypes.DWORD(0)
+                access_status = wintypes.BOOL(0)
+                ok = advapi32.AccessCheck(
+                    sd_buf,
+                    h_imp,
+                    wintypes.DWORD(desired_access),
+                    ctypes.byref(mapping),
+                    ctypes.byref(priv_set),
+                    ctypes.byref(priv_len),
+                    ctypes.byref(granted),
+                    ctypes.byref(access_status),
+                )
+                if not ok:
+                    return (False, False)
+                return (True, bool(access_status.value))
+            finally:
+                kernel32.CloseHandle(h_imp)
+        finally:
+            kernel32.CloseHandle(h_token)
+    except Exception:
+        return (False, False)
+
+
+def _win32_dpapi_sentinel_roundtrip() -> bool:
+    if platform.system() != "Windows":
+        return False
+    try:
+        crypt32 = ctypes.windll.crypt32
+        kernel32 = ctypes.windll.kernel32
+        sentinel = b"v6-service-token-dpapi-sentinel"
+        in_buf = ctypes.create_string_buffer(sentinel, len(sentinel))
+        in_blob = _DATA_BLOB(len(sentinel), ctypes.cast(in_buf, ctypes.POINTER(ctypes.c_byte)))
+        out_blob = _DATA_BLOB()
+        if not crypt32.CryptProtectData(ctypes.byref(in_blob), None, None, None, None, 0x01, ctypes.byref(out_blob)):
+            return False
+        try:
+            dec_blob = _DATA_BLOB()
+            if not crypt32.CryptUnprotectData(ctypes.byref(out_blob), None, None, None, None, 0x01, ctypes.byref(dec_blob)):
+                return False
+            try:
+                return ctypes.string_at(dec_blob.pbData, dec_blob.cbData) == sentinel
+            finally:
+                kernel32.LocalFree(dec_blob.pbData)
+        finally:
+            kernel32.LocalFree(out_blob.pbData)
+    except Exception:
+        return False
+
+
+def build_service_token_report(
+    *,
+    runtime_dir: Path,
+    declared_release_sha: str | None = None,
+    observed_release_sha: str | None = None,
+    now_utc: int | None = None,
+) -> dict[str, Any]:
+    """Run read-only Win32 AccessCheck + DPAPI attestation under the current service token."""
+    plat = platform.system()
+    ts = int(time.time()) if now_utc is None else int(now_utc)
+    targets = [
+        ("runtime_dir", runtime_dir, True),
+        ("latch_file", runtime_dir / "v6-emergency-stop-latch.json", True),
+        ("uncertain_entry_file", runtime_dir / "v6-uncertain-entry.json", True),
+    ]
+    results: list[dict[str, Any]] = []
+    for label, path, req_write in targets:
+        if plat == "Windows" and path.exists():
+            ok_r, granted_r = _win32_access_check_path(path, FILE_READ_DATA)
+            ok_w, granted_w = _win32_access_check_path(path, FILE_WRITE_DATA)
+            results.append(
+                evaluate_accesscheck_result(
+                    path_label=label,
+                    exists=True,
+                    access_check_succeeded=(ok_r and ok_w),
+                    read_granted=granted_r,
+                    write_granted=granted_w,
+                    require_write=req_write,
+                    broad_principal_screen_passed=False,
+                )
+            )
+        else:
+            results.append(
+                evaluate_accesscheck_result(
+                    path_label=label,
+                    exists=path.exists(),
+                    access_check_succeeded=False,
+                    read_granted=False,
+                    write_granted=False,
+                    require_write=req_write,
+                    broad_principal_screen_passed=False,
+                )
+            )
+
+    dpapi_ok = _win32_dpapi_sentinel_roundtrip()
+    cls = classify_service_token_attestation(
+        platform_name=plat,
+        target_results=results,
+        dpapi_roundtrip_ok=dpapi_ok,
+        declared_release_sha=declared_release_sha,
+        observed_release_sha=observed_release_sha,
+    )
+    report: dict[str, Any] = {
+        "schemaVersion": SCHEMA_VERSION,
+        "scope": SCOPE,
+        "generatedAtUtc": ts,
+        "platform": plat,
+        "targets": results,
+        "dpapiServiceIdentityRoundTrip": dpapi_ok,
+        "serviceTokenAccessCheckVerified": cls["serviceTokenAccessCheckVerified"],
+        "dpapiServiceIdentityVerified": cls["dpapiServiceIdentityVerified"],
+        "releaseShaMatched": cls["releaseShaMatched"],
+        "status": cls["status"],
+        "reason": cls["reason"],
+        "liveAuthorized": False,
+        "secretsExposed": False,
+    }
+    report["reportSha256"] = _sha256_canonical(report)
+    return report
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Read-only Windows Service-Token Win32 AccessCheck & DPAPI attestation."
+    )
+    parser.add_argument("--runtime-dir", type=Path, required=True)
+    parser.add_argument("--declared-release-sha", type=str, default=None)
+    parser.add_argument("--observed-release-sha", type=str, default=None)
+    args = parser.parse_args(argv)
+    rep = build_service_token_report(
+        runtime_dir=args.runtime_dir,
+        declared_release_sha=args.declared_release_sha,
+        observed_release_sha=args.observed_release_sha,
+    )
+    print(json.dumps(rep, indent=2, ensure_ascii=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
