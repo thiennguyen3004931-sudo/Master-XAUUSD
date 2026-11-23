@@ -218,12 +218,40 @@ def classify_service_token_attestation(
     }
 
 def _win32_access_check_path(target: Path, desired_access: int) -> tuple[bool, bool]:
-    """Run advapi32!AccessCheck on target path using duplicated current process token."""
+    """Read-only AccessCheck on a duplicated *current process* token.
+
+    Explicit Win32 signatures are essential on 64-bit Windows; ctypes'
+    default 32-bit return type can truncate kernel handles and pointers.
+    """
     if platform.system() != "Windows" or not target.exists():
         return (False, False)
     try:
         advapi32 = ctypes.windll.advapi32
         kernel32 = ctypes.windll.kernel32
+        ptr = ctypes.POINTER
+        advapi32.GetFileSecurityW.argtypes = [
+            wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p,
+            wintypes.DWORD, ptr(wintypes.DWORD),
+        ]
+        advapi32.GetFileSecurityW.restype = wintypes.BOOL
+        kernel32.GetCurrentProcess.argtypes = []
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        advapi32.OpenProcessToken.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, ptr(wintypes.HANDLE),
+        ]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.DuplicateToken.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ptr(wintypes.HANDLE),
+        ]
+        advapi32.DuplicateToken.restype = wintypes.BOOL
+        advapi32.AccessCheck.argtypes = [
+            ctypes.c_void_p, wintypes.HANDLE, wintypes.DWORD,
+            ptr(_GENERIC_MAPPING), ptr(_PRIVILEGE_SET),
+            ptr(wintypes.DWORD), ptr(wintypes.DWORD), ptr(wintypes.BOOL),
+        ]
+        advapi32.AccessCheck.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
 
         sec_info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
         needed = wintypes.DWORD(0)
@@ -285,7 +313,20 @@ def _win32_dpapi_sentinel_roundtrip() -> bool:
     try:
         crypt32 = ctypes.windll.crypt32
         kernel32 = ctypes.windll.kernel32
-        sentinel = b"v6-service-token-dpapi-sentinel"
+        blob_ptr = ctypes.POINTER(_DATA_BLOB)
+        crypt32.CryptProtectData.argtypes = [
+            blob_ptr, wintypes.LPCWSTR, blob_ptr,
+            ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, blob_ptr,
+        ]
+        crypt32.CryptProtectData.restype = wintypes.BOOL
+        crypt32.CryptUnprotectData.argtypes = [
+            blob_ptr, ctypes.c_void_p, blob_ptr,
+            ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, blob_ptr,
+        ]
+        crypt32.CryptUnprotectData.restype = wintypes.BOOL
+        kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+        kernel32.LocalFree.restype = ctypes.c_void_p
+        sentinel = b"v6-current-process-dpapi-sentinel"
         in_buf = ctypes.create_string_buffer(sentinel, len(sentinel))
         in_blob = _DATA_BLOB(len(sentinel), ctypes.cast(in_buf, ctypes.POINTER(ctypes.c_byte)))
         out_blob = _DATA_BLOB()
@@ -298,9 +339,9 @@ def _win32_dpapi_sentinel_roundtrip() -> bool:
             try:
                 return ctypes.string_at(dec_blob.pbData, dec_blob.cbData) == sentinel
             finally:
-                kernel32.LocalFree(dec_blob.pbData)
+                kernel32.LocalFree(ctypes.cast(dec_blob.pbData, ctypes.c_void_p))
         finally:
-            kernel32.LocalFree(out_blob.pbData)
+            kernel32.LocalFree(ctypes.cast(out_blob.pbData, ctypes.c_void_p))
     except Exception:
         return False
 
@@ -386,7 +427,7 @@ def build_service_token_report(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Read-only Windows Service-Token Win32 AccessCheck & DPAPI attestation."
+        description="Diagnostic current-process Windows ACL/DPAPI probe; NOT service identity or LIVE attestation."
     )
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--declared-release-sha", type=str, default=None)
