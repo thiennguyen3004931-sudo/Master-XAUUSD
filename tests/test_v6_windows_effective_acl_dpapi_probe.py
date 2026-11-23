@@ -46,7 +46,7 @@ def _strict_rules() -> list[dict]:
 
 
 class TestV6WindowsEffectiveAclDpapiProbe(unittest.TestCase):
-    def test_strict_operator_system_admin_sid_acl_passes(self) -> None:
+    def test_strict_operator_system_admin_sid_ace_screen_only(self) -> None:
         res = probe.evaluate_sid_acl_rules(
             path_label="latch_file",
             exists=True,
@@ -55,9 +55,10 @@ class TestV6WindowsEffectiveAclDpapiProbe(unittest.TestCase):
             rules=_strict_rules(),
             reparse_detected=False,
         )
-        self.assertTrue(res["verified"])
-        self.assertEqual(res["status"], "VERIFIED")
-        self.assertEqual(res["reason"], "SID_EFFECTIVE_ACL_STRICT_OPERATOR_ONLY")
+        self.assertFalse(res["verified"])
+        self.assertTrue(res["acePolicyScreened"])
+        self.assertEqual(res["status"], "ACE_POLICY_SCREENED_ONLY")
+        self.assertEqual(res["reason"], "SID_ACE_RULES_SCREENED_NOT_EFFECTIVE_ACCESS")
         self.assertEqual(res["broadWriteGrants"], [])
         self.assertEqual(res["unexpectedWriteSids"], [])
 
@@ -109,7 +110,8 @@ class TestV6WindowsEffectiveAclDpapiProbe(unittest.TestCase):
             rules=rules,
             forbid_any_broad_allow=False,
         )
-        self.assertTrue(dir_res["verified"])
+        self.assertFalse(dir_res["verified"])
+        self.assertTrue(dir_res["acePolicyScreened"])
 
         blob_res = probe.evaluate_sid_acl_rules(
             path_label="dpapi_operator_key_blob",
@@ -170,8 +172,9 @@ class TestV6WindowsEffectiveAclDpapiProbe(unittest.TestCase):
     def test_classify_effective_acl_and_dpapi_all_states_never_authorize_live(self) -> None:
         ok_target = {
             "pathLabel": "runtime_dir",
-            "verified": True,
-            "reason": "SID_EFFECTIVE_ACL_STRICT_OPERATOR_ONLY",
+            "verified": False,
+            "acePolicyScreened": True,
+            "reason": "SID_ACE_RULES_SCREENED_NOT_EFFECTIVE_ACCESS",
         }
         bad_target = {
             "pathLabel": "latch_file",
@@ -228,9 +231,11 @@ class TestV6WindowsEffectiveAclDpapiProbe(unittest.TestCase):
             dpapi_key_blob_present=False,
             dpapi_key_blob_acl=None,
         )
-        self.assertEqual(missing_blob["status"], "PARTIAL_HOST_READY_KEY_BLOB_MISSING")
-        self.assertTrue(missing_blob["effectiveAclVerified"])
-        self.assertTrue(missing_blob["dpapiReady"])
+        self.assertEqual(missing_blob["status"], "PARTIAL_ACE_SCREEN_ONLY_KEY_BLOB_MISSING")
+        self.assertFalse(missing_blob["effectiveAclVerified"])
+        self.assertFalse(missing_blob["dpapiReady"])
+        self.assertTrue(missing_blob["acePolicyScreened"])
+        self.assertTrue(missing_blob["dpapiProbeCurrentUserRoundTripObserved"])
         self.assertFalse(missing_blob["dpapiKeyBlobVerified"])
         self.assertFalse(missing_blob["liveAuthorized"])
 
@@ -241,11 +246,58 @@ class TestV6WindowsEffectiveAclDpapiProbe(unittest.TestCase):
             dpapi_key_blob_present=True,
             dpapi_key_blob_acl=ok_target,
         )
-        self.assertEqual(full_ok["status"], "HOST_ACL_AND_DPAPI_VERIFIED")
-        self.assertTrue(full_ok["effectiveAclVerified"])
-        self.assertTrue(full_ok["dpapiReady"])
-        self.assertTrue(full_ok["dpapiKeyBlobVerified"])
+        self.assertEqual(full_ok["status"], "UNVERIFIED_SERVICE_EFFECTIVE_ACCESS_AND_DPAPI_IDENTITY")
+        self.assertFalse(full_ok["effectiveAclVerified"])
+        self.assertFalse(full_ok["dpapiReady"])
+        self.assertFalse(full_ok["dpapiKeyBlobVerified"])
+        self.assertTrue(full_ok["acePolicyScreened"])
+        self.assertTrue(full_ok["dpapiProbeCurrentUserRoundTripObserved"])
+        self.assertTrue(full_ok["dpapiKeyBlobAcePolicyScreened"])
         self.assertFalse(full_ok["liveAuthorized"])
+
+    def test_spoofed_verified_flags_cannot_prove_windows_service_identity(self) -> None:
+        """Even all legacy 'verified' booleans cannot replace service AccessCheck."""
+        operator_probe = {
+            "pathLabel": "runtime_dir",
+            "verified": True,
+            "reason": "FAKE_VERIFIED_FLAG",
+        }
+        fake_blob = {"verified": True, "reason": "FAKE_BLOB"}
+        dpapi_ok = {"supported": True, "roundTripPassed": True}
+        result = probe.classify_effective_acl_and_dpapi(
+            platform_name="Windows",
+            target_results=[operator_probe],
+            dpapi_status=dpapi_ok,
+            dpapi_key_blob_present=True,
+            dpapi_key_blob_acl=fake_blob,
+        )
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertFalse(result["acePolicyScreened"])
+        self.assertFalse(result["effectiveAclVerified"])
+        self.assertFalse(result["dpapiReady"])
+        self.assertFalse(result["dpapiKeyBlobVerified"])
+        self.assertFalse(result["liveAuthorized"])
+
+    def test_all_preliminary_checks_even_when_screened_are_unverified(self) -> None:
+        screened = {"pathLabel": "runtime_dir", "acePolicyScreened": True, "verified": False}
+        dpapi = {"supported": True, "roundTripPassed": True}
+        result = probe.classify_effective_acl_and_dpapi(
+            platform_name="Windows",
+            target_results=[screened],
+            dpapi_status=dpapi,
+            dpapi_key_blob_present=True,
+            dpapi_key_blob_acl=screened,
+        )
+        self.assertEqual(
+            result["status"], "UNVERIFIED_SERVICE_EFFECTIVE_ACCESS_AND_DPAPI_IDENTITY"
+        )
+        self.assertTrue(result["acePolicyScreened"])
+        self.assertTrue(result["dpapiProbeCurrentUserRoundTripObserved"])
+        self.assertTrue(result["dpapiKeyBlobAcePolicyScreened"])
+        self.assertFalse(result["effectiveAclVerified"])
+        self.assertFalse(result["dpapiReady"])
+        self.assertFalse(result["dpapiKeyBlobVerified"])
+        self.assertFalse(result["liveAuthorized"])
 
     def test_build_probe_report_fail_closed_and_deterministic_sha256(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
