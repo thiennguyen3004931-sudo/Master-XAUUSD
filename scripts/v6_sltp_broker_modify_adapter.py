@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""V6 Protective SL/TP Broker-Boundary Adapter (Stream D — Issue #7)."""
+"""V6 SAFE OFFLINE protective SL/TP proposal screener — NEVER SENDS TO MT5.
+
+No injected callback is executed. Exact broker position and persisted initial-R
+provenance are NOT verified here, so proposals are inert and cannot unlock LIVE.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,6 @@ from typing import Any, Callable, Mapping
 
 SCHEMA_VERSION = 1
 TRADE_ACTION_SLTP = "TRADE_ACTION_SLTP"
-MT5_RETCODE_DONE = 10009
 EPS = 1e-9
 
 
@@ -41,7 +44,11 @@ def execute_protective_sltp_update_mock_boundary(
     max_quote_age_seconds: int = 10,
     broker_sltp_sender: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Validate and apply a protective SLTP-only modification via an injected mock broker boundary."""
+    """Screen an inert protective proposal; refuse ALL injected broker senders.
+
+    The legacy *_mock_boundary name is retained only for compatibility with
+    offline consumers. Returning a proposal NEVER invokes order_send.
+    """
     pos_magic = position.get("magic")
     ticket = position.get("ticket")
     direction = str(position.get("direction") or "").strip().upper()
@@ -68,10 +75,16 @@ def execute_protective_sltp_update_mock_boundary(
             "direction": direction,
             "status": status,
             "reason": reason,
-            "modified": modified,
+            "modified": False,
+            "proposalOnly": True,
+            "proposedSl": round(float(proposed_sl), 4) if status == "PROPOSAL_READY_OFFLINE_ONLY" else None,
+            "brokerSenderInvoked": False,
+            "brokerPositionReadbackVerified": False,
+            "immutableInitialRiskProvenanceVerified": False,
             "effectiveSl": preserved_sl,
             "effectiveTp": preserved_tp,
-            "retryRequired": retry_required,
+            "retryRequired": False,
+            "reconciliationRequired": False,
             "brokerRetcode": broker_retcode,
             "positionAutoClosed": False,
             "newOrderSubmitted": False,
@@ -80,7 +93,18 @@ def execute_protective_sltp_update_mock_boundary(
         rep["reportSha256"] = _sha256_canonical(rep)
         return rep
 
-    if type(pos_magic) is not int or pos_magic != bot_magic:
+    # A real MT5 order_send can be passed as an arbitrary callback; never run it.
+    # Production broker modifications must be a separate, trusted host integration.
+    if broker_sltp_sender is not None:
+        return _finalize(
+            status="NO_MODIFY",
+            reason="OFFLINE_BROKER_CALLBACK_FORBIDDEN",
+            modified=False,
+            preserved_sl=current_sl,
+            preserved_tp=current_tp,
+        )
+
+    if type(bot_magic) is not int or type(pos_magic) is not int or pos_magic != bot_magic:
         return _finalize(
             status="NO_MODIFY",
             reason="POSITION_NOT_OWNED_BY_BOT",
@@ -95,7 +119,7 @@ def execute_protective_sltp_update_mock_boundary(
         or direction not in {"BUY", "SELL"}
         or not _is_pos(entry_price)
         or not _is_pos(current_sl)
-        or (current_tp is not None and not _is_pos(current_tp))
+        or not _is_pos(current_tp)
     ):
         return _finalize(
             status="NO_MODIFY",
@@ -103,6 +127,15 @@ def execute_protective_sltp_update_mock_boundary(
             modified=False,
             preserved_sl=current_sl,
             preserved_tp=current_tp,
+        )
+
+    if not _is_pos(initial_sl) or not _is_pos(initial_risk):
+        return _finalize(
+            status="NO_MODIFY",
+            reason="IMMUTABLE_INITIAL_RISK_MISSING_OR_UNVERIFIED",
+            modified=False,
+            preserved_sl=round(float(current_sl), 4),
+            preserved_tp=round(float(current_tp), 4),
         )
 
     if _is_pos(initial_sl) and _is_pos(initial_risk):
@@ -119,6 +152,27 @@ def execute_protective_sltp_update_mock_boundary(
                 preserved_sl=round(float(current_sl), 4),
                 preserved_tp=round(float(current_tp), 4) if current_tp is not None else None,
             )
+
+    # Caller-provided binding can filter an obviously wrong position/quote
+    # but does NOT prove those values were read from the live broker.
+    account_login = position.get("accountLogin")
+    server = position.get("server")
+    symbol = position.get("symbol")
+    if (
+        type(account_login) is not int or account_login <= 0
+        or not isinstance(server, str) or not server.strip()
+        or not isinstance(symbol, str) or not symbol.strip()
+        or quote.get("accountLogin") != account_login
+        or quote.get("server") != server
+        or quote.get("symbol") != symbol
+    ):
+        return _finalize(
+            status="NO_MODIFY",
+            reason="ACCOUNT_SERVER_SYMBOL_BINDING_UNVERIFIED",
+            modified=False,
+            preserved_sl=round(float(current_sl), 4),
+            preserved_tp=round(float(current_tp), 4),
+        )
 
     bid = quote.get("bid")
     ask = quote.get("ask")
@@ -212,53 +266,12 @@ def execute_protective_sltp_update_mock_boundary(
             preserved_tp=tp_out,
         )
 
-    if broker_sltp_sender is None:
-        return _finalize(
-            status="PROPOSAL_READY_NO_SENDER",
-            reason="OFFLINE_SLTP_PROPOSAL_VALIDATED",
-            modified=False,
-            preserved_sl=round(cur_sl_f, 4),
-            preserved_tp=tp_out,
-        )
-
-    req_payload = {
-        "action": TRADE_ACTION_SLTP,
-        "ticket": ticket,
-        "magic": bot_magic,
-        "sl": round(prop_sl_f, 4),
-        "tp": tp_out,
-    }
-    try:
-        broker_res = broker_sltp_sender(req_payload)
-    except Exception:
-        return _finalize(
-            status="BROKER_MODIFY_EXCEPTION_SL_PRESERVED",
-            reason="BROKER_SENDER_EXCEPTION",
-            modified=False,
-            preserved_sl=round(cur_sl_f, 4),
-            preserved_tp=tp_out,
-            retry_required=True,
-        )
-
-    retcode = broker_res.get("retcode") if isinstance(broker_res, Mapping) else None
-    retcode_int = retcode if type(retcode) is int else None
-    if retcode_int == MT5_RETCODE_DONE:
-        return _finalize(
-            status="MODIFIED_ON_MOCK_BROKER",
-            reason="SLTP_MODIFIED_MONOTONICALLY",
-            modified=True,
-            preserved_sl=round(prop_sl_f, 4),
-            preserved_tp=tp_out,
-            retry_required=False,
-            broker_retcode=retcode_int,
-        )
-
+    # The candidate is not a broker ACK; immutable entry R, inventory, quote
+    # provenance, service identity and post-send SLTP remain UNVERIFIED.
     return _finalize(
-        status="BROKER_REJECTED_SL_PRESERVED",
-        reason="BROKER_SLTP_MODIFY_REJECTED",
+        status="PROPOSAL_READY_OFFLINE_ONLY",
+        reason="OFFLINE_SLTP_PROPOSAL_NOT_EXECUTED",
         modified=False,
         preserved_sl=round(cur_sl_f, 4),
         preserved_tp=tp_out,
-        retry_required=True,
-        broker_retcode=retcode_int,
     )
