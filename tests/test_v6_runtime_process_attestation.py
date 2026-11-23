@@ -59,7 +59,7 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
             self.assertFalse(rep["gatewayProcessIdentified"])
             self.assertFalse(rep["activeRuntimeReleaseVerified"])
             self.assertEqual(rep["status"], "UNVERIFIED")
-            self.assertEqual(rep["reason"], "TRADE_GATEWAY_PORT_8765_ABSENT_WEB_ONLY_INSUFFICIENT")
+            self.assertEqual(rep["reason"], "V6_DEFAULT_API_OR_WEB_LISTENER_NOT_OBSERVED")
             self.assertEqual(rep["armAndSizingSource"]["sourceSizingModeHint"], "FIXED_LOT")
             self.assertEqual(rep["armAndSizingSource"]["effectivePreSendSizingMode"], "UNVERIFIED")
             self.assertFalse(rep["liveAuthorized"])
@@ -108,10 +108,11 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
             clean_cmd = lambda argv, _cwd: (0, VALID_SHA) if "rev-parse" in argv else (0, "")
 
             multi_ports = lambda _ports: {
-                8765: [
+                3711: [
                     {"pid": 1111, "owner": "HOST\\Svc", "executableSha256": FAKE_EXE_SHA},
                     {"pid": 2222, "owner": "HOST\\Svc", "executableSha256": FAKE_EXE_SHA},
-                ]
+                ],
+                5717: {"pid": 1111, "owner": "HOST\\Svc", "executableSha256": FAKE_EXE_SHA},
             }
             r_multi = collect_runtime_process_attestation(
                 repo_root=repo,
@@ -122,10 +123,12 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
                 port_inspector=multi_ports,
             )
             self.assertFalse(r_multi["gatewayProcessIdentified"])
-            self.assertEqual(r_multi["reason"], "MULTIPLE_PORT_LISTENERS_AMBIGUOUS")
+            self.assertEqual(r_multi["reason"], "MULTIPLE_V6_DEFAULT_LISTENERS_AMBIGUOUS")
 
+            # V6's direct Python broker path does not require optional bridge 8765.
             single_port = lambda _ports: {
-                8765: {"pid": 9999, "owner": "HOST\\Svc", "executableSha256": FAKE_EXE_SHA},
+                3711: {"pid": 9999, "owner": "HOST\\Svc", "executableSha256": FAKE_EXE_SHA},
+                5717: {"pid": 9999, "owner": "HOST\\Svc", "executableSha256": FAKE_EXE_SHA},
             }
             r_pid_change = collect_runtime_process_attestation(
                 repo_root=repo,
@@ -138,7 +141,7 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
             )
             self.assertTrue(r_pid_change["gatewayPidChanged"])
             self.assertFalse(r_pid_change["gatewayProcessIdentified"])
-            self.assertEqual(r_pid_change["reason"], "GATEWAY_PID_CHANGED_REQUIRES_REATTESTATION")
+            self.assertEqual(r_pid_change["reason"], "V6_STANDALONE_PID_CHANGED_REQUIRES_REATTESTATION")
 
             r_obs = collect_runtime_process_attestation(
                 repo_root=repo,
@@ -150,7 +153,8 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
                 port_inspector=single_port,
             )
             self.assertTrue(r_obs["portOwnerObserved"])
-            self.assertTrue(r_obs["gatewayProcessIdentified"])
+            self.assertTrue(r_obs["standaloneProcessCandidateObserved"])
+            self.assertFalse(r_obs["gatewayProcessIdentified"])
             self.assertFalse(r_obs["activeRuntimeReleaseVerified"])
             self.assertEqual(r_obs["status"], "UNVERIFIED")
             self.assertEqual(r_obs["reason"], "READONLY_OBSERVATION_REQUIRES_INDEPENDENT_HOST_RUNTIME_ATTESTATION")
@@ -180,7 +184,7 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
             self.assertFalse(first["activeRuntimeReleaseVerified"])
             self.assertFalse(first["liveAuthorized"])
             self.assertEqual(first["status"], "UNVERIFIED")
-            self.assertEqual(first["reason"], "TRADE_GATEWAY_PORT_8765_ABSENT_WEB_ONLY_INSUFFICIENT")
+            self.assertEqual(first["reason"], "V6_DEFAULT_API_OR_WEB_LISTENER_NOT_OBSERVED")
 
             (repo / "scripts" / "mt5-direct-probe.py").write_text(
                 "# mutated after checkout\n", encoding="utf-8"
