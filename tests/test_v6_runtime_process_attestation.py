@@ -199,6 +199,86 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
             self.assertFalse(tampered["activeRuntimeReleaseVerified"])
             self.assertEqual(tampered["status"], "UNVERIFIED")
 
+    def test_windows_crlf_checkout_equivalence_without_source_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Path(folder)
+            _seed_fake_repo(repo)
+            probe = repo / "scripts" / "mt5-direct-probe.py"
+            probe.write_bytes(probe.read_bytes() + b"# second line\n")
+            subprocess.run(["git", "init", "--quiet"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "add", "scripts"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-c", "user.name=G4 Test", "-c", "user.email=g4@example.invalid",
+                 "commit", "--quiet", "-m", "CRLF offline fixture"],
+                cwd=repo, check=True, capture_output=True,
+            )
+            sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo).decode().strip()
+
+            # Git's Windows-style checkout transforms LF into CRLF on disk
+            # without changing the logical tracked source, unlike a real edit.
+            from scripts.v6_runtime_process_attestation import CORE_MODULE_PATHS
+            for rel in CORE_MODULE_PATHS:
+                p = repo / rel
+                raw = p.read_bytes()
+                self.assertNotIn(b"\r", raw)
+                p.write_bytes(raw.replace(b"\n", b"\r\n"))
+            observed = collect_runtime_process_attestation(
+                repo_root=repo, expected_release_sha=sha,
+                now_utc=1700000010, port_inspector=lambda _ports: {},
+            )
+            self.assertTrue(observed["workingTreeClean"])
+            integrity = observed["releaseManifestCheck"]
+            self.assertTrue(integrity["matched"])
+            self.assertEqual(integrity["reason"], "RELEASE_MANIFEST_MATCHED_CRLF_CHECKOUT_EQUIVALENT")
+            self.assertCountEqual(integrity["checkoutCrlfNormalizedModules"], list(CORE_MODULE_PATHS))
+            self.assertFalse(integrity["rawBytesIdenticalToGitBlobs"])
+            self.assertFalse(observed["activeRuntimeReleaseVerified"])
+            self.assertEqual(observed["status"], "UNVERIFIED")
+            self.assertFalse(observed["liveAuthorized"])
+
+            # A real source modification is NOT waived just because it has CRLF.
+            p = probe
+            original_crlf = p.read_bytes()
+            p.write_bytes(original_crlf.replace(b"FIXED_LOT", b"ALTERED_LOT"))
+            altered = collect_runtime_process_attestation(
+                repo_root=repo, expected_release_sha=sha,
+                now_utc=1700000011, port_inspector=lambda _ports: {},
+            )
+            self.assertFalse(altered["releaseManifestCheck"]["matched"])
+            self.assertIn("scripts/mt5-direct-probe.py", altered["releaseManifestCheck"]["mismatchedModules"])
+            self.assertEqual(altered["status"], "UNVERIFIED")
+
+            # Mixed CRLF / LF is not treated as uniform Windows checkout conversion.
+            p.write_bytes(original_crlf.replace(b"\r\n", b"\n", 1))
+            mixed = collect_runtime_process_attestation(
+                repo_root=repo, expected_release_sha=sha,
+                now_utc=1700000012, port_inspector=lambda _ports: {},
+            )
+            self.assertFalse(mixed["releaseManifestCheck"]["matched"])
+            self.assertIn("scripts/mt5-direct-probe.py", mixed["releaseManifestCheck"]["mismatchedModules"])
+
+    def test_explicit_caller_manifest_does_not_relax_crlf_byte_match(self):
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Path(folder)
+            manifest = _seed_fake_repo(repo)
+            from scripts.v6_runtime_process_attestation import CORE_MODULE_PATHS
+            for rel in CORE_MODULE_PATHS:
+                p = repo / rel
+                p.write_bytes(p.read_bytes().replace(b"\n", b"\r\n"))
+            clean_cmd = lambda argv, _cwd: (0, VALID_SHA) if "rev-parse" in argv else (0, "")
+            rep = collect_runtime_process_attestation(
+                repo_root=repo, expected_release_sha=VALID_SHA,
+                expected_release_manifest=manifest,
+                now_utc=1700000013, cmd_runner=clean_cmd,
+                port_inspector=lambda _ports: {},
+            )
+            self.assertEqual(rep["manifestProvenance"], "CALLER_SUPPLIED_UNTRUSTED")
+            self.assertFalse(rep["releaseManifestCheck"]["matched"])
+            self.assertEqual(rep["releaseManifestCheck"]["reason"], "RELEASE_MANIFEST_DIGEST_MISMATCH")
+            self.assertFalse(rep["activeRuntimeReleaseVerified"])
+            self.assertEqual(rep["status"], "UNVERIFIED")
+
     def test_missing_or_invalid_local_git_commit_never_passes_manifest_check(self):
         with tempfile.TemporaryDirectory() as folder:
             repo = Path(folder)
