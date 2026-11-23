@@ -6,7 +6,7 @@ Strictly READ-ONLY / NO-ORDER / NO-SECRETS:
 - NEVER trusts caller-supplied booleans (such as `matchesExpectedRepoRoot=True`).
 - Explicitly separates:
   * `workingTreeHeadObserved` (`git rev-parse HEAD` on disk — observation only),
-  * `releaseManifestCheck` (local Git commit blob SHA-256 comparison; not host proof),
+  * `releaseManifestCheck` (local Git blob SHA-256; strict Windows CRLF checkout equivalence only, not host proof),
   * `portOwnerObserved` (read-only listener PID/owner hashes observed on 3711/5717/8765),
   * `standaloneProcessCandidateObserved` (same PID/owner/executable on default
     API 3711 and WEB 5717; optional Phase7C port 8765 is NOT required),
@@ -108,22 +108,76 @@ def inspect_redacted_module_digests(repo_root: Path) -> dict[str, str | None]:
     return {rel: _sha256_file(repo_root / rel) for rel in CORE_MODULE_PATHS}
 
 
+def _matches_windows_checkout_crlf_only(path: Path, expected_lf_sha256: str) -> bool:
+    """Accept only an exact LF -> CRLF checkout conversion, never arbitrary edits.
+
+    Git may transparently normalize Windows checkout CRLF back to LF in the
+    index. A raw file SHA-256 then differs from the Git blob even when
+    the working tree is clean. Do not ignore, replace, or mutate the file;
+    compare a strictly LF-normalized in-memory copy instead.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return False
+    if b"\r\n" not in raw:
+        return False
+    normalized = raw.replace(b"\r\n", b"\n")
+    # Reject mixed LF/CRLF and lone CR. Only uniform CRLF line endings qualify.
+    if raw != normalized.replace(b"\n", b"\r\n"):
+        return False
+    return hashlib.sha256(normalized).hexdigest() == expected_lf_sha256
+
+
 def verify_release_manifest_digests(
     observed_digests: dict[str, str | None],
     expected_release_manifest: dict[str, str] | None,
+    *,
+    repo_root: Path | None = None,
+    allow_local_git_checkout_crlf: bool = False,
 ) -> dict[str, Any]:
-    """Verify every core module digest against an explicit SHA-256 release manifest."""
+    """Compare Git blob hashes and disk bytes, accepting ONLY strict CRLF.
+
+    CRLF equivalence applies solely to the locally derived Git-blob baseline,
+    never to an arbitrary caller-supplied external manifest. This remains
+    source integrity evidence, not independent runtime process attestation.
+    """
     if not isinstance(expected_release_manifest, dict) or not expected_release_manifest:
         return {"matched": False, "reason": "RELEASE_MANIFEST_MISSING"}
     mismatches: list[str] = []
+    line_endings_normalized: list[str] = []
     for rel in CORE_MODULE_PATHS:
         expected = expected_release_manifest.get(rel)
         actual = observed_digests.get(rel)
-        if not _is_valid_sha256(expected) or not _is_valid_sha256(actual) or actual != expected:
-            mismatches.append(rel)
+        if _is_valid_sha256(expected) and _is_valid_sha256(actual) and actual == expected:
+            continue
+        if (
+            allow_local_git_checkout_crlf
+            and repo_root is not None
+            and _is_valid_sha256(expected)
+            and _matches_windows_checkout_crlf_only(repo_root / rel, expected)
+        ):
+            line_endings_normalized.append(rel)
+            continue
+        mismatches.append(rel)
     if mismatches:
-        return {"matched": False, "reason": "RELEASE_MANIFEST_DIGEST_MISMATCH", "mismatchedModules": mismatches}
-    return {"matched": True, "reason": "RELEASE_MANIFEST_MATCHED", "mismatchedModules": []}
+        return {
+            "matched": False,
+            "reason": "RELEASE_MANIFEST_DIGEST_MISMATCH",
+            "mismatchedModules": mismatches,
+            "checkoutCrlfNormalizedModules": line_endings_normalized,
+            "rawBytesIdenticalToGitBlobs": False,
+        }
+    return {
+        "matched": True,
+        "reason": (
+            "RELEASE_MANIFEST_MATCHED_CRLF_CHECKOUT_EQUIVALENT"
+            if line_endings_normalized else "RELEASE_MANIFEST_MATCHED"
+        ),
+        "mismatchedModules": [],
+        "checkoutCrlfNormalizedModules": line_endings_normalized,
+        "rawBytesIdenticalToGitBlobs": not line_endings_normalized,
+    }
 
 
 def derive_local_git_commit_manifest(
@@ -320,7 +374,14 @@ def collect_runtime_process_attestation(
         manifest = expected_release_manifest
         manifest_reason = "CALLER_SUPPLIED_MANIFEST_NOT_INDEPENDENT"
         manifest_provenance = "CALLER_SUPPLIED_UNTRUSTED"
-    manifest_check = verify_release_manifest_digests(digests, manifest)
+    manifest_check = verify_release_manifest_digests(
+        digests,
+        manifest,
+        repo_root=repo_root,
+        allow_local_git_checkout_crlf=(
+            manifest_provenance == "LOCAL_GIT_COMMIT_OBJECT_UNTRUSTED"
+        ),
+    )
     port_state = inspect_port_owners(V6_MONITORED_PORTS, port_inspector=port_inspector)
     arm_sizing = inspect_readonly_arm_and_sizing_source(repo_root)
 
