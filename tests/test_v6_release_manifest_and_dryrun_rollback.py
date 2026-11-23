@@ -58,7 +58,7 @@ class TestReleaseManifestAndDryRunRollback(unittest.TestCase):
             (root / "a.py").write_bytes(b"v2\n")
             cand = rel.build_release_manifest(
                 repo_root=root,
-                release_commit_sha="74da366",
+                release_commit_sha="7" * 40,
                 relative_files=["a.py"],
                 generated_at_utc=1795415100,
             )
