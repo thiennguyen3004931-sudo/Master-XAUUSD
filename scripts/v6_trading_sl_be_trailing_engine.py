@@ -51,6 +51,15 @@ def evaluate_entry_and_initial_sl(
     direction = "BUY" if buy_signal else "SELL"
     if not (_is_pos(entry_price) and _is_pos(m5_structural_sl) and _is_pos(take_profit)):
         return {"action": "SKIP", "reason": "INVALID_PRICE_INPUTS", "liveAuthorized": False}
+    if (
+        not _is_nonneg(min_obstacle_clearance_usd)
+        or not _is_pos(min_sl_usd)
+        or not _is_pos(max_sl_usd)
+        or float(max_sl_usd) < float(min_sl_usd)
+        or not _is_pos(min_rr_ratio)
+        or not _is_nonneg(broker_stops_level_usd)
+    ):
+        return {"action": "SKIP", "reason": "INVALID_STRATEGY_OR_BROKER_POLICY", "liveAuthorized": False}
     if not _is_nonneg(nearby_obstacle_distance_usd) or float(nearby_obstacle_distance_usd) < float(min_obstacle_clearance_usd) - EPS:
         return {"action": "SKIP", "reason": "NEARBY_OBSTACLE_TOO_CLOSE", "liveAuthorized": False}
 
@@ -116,13 +125,13 @@ def compute_next_protective_sl(
     m5_new_structure_sl: float | None = None,
     m15_fast_move_active: bool = False,
     favorable_extreme_price: float | None = None,
-    be_trigger_usd: float = 6.0,
+    be_trigger_usd: float | None = None,
     be_offset_usd: float = 0.2,
     m15_fast_trail_distance_usd: float = DEFAULT_M15_FAST_MOVE_TRAIL_USD,
     broker_stops_level_usd: float = 0.5,
     broker_freeze_level_usd: float = 0.3,
 ) -> dict[str, Any]:
-    """Compute strictly monotonic next SL for BE, M5 structural trailing & M15 fast-move protection."""
+    """Offline monotonic SL proposal: BE at >=1R initial risk; no live order."""
     pos_magic = position.get("magic")
     if type(pos_magic) is not int or pos_magic != bot_magic:
         return {
@@ -154,6 +163,20 @@ def compute_next_protective_sl(
     cur_sl_f = float(current_sl)
     bid_f = float(current_bid)
     ask_f = float(current_ask)
+    # Unknown/invalid broker constraints must never result in a suggested SL.
+    if (
+        not _is_nonneg(broker_stops_level_usd)
+        or not _is_nonneg(broker_freeze_level_usd)
+        or not _is_nonneg(be_offset_usd)
+        or not _is_pos(m15_fast_trail_distance_usd)
+        or (be_trigger_usd is not None and not _is_pos(be_trigger_usd))
+    ):
+        return {
+            "shouldModify": False,
+            "reason": "BROKER_OR_TRAILING_POLICY_UNVERIFIED",
+            "nextSl": round(cur_sl_f, 4),
+            "liveAuthorized": False,
+        }
     stops_lvl = float(broker_stops_level_usd)
     freeze_lvl = float(broker_freeze_level_usd)
 
@@ -169,7 +192,31 @@ def compute_next_protective_sl(
     candidates: list[tuple[float, str]] = []
 
     profit_usd = (bid_f - entry_f) if direction == "BUY" else (entry_f - ask_f)
-    if profit_usd >= float(be_trigger_usd) - EPS:
+    # Break-even is triggered by 1R of the ORIGINAL stop distance, not a
+    # hard-coded 6 USD price move. Trailing can still raise protection when
+    # original risk evidence is absent, but BE must remain unverified.
+    initial_risk = position.get("initialRiskUsd")
+    if not _is_pos(initial_risk):
+        initial_sl = position.get("initialSl")
+        if _is_pos(initial_sl):
+            structural_risk = (
+                entry_f - float(initial_sl)
+                if direction == "BUY" else float(initial_sl) - entry_f
+            )
+            initial_risk = structural_risk if structural_risk > EPS else None
+        else:
+            initial_risk = None
+    if _is_pos(initial_risk):
+        initial_r = float(initial_risk)
+    else:
+        initial_r = None
+    # Explicit override may only INCREASE the required 1R trigger.
+    trigger = (
+        max(initial_r, float(be_trigger_usd))
+        if initial_r is not None and be_trigger_usd is not None
+        else initial_r
+    )
+    if trigger is not None and profit_usd >= trigger - EPS:
         be_sl = (entry_f + float(be_offset_usd)) if direction == "BUY" else (entry_f - float(be_offset_usd))
         candidates.append((be_sl, "BREAK_EVEN"))
 
@@ -203,6 +250,8 @@ def compute_next_protective_sl(
     changed = abs(best_sl - cur_sl_f) > EPS
     return {
         "shouldModify": changed,
+        "evaluationScope": "OFFLINE_PROTECTIVE_SL_PROPOSAL_NO_MT5_ORDER",
+        "initialRiskUsd": initial_r,
         "direction": direction,
         "previousSl": round(cur_sl_f, 4),
         "nextSl": round(best_sl, 4),
