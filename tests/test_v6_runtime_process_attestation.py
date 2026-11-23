@@ -1,6 +1,7 @@
 """Offline tests for G4 P0 read-only runtime process, port-owner & release attestation (#7)."""
 import hashlib
 import sys
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -154,6 +155,59 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
             self.assertEqual(r_obs["status"], "UNVERIFIED")
             self.assertEqual(r_obs["reason"], "READONLY_OBSERVATION_REQUIRES_INDEPENDENT_HOST_RUNTIME_ATTESTATION")
             self.assertFalse(r_obs["liveAuthorized"])
+
+
+    def test_local_git_object_manifest_matches_files_but_never_verifies_process(self):
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Path(folder)
+            _seed_fake_repo(repo)
+            subprocess.run(["git", "init", "--quiet"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "add", "scripts"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-c", "user.name=G4 Test", "-c", "user.email=g4@example.invalid",
+                 "commit", "--quiet", "-m", "offline fixture"],
+                cwd=repo, check=True, capture_output=True,
+            )
+            sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo).decode().strip()
+            first = collect_runtime_process_attestation(
+                repo_root=repo, expected_release_sha=sha,
+                now_utc=1700000000, port_inspector=lambda _ports: {},
+            )
+            self.assertTrue(first["workingTreeClean"])
+            self.assertTrue(first["releaseManifestCheck"]["matched"])
+            self.assertEqual(first["manifestProvenance"], "LOCAL_GIT_COMMIT_OBJECT_UNTRUSTED")
+            self.assertEqual(first["manifestDerivationReason"], "LOCAL_GIT_COMMIT_BLOBS_HASHED")
+            self.assertFalse(first["activeRuntimeReleaseVerified"])
+            self.assertFalse(first["liveAuthorized"])
+            self.assertEqual(first["status"], "UNVERIFIED")
+            self.assertEqual(first["reason"], "TRADE_GATEWAY_PORT_8765_ABSENT_WEB_ONLY_INSUFFICIENT")
+
+            (repo / "scripts" / "mt5-direct-probe.py").write_text(
+                "# mutated after checkout\n", encoding="utf-8"
+            )
+            tampered = collect_runtime_process_attestation(
+                repo_root=repo, expected_release_sha=sha,
+                now_utc=1700000001, port_inspector=lambda _ports: {},
+            )
+            self.assertFalse(tampered["workingTreeClean"])
+            self.assertFalse(tampered["releaseManifestCheck"]["matched"])
+            self.assertEqual(tampered["releaseManifestCheck"]["reason"], "RELEASE_MANIFEST_DIGEST_MISMATCH")
+            self.assertFalse(tampered["activeRuntimeReleaseVerified"])
+            self.assertEqual(tampered["status"], "UNVERIFIED")
+
+    def test_missing_or_invalid_local_git_commit_never_passes_manifest_check(self):
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Path(folder)
+            _seed_fake_repo(repo)
+            for sha in ("NOT_A_SHA", "0" * 40):
+                report = collect_runtime_process_attestation(
+                    repo_root=repo, expected_release_sha=sha,
+                    now_utc=1700000002, port_inspector=lambda _ports: {},
+                )
+                self.assertEqual(report["releaseManifestCheck"]["reason"], "RELEASE_MANIFEST_MISSING")
+                self.assertEqual(report["manifestProvenance"], "UNAVAILABLE")
+                self.assertFalse(report["activeRuntimeReleaseVerified"])
+                self.assertEqual(report["status"], "UNVERIFIED")
 
 
 if __name__ == "__main__":
