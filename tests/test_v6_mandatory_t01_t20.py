@@ -178,9 +178,9 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         engine.MANAGER_STATE_FILE = self._tmp_rt / "v6-position-tracker.json"
         engine.DAILY_RISK_STATE_FILE = self._tmp_rt / "v6-daily-risk-state.json"
         engine.REGIME_STATE_FILE = self._tmp_rt / "v6-regime-state.json"
-        # T01-T68 legacy mock-broker regression tests exercise the existing
-        # execution/risk logic. The G1 quarantine is separately tested in
-        # test_v6_runtime_stop_gate_integration and never bypassed at runtime.
+        # Existing offline broker regressions patch only this transient suite.
+        # G1 actual runtime STOP quarantine remains fail-closed and is
+        # independently tested in test_v6_runtime_stop_gate_integration.py.
         self._isolated_g1_gate = patch.object(
             engine, "_check_runtime_emergency_stop_latch", return_value=None
         )
@@ -734,12 +734,17 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         process.env.ZIQ_V6_CONTROL_TOKEN = 'master_secret_token_2026';
         const { handleApiRequest, getCanonicalLiveArmState } = await import('./scripts/xauusd-standalone-server.mjs');
         const headers = { 'x-v6-control-token': 'master_secret_token_2026', 'content-type': 'application/json' };
+        const crypto = await import('node:crypto');
 
         async function callApi(method, url, payload) {
           let st = 0, outBody = '';
           const bodyStr = payload ? JSON.stringify(payload) : '';
           const req = {
-            method, url, headers,
+            method, url, headers: {
+              ...headers,
+              'x-v6-nonce': crypto.randomBytes(16).toString('hex'),
+              'x-v6-timestamp': String(Date.now()),
+            },
             socket: { remoteAddress: '127.0.0.1' },
             on(ev, cb) {
               if (ev === 'data' && bodyStr) cb(Buffer.from(bodyStr));
@@ -800,12 +805,17 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
           setMt5EngineInvokerForTest
         } = await import('./scripts/xauusd-standalone-server.mjs');
         const headers = { 'x-v6-control-token': 'master_secret_token_2026', 'content-type': 'application/json' };
+        const crypto = await import('node:crypto');
 
         async function callApi(method, url, payload) {
           let st = 0, outBody = '';
           const bodyStr = payload ? JSON.stringify(payload) : '';
           const req = {
-            method, url, headers,
+            method, url, headers: {
+              ...headers,
+              'x-v6-nonce': crypto.randomBytes(16).toString('hex'),
+              'x-v6-timestamp': String(Date.now()),
+            },
             socket: { remoteAddress: '127.0.0.1' },
             on(ev, cb) {
               if (ev === 'data' && bodyStr) cb(Buffer.from(bodyStr));
@@ -1560,6 +1570,7 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         process.env.ZIQ_V6_CONTROL_TOKEN = 'master_secret_token_2026';
         const { handleApiRequest, getCanonicalLiveArmState, setMt5EngineInvokerForTest } = await import('./scripts/xauusd-standalone-server.mjs');
         const headers = { 'x-v6-control-token': 'master_secret_token_2026', 'content-type': 'application/json' };
+        const crypto = await import('node:crypto');
         setMt5EngineInvokerForTest(() => ({
           connected: true, accountLogin: 5201362, server: 'DBGMarkets-Live', accountMode: 'LIVE', brokerSymbol: 'XAUUSD.G', dailyRiskState: { ok: true }
         }));
@@ -1567,7 +1578,8 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
           let st = 0, out = '';
           const bs = JSON.stringify(bodyObj);
           await handleApiRequest({
-            method: 'POST', url, headers: { ...headers, 'content-length': String(Buffer.byteLength(bs)) },
+            method: 'POST', url, headers: { ...headers, 'content-length': String(Buffer.byteLength(bs)),
+              'x-v6-nonce': crypto.randomBytes(16).toString('hex'), 'x-v6-timestamp': String(Date.now()) },
             socket: { remoteAddress: '127.0.0.1' },
             on(ev, cb) { if (ev === 'data') cb(Buffer.from(bs)); if (ev === 'end') cb(); }
           }, { writeHead(s) { st = s; }, end(b) { out = b; } });
@@ -1706,6 +1718,7 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         process.env.ZIQ_V6_CONTROL_TOKEN = 'master_secret_token_2026';
         const { handleApiRequest, getCanonicalFixedLot, setMt5EngineInvokerForTest } = await import('./scripts/xauusd-standalone-server.mjs');
         const headers = { 'x-v6-control-token': 'master_secret_token_2026', 'content-type': 'application/json' };
+        const crypto = await import('node:crypto');
         setMt5EngineInvokerForTest(() => ({ connected: true, accountLogin: 5201362, server: 'DBGMarkets-Live', accountMode: 'LIVE', brokerSymbol: 'XAUUSD.G' }));
         const results = [];
         for (const lot of [0.01, 0.02, 0.05, 0.10]) {
@@ -1713,7 +1726,8 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
           const bs = JSON.stringify({ volume: lot, enabled: false });
           await handleApiRequest({
             method: 'POST', url: '/api/v1/mt5/auto-bot',
-            headers: { ...headers, 'content-length': String(Buffer.byteLength(bs)) },
+            headers: { ...headers, 'content-length': String(Buffer.byteLength(bs)),
+               'x-v6-nonce': crypto.randomBytes(16).toString('hex'), 'x-v6-timestamp': String(Date.now()) },
             socket: { remoteAddress: '127.0.0.1' },
             on(ev, cb) { if (ev === 'data') cb(Buffer.from(bs)); if (ev === 'end') cb(); }
           }, { writeHead(s) { st = s; }, end(b) { out = b; } });
@@ -2849,7 +2863,8 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         const reqStr = JSON.stringify({ side: 'BUY', volume: 0.02 });
         await handleApiRequest({
           method: 'POST', url: '/api/v1/mt5/order',
-          headers: { 'x-v6-control-token': 'master_secret_token_2026', 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(reqStr)) },
+          headers: { 'x-v6-control-token': 'master_secret_token_2026', 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(reqStr)),
+              'x-v6-nonce': '00112233445566778899aabbccddeeff', 'x-v6-timestamp': String(Date.now()) },
           socket: { remoteAddress: '127.0.0.1' },
           on(ev, cb) { if (ev === 'data') cb(Buffer.from(reqStr)); if (ev === 'end') cb(); }
         }, { writeHead(s) { orderSt = s; }, end(b) { orderBody = b; } });
@@ -2988,9 +3003,9 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         const roGet = await call('GET', '/health', 'ro_secret_2026_xxxx');
         const roPost = await call('POST', '/api/v1/mt5/emergency-stop', 'ro_secret_2026_xxxx', { sourceDevice: 'WEB' });
         const nowTs = String(Date.now());
-        const ctrlFirst = await call('POST', '/api/v1/mt5/emergency-stop', 'ctrl_secret_2026_xxxx', { sourceDevice: 'WEB' }, { 'x-v6-nonce': 'nonce-abc-1', 'x-v6-timestamp': nowTs });
-        const ctrlReplay = await call('POST', '/api/v1/mt5/emergency-stop', 'ctrl_secret_2026_xxxx', { sourceDevice: 'WEB' }, { 'x-v6-nonce': 'nonce-abc-1', 'x-v6-timestamp': nowTs });
-        const ctrlExpired = await call('POST', '/api/v1/mt5/emergency-stop', 'ctrl_secret_2026_xxxx', { sourceDevice: 'WEB' }, { 'x-v6-nonce': 'nonce-abc-2', 'x-v6-timestamp': String(Date.now() - 600000) });
+        const ctrlFirst = await call('POST', '/api/v1/mt5/emergency-stop', 'ctrl_secret_2026_xxxx', { sourceDevice: 'WEB' }, { 'x-v6-nonce': '00112233445566778899aabbccddeeff', 'x-v6-timestamp': nowTs });
+        const ctrlReplay = await call('POST', '/api/v1/mt5/emergency-stop', 'ctrl_secret_2026_xxxx', { sourceDevice: 'WEB' }, { 'x-v6-nonce': '00112233445566778899aabbccddeeff', 'x-v6-timestamp': nowTs });
+        const ctrlExpired = await call('POST', '/api/v1/mt5/emergency-stop', 'ctrl_secret_2026_xxxx', { sourceDevice: 'WEB' }, { 'x-v6-nonce': 'ffeeddccbbaa99887766554433221100', 'x-v6-timestamp': String(Date.now() - 600000) });
         console.log(JSON.stringify({
           roGetStatus: roGet.status,
           roPostStatus: roPost.status, roPostErr: roPost.data.error,
