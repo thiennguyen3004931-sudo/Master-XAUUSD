@@ -276,5 +276,90 @@ class TestUnifiedAutoLotRiskEngine(unittest.TestCase):
         self.assertEqual(res["effectiveLot"], 0.02)
 
 
+    def test_broker_grid_is_volume_min_plus_n_steps_not_zero_anchored(self) -> None:
+        # Broker grid 0.03, 0.05, ..., 0.13; 0.14 is NOT permitted.
+        spec = _spec(
+            volumeMin=0.03, volumeStep=0.02,
+            orderCalcLossPerOneLotUsd=600.0,
+        )
+        policy = _policy(maxLotPerOrder=0.14)
+        for side, entry, sl in (("BUY", 2650.25, 2643.25), ("SELL", 2650.00, 2657.00)):
+            with self.subTest(side=side):
+                result = eng.evaluate_unified_autolot_and_risk(
+                    requested_mode="AUTO_LOT",
+                    auto_lot_owner_approved=True,
+                    fixed_lot=0.03,
+                    direction=side,
+                    entry_price=entry,
+                    stop_loss_price=sl,
+                    account=_account(),
+                    broker_spec=spec,
+                    risk_policy=policy,
+                    now_utc=1795414005,
+                )
+                self.assertTrue(result["allowed"])
+                self.assertEqual(result["computedAutoLot"], 0.13)
+                self.assertEqual(result["effectiveLot"], 0.13)
+                self.assertLessEqual(result["estimatedOrderRiskUsd"], result["riskBudgetUsd"])
+                self.assertFalse(result["runtimePreSendIntegrated"])
+                self.assertFalse(result["liveAuthorized"])
+
+    def test_fixed_lot_never_silently_rounds_and_shadow_checks_all_bounds(self) -> None:
+        spec = _spec(volumeMin=0.03, volumeStep=0.02)
+        for mode in ("FIXED_LOT", "SHADOW"):
+            for requested in (0.01, 0.04, 0.06, 1.5):
+                with self.subTest(mode=mode, lot=requested):
+                    result = eng.evaluate_unified_autolot_and_risk(
+                        requested_mode=mode, auto_lot_owner_approved=False,
+                        fixed_lot=requested, direction="BUY",
+                        entry_price=2650.25, stop_loss_price=2643.25,
+                        account=_account(), broker_spec=spec,
+                        risk_policy=_policy(), now_utc=1795414005,
+                    )
+                    self.assertFalse(result["allowed"])
+                    self.assertEqual(result["effectiveLot"], 0.0)
+                    self.assertIn(
+                        "FIXED_LOT_OUT_OF_BOUNDS_OR_OFF_BROKER_GRID"
+                        if mode == "FIXED_LOT"
+                        else "SHADOW_FIXED_LOT_OUT_OF_BOUNDS_OR_OFF_BROKER_GRID",
+                        result["hardBlocks"],
+                    )
+            valid = eng.evaluate_unified_autolot_and_risk(
+                requested_mode=mode, auto_lot_owner_approved=False,
+                fixed_lot=0.05, direction="BUY",
+                entry_price=2650.25, stop_loss_price=2643.25,
+                account=_account(), broker_spec=spec,
+                risk_policy=_policy(), now_utc=1795414005,
+            )
+            self.assertTrue(valid["allowed"])
+            self.assertEqual(valid["effectiveLot"], 0.05)
+            self.assertEqual(valid["candidateExecutionLotMode"], "FIXED_LOT")
+            self.assertEqual(valid["advisoryAutoLotOnly"], mode == "SHADOW")
+            self.assertFalse(valid["liveAuthorized"])
+
+    def test_string_approval_and_unreportable_volume_precision_fail_closed(self) -> None:
+        bad_claim = eng.evaluate_unified_autolot_and_risk(
+            requested_mode="AUTO_LOT", auto_lot_owner_approved="true",
+            fixed_lot=0.01, direction="BUY",
+            entry_price=2650.25, stop_loss_price=2643.25,
+            account=_account(), broker_spec=_spec(),
+            risk_policy=_policy(), now_utc=1795414005,
+        )
+        self.assertFalse(bad_claim["allowed"])
+        self.assertFalse(bad_claim["autoLotOwnerApproved"])
+        self.assertIn("AUTO_LOT_REQUIRES_EXPLICIT_OWNER_APPROVAL", bad_claim["hardBlocks"])
+
+        impossible_precision = eng.evaluate_unified_autolot_and_risk(
+            requested_mode="AUTO_LOT", auto_lot_owner_approved=True,
+            fixed_lot=0.01, direction="BUY",
+            entry_price=2650.25, stop_loss_price=2643.25,
+            account=_account(), broker_spec=_spec(volumeMin=0.000000001, volumeStep=0.000000001),
+            risk_policy=_policy(), now_utc=1795414005,
+        )
+        self.assertFalse(impossible_precision["allowed"])
+        self.assertIn("BROKER_VOLUME_GRID_UNSUPPORTED_OR_UNVERIFIED", impossible_precision["hardBlocks"])
+        self.assertFalse(impossible_precision["liveAuthorized"])
+
+
 if __name__ == "__main__":
     unittest.main()

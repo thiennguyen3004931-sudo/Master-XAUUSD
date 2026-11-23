@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from decimal import Decimal, ROUND_FLOOR
 from typing import Any, Mapping, Sequence
 
 
@@ -28,11 +29,48 @@ def _is_finite_nonneg(val: Any) -> bool:
     return not isinstance(val, bool) and isinstance(val, (int, float)) and math.isfinite(float(val)) and float(val) >= 0.0
 
 
-def _floor_to_step(value: float, step: float) -> float:
-    if step <= 0.0 or value <= 0.0:
+def _broker_volume_grid_supported(volume_min: float, volume_step: float) -> bool:
+    """This offline report emits volume to eight decimal places at most."""
+    if not (_is_finite_pos(volume_min) and _is_finite_pos(volume_step)):
+        return False
+    return all(
+        Decimal(str(value)).as_tuple().exponent >= -8
+        for value in (volume_min, volume_step)
+    )
+
+
+def _floor_to_broker_volume_grid(value: float, volume_min: float, volume_step: float) -> float:
+    """Round DOWN on volumeMin + N * volumeStep, not on N * volumeStep."""
+    if not _is_finite_pos(value) or not _broker_volume_grid_supported(volume_min, volume_step):
         return 0.0
-    steps = math.floor((value / step) + 1e-12)
-    return round(steps * step, 8)
+    v = Decimal(str(value))
+    minimum = Decimal(str(volume_min))
+    step = Decimal(str(volume_step))
+    if v < minimum:
+        return 0.0
+    n = ((v - minimum) / step).to_integral_value(rounding=ROUND_FLOOR)
+    proposed = minimum + n * step
+    # Never allow a float-conversion or rounding to raise risk above the raw cap.
+    return float(proposed) if proposed <= v else 0.0
+
+
+def _fixed_volume_is_exactly_on_broker_grid(
+    value: float, volume_min: float, volume_step: float, volume_max: float, policy_cap: float,
+) -> bool:
+    """Reject non-grid fixed sizes instead of silently altering user configuration."""
+    if not (
+        _is_finite_pos(value)
+        and _broker_volume_grid_supported(volume_min, volume_step)
+        and _is_finite_pos(volume_max)
+        and _is_finite_pos(policy_cap)
+    ):
+        return False
+    v = Decimal(str(value))
+    minimum = Decimal(str(volume_min))
+    step = Decimal(str(volume_step))
+    if v < minimum or v > min(Decimal(str(volume_max)), Decimal(str(policy_cap))):
+        return False
+    return (v - minimum) % step == 0
 
 
 def _report_sha256(payload: Mapping[str, Any]) -> str:
@@ -69,7 +107,7 @@ def evaluate_unified_autolot_and_risk(
         hard_blocks.append("INVALID_DIRECTION")
 
     effective_mode = mode
-    if mode == "AUTO_LOT" and not bool(auto_lot_owner_approved):
+    if mode == "AUTO_LOT" and auto_lot_owner_approved is not True:
         hard_blocks.append("AUTO_LOT_REQUIRES_EXPLICIT_OWNER_APPROVAL")
 
     equity = account.get("equity")
@@ -121,6 +159,8 @@ def evaluate_unified_autolot_and_risk(
 
     if _is_finite_pos(vol_min) and _is_finite_pos(vol_max) and float(vol_min) > float(vol_max) + EPS:
         hard_blocks.append("BROKER_VOLUME_RANGE_INVERTED")
+    if not _broker_volume_grid_supported(vol_min, vol_step):
+        hard_blocks.append("BROKER_VOLUME_GRID_UNSUPPORTED_OR_UNVERIFIED")
     if not _is_finite_pos(entry_price) or not _is_finite_pos(stop_loss_price):
         hard_blocks.append("ENTRY_OR_SL_PRICE_INVALID")
     elif side == "BUY" and float(stop_loss_price) >= float(entry_price):
@@ -207,20 +247,20 @@ def evaluate_unified_autolot_and_risk(
             hard_blocks.append("RISK_PER_LOT_INVALID")
         else:
             raw_auto_lot = effective_budget_usd / total_risk_per_lot
-            floored_auto_lot = _floor_to_step(raw_auto_lot, float(vol_step))
-            capped_auto_lot = min(floored_auto_lot, float(vol_max), float(max_lot_cap))
-            capped_auto_lot = _floor_to_step(capped_auto_lot, float(vol_step))
-            computed_lot = capped_auto_lot
+            capped_auto_lot = min(raw_auto_lot, float(vol_max), float(max_lot_cap))
+            computed_lot = _floor_to_broker_volume_grid(
+                capped_auto_lot, float(vol_min), float(vol_step),
+            )
 
             if mode == "FIXED_LOT":
                 if not _is_finite_pos(fixed_lot):
                     hard_blocks.append("FIXED_LOT_INVALID")
+                elif not _fixed_volume_is_exactly_on_broker_grid(
+                    fixed_lot, vol_min, vol_step, vol_max, max_lot_cap,
+                ):
+                    hard_blocks.append("FIXED_LOT_OUT_OF_BOUNDS_OR_OFF_BROKER_GRID")
                 else:
-                    candidate_lot = _floor_to_step(float(fixed_lot), float(vol_step))
-                    if candidate_lot < float(vol_min) - EPS or candidate_lot > min(float(vol_max), float(max_lot_cap)) + EPS:
-                        hard_blocks.append("FIXED_LOT_OUT_OF_BOUNDS")
-                    else:
-                        effective_lot = candidate_lot
+                    effective_lot = float(fixed_lot)
             elif mode == "AUTO_LOT":
                 if computed_lot < float(vol_min) - EPS:
                     hard_blocks.append("AUTO_LOT_BELOW_VOLUME_MIN_EXCEEDS_RISK_BUDGET")
@@ -229,8 +269,14 @@ def evaluate_unified_autolot_and_risk(
             elif mode == "SHADOW":
                 if not _is_finite_pos(fixed_lot):
                     hard_blocks.append("SHADOW_FALLBACK_FIXED_LOT_INVALID")
+                elif not _fixed_volume_is_exactly_on_broker_grid(
+                    fixed_lot, vol_min, vol_step, vol_max, max_lot_cap,
+                ):
+                    hard_blocks.append("SHADOW_FIXED_LOT_OUT_OF_BOUNDS_OR_OFF_BROKER_GRID")
                 else:
-                    effective_lot = _floor_to_step(float(fixed_lot), float(vol_step))
+                    # SHADOW computes advisory Auto Lot but still proposes the
+                    # unchanged, valid FIXED LOT; never promote AUTO_LOT.
+                    effective_lot = float(fixed_lot)
                 if computed_lot < float(vol_min) - EPS:
                     warnings.append("SHADOW_AUTO_LOT_WOULD_BLOCK_BELOW_VOLUME_MIN")
 
@@ -247,7 +293,9 @@ def evaluate_unified_autolot_and_risk(
         "schemaVersion": SCHEMA_VERSION,
         "requestedMode": mode,
         "effectiveLotMode": effective_mode,
-        "autoLotOwnerApproved": bool(auto_lot_owner_approved),
+        "candidateExecutionLotMode": "FIXED_LOT" if mode == "SHADOW" else mode,
+        "advisoryAutoLotOnly": mode == "SHADOW",
+        "autoLotOwnerApproved": auto_lot_owner_approved is True,
         "direction": side,
         "accountMarginMode": acct_margin_mode,
         "computedAutoLot": round(computed_lot, 8),
