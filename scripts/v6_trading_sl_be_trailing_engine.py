@@ -125,11 +125,11 @@ def compute_next_protective_sl(
     current_bid: float,
     current_ask: float,
     m5_new_structure_sl: float | None = None,
-    m5_structure_candle_closed: bool = True,
-    m5_structure_stale: bool = False,
+    m5_structure_candle_closed: bool = False,
+    m5_structure_stale: bool = True,
     m15_fast_move_active: bool = False,
-    m15_candle_closed: bool = True,
-    m15_signal_stale: bool = False,
+    m15_candle_closed: bool = False,
+    m15_signal_stale: bool = True,
     favorable_extreme_price: float | None = None,
     be_trigger_usd: float | None = None,
     be_offset_usd: float = 0.2,
@@ -244,13 +244,13 @@ def compute_next_protective_sl(
         be_sl = (entry_f + float(be_offset_usd)) if direction == "BUY" else (entry_f - float(be_offset_usd))
         candidates.append((be_sl, "BREAK_EVEN"))
 
-    if m5_structure_candle_closed and not m5_structure_stale and _is_pos(m5_new_structure_sl):
+    if m5_structure_candle_closed is True and m5_structure_stale is False and _is_pos(m5_new_structure_sl):
         candidates.append((float(m5_new_structure_sl), "M5_STRUCTURAL_TRAIL"))
 
     if (
-        m15_fast_move_active
-        and m15_candle_closed
-        and not m15_signal_stale
+        m15_fast_move_active is True
+        and m15_candle_closed is True
+        and m15_signal_stale is False
         and _is_pos(favorable_extreme_price)
     ):
         ext = float(favorable_extreme_price)
