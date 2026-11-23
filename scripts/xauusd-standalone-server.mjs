@@ -25,6 +25,7 @@ import { parseRequiredTicket, parseOptionalBoolean } from "./v6-api-input-guards
 import { getV6ExecutionSizingDisclosure } from "./v6-execution-sizing-disclosure.mjs";
 import { getV6BrokerStatusEvidence, readExplicitBacktestStartingBalance } from "./v6-broker-status-evidence.mjs";
 import { resolveAllowedOriginValue } from "./v6-api-cors-origin-policy.mjs";
+import { createV6ReplayGuard } from "./v6-control-replay-guard.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -480,36 +481,9 @@ export function verifyControlTokenHeader(suppliedHeader, expectedToken = CONTROL
   return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
 }
 
-const seenReplayNonces = new Map();
-const REPLAY_WINDOW_MS = 300_000;
-
-export function verifyReplayGuard(req) {
-  const rawNonce = String(req?.headers?.["x-v6-nonce"] || "").trim();
-  const rawTs = String(req?.headers?.["x-v6-timestamp"] || "").trim();
-  const strictReplay = String(process.env.V6_STRICT_REPLAY_GUARD || "").trim() === "true";
-  if (!rawNonce && !rawTs) {
-    if (strictReplay && req?.method === "POST") {
-      return { ok: false, status: 400, error: "REPLAY_HEADERS_REQUIRED", message: "Thiếu x-v6-nonce hoặc x-v6-timestamp cho thao tác điều khiển." };
-    }
-    return { ok: true };
-  }
-  if (!rawNonce || !rawTs) {
-    return { ok: false, status: 400, error: "REPLAY_HEADERS_INCOMPLETE", message: "Phải cung cấp cả x-v6-nonce và x-v6-timestamp." };
-  }
-  const tsNum = Number(rawTs);
-  const now = Date.now();
-  if (!Number.isFinite(tsNum) || Math.abs(now - tsNum) > REPLAY_WINDOW_MS) {
-    return { ok: false, status: 401, error: "REQUEST_TIMESTAMP_EXPIRED", message: "Timestamp yêu cầu điều khiển đã hết hạn hoặc lệch quá 300 giây." };
-  }
-  for (const [k, exp] of seenReplayNonces.entries()) {
-    if (now > exp) seenReplayNonces.delete(k);
-  }
-  if (seenReplayNonces.has(rawNonce)) {
-    return { ok: false, status: 409, error: "REPLAY_DETECTED", message: "Từ chối request lặp lại (replay nonce đã được sử dụng)." };
-  }
-  seenReplayNonces.set(rawNonce, now + REPLAY_WINDOW_MS * 2);
-  return { ok: true };
-}
+// Mutation API calls always require nonce + timestamp; this is per-process
+// replay protection, not trusted STOP/CLEAR or durable broker idempotency.
+export const verifyReplayGuard = createV6ReplayGuard();
 
 export function resolveAuthRole(req, tokenOverride = undefined) {
   const suppliedHeader = String(req?.headers?.["x-v6-control-token"] || "").trim();
