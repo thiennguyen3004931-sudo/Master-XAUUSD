@@ -223,9 +223,14 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
                 raw = p.read_bytes()
                 self.assertNotIn(b"\r", raw)
                 p.write_bytes(raw.replace(b"\n", b"\r\n"))
+            # Linux Git may report a manually rewritten CRLF worktree as dirty.
+            # Stub only the Windows HEAD/clean observation to isolate hash
+            # equivalence; the expected blobs still come from REAL Git objects.
+            windows_clean_cmd = lambda argv, _cwd: (0, sha) if "rev-parse" in argv else (0, "")
             observed = collect_runtime_process_attestation(
                 repo_root=repo, expected_release_sha=sha,
-                now_utc=1700000010, port_inspector=lambda _ports: {},
+                now_utc=1700000010, cmd_runner=windows_clean_cmd,
+                port_inspector=lambda _ports: {},
             )
             self.assertTrue(observed["workingTreeClean"])
             integrity = observed["releaseManifestCheck"]
