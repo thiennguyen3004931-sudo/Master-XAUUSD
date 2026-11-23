@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Read-only Windows Service-Token Win32 AccessCheck & DPAPI Attestation (Stream B/A — Issue #7)."""
+"""Read-only, non-authorizing CURRENT-PROCESS Win32 ACL / DPAPI diagnostic.
+
+Do not represent this as a Windows SERVICE-token attestation: current process
+and current-user DPAPI can pass under an unrelated interactive user, and both
+release SHA values are caller supplied. No WRITE, CLEAR, or LIVE authority.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,7 @@ import ctypes
 from ctypes import wintypes
 import hashlib
 import json
+import re
 from pathlib import Path
 import platform
 import time
@@ -15,7 +21,7 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA_VERSION = 1
-SCOPE = "READONLY_WINDOWS_SERVICE_TOKEN_WIN32_ACCESSCHECK_AND_DPAPI_NO_ORDER"
+SCOPE = "READONLY_CURRENT_PROCESS_ACCESSCHECK_DPAPI_DIAGNOSTIC_NO_LIVE_ATTESTATION"
 
 TOKEN_DUPLICATE = 0x0002
 TOKEN_QUERY = 0x0008
@@ -146,9 +152,10 @@ def evaluate_accesscheck_result(
         "accessCheckExecuted": True,
         "readGranted": True,
         "writeGranted": bool(write_granted),
-        "verified": True,
-        "status": "VERIFIED",
-        "reason": "WIN32_SERVICE_TOKEN_ACCESSCHECK_VERIFIED",
+        "currentProcessAccessCheckObserved": True,
+        "verified": False,
+        "status": "SCREENED_ONLY",
+        "reason": "CURRENT_PROCESS_RIGHTS_SCREENED_NOT_SERVICE_TOKEN",
     }
 
 
@@ -160,68 +167,55 @@ def classify_service_token_attestation(
     declared_release_sha: str | None,
     observed_release_sha: str | None,
 ) -> dict[str, Any]:
-    """Classify overall Windows service-token AccessCheck + DPAPI + release attestation."""
+    """Classify diagnostic claims; NEVER convert caller data into service proof.
+
+    Callers can manufacture target_results, the two SHA strings, and the DPAPI
+    Boolean. Even a real successful probe would be for THIS process token
+    (possibly an interactive account), not independently identified service.
+    """
     if str(platform_name).strip().lower() != "windows":
         return {
             "serviceTokenAccessCheckVerified": False,
+            "currentProcessAccessCheckObserved": False,
             "dpapiServiceIdentityVerified": False,
+            "dpapiCurrentUserRoundTripObserved": False,
             "releaseShaMatched": False,
+            "releaseShaTextMatched": False,
             "status": "UNSUPPORTED_PLATFORM",
             "reason": "WINDOWS_HOST_REQUIRED",
             "liveAuthorized": False,
         }
 
-    all_targets_ok = bool(target_results) and all(
-        item.get("verified") is True for item in target_results
+    diagnostic_claims_pass = bool(target_results) and all(
+        isinstance(item, Mapping)
+        and item.get("accessCheckExecuted") is True
+        and item.get("readGranted") is True
+        and item.get("writeGranted") is True
+        for item in target_results
     )
-    decl = str(declared_release_sha or "").strip().lower()
-    obs = str(observed_release_sha or "").strip().lower()
-    release_matched = bool(decl and obs and decl == obs)
-
-    if not all_targets_ok:
-        failing = [
-            f"{item.get('pathLabel', 'unknown')}:{item.get('reason', 'UNVERIFIED')}"
-            for item in target_results
-            if item.get("verified") is not True
-        ]
-        return {
-            "serviceTokenAccessCheckVerified": False,
-            "dpapiServiceIdentityVerified": bool(dpapi_roundtrip_ok),
-            "releaseShaMatched": release_matched,
-            "status": "BLOCKED",
-            "reason": ";".join(failing) if failing else "NO_TARGETS_VERIFIED",
-            "liveAuthorized": False,
-        }
-
-    if not dpapi_roundtrip_ok:
-        return {
-            "serviceTokenAccessCheckVerified": True,
-            "dpapiServiceIdentityVerified": False,
-            "releaseShaMatched": release_matched,
-            "status": "BLOCKED",
-            "reason": "DPAPI_SERVICE_IDENTITY_ROUNDTRIP_FAILED",
-            "liveAuthorized": False,
-        }
-
-    if not release_matched:
-        return {
-            "serviceTokenAccessCheckVerified": True,
-            "dpapiServiceIdentityVerified": True,
-            "releaseShaMatched": False,
-            "status": "BLOCKED",
-            "reason": "DECLARED_RELEASE_SHA_MISMATCH_OR_MISSING",
-            "liveAuthorized": False,
-        }
-
+    declared = str(declared_release_sha or "").strip().lower()
+    observed = str(observed_release_sha or "").strip().lower()
+    release_text_matched = (
+        re.fullmatch(r"[0-9a-f]{40}", declared) is not None
+        and declared == observed
+    )
+    # Text equality does not prove that the observed code is the running PID's
+    # binary or that any signed source / deployment record is trustworthy.
     return {
-        "serviceTokenAccessCheckVerified": True,
-        "dpapiServiceIdentityVerified": True,
-        "releaseShaMatched": True,
-        "status": "SERVICE_TOKEN_ACCESSCHECK_AND_DPAPI_VERIFIED",
-        "reason": "WINDOWS_SERVICE_TOKEN_ATTESTATION_PASSED_READONLY",
+        "serviceTokenAccessCheckVerified": False,
+        "currentProcessAccessCheckObserved": diagnostic_claims_pass,
+        "dpapiServiceIdentityVerified": False,
+        "dpapiCurrentUserRoundTripObserved": dpapi_roundtrip_ok is True,
+        "releaseShaMatched": False,
+        "releaseShaTextMatched": release_text_matched,
+        "status": "BLOCKED",
+        "reason": (
+            "WINDOWS_SERVICE_PROCESS_TOKEN_AND_DEPLOYED_RELEASE_NOT_ATTESTED"
+            if diagnostic_claims_pass else
+            "CURRENT_PROCESS_ACCESSCHECK_NOT_PROVEN"
+        ),
         "liveAuthorized": False,
     }
-
 
 def _win32_access_check_path(target: Path, desired_access: int) -> tuple[bool, bool]:
     """Run advapi32!AccessCheck on target path using duplicated current process token."""
@@ -318,7 +312,7 @@ def build_service_token_report(
     observed_release_sha: str | None = None,
     now_utc: int | None = None,
 ) -> dict[str, Any]:
-    """Run read-only Win32 AccessCheck + DPAPI attestation under the current service token."""
+    """Collect read-only current-process diagnostics, NEVER service proof."""
     plat = platform.system()
     ts = int(time.time()) if now_utc is None else int(now_utc)
     targets = [
@@ -366,13 +360,21 @@ def build_service_token_report(
     report: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
         "scope": SCOPE,
+        "diagnosticOnly": True,
+        "serviceIdentityNotAttested": True,
         "generatedAtUtc": ts,
         "platform": plat,
         "targets": results,
-        "dpapiServiceIdentityRoundTrip": dpapi_ok,
+        "dpapiServiceIdentityRoundTrip": False,
+        "dpapiCurrentUserRoundTripObserved": dpapi_ok,
+        "currentProcessAccessCheckObserved": cls["currentProcessAccessCheckObserved"],
+        "serviceProcessIdentityVerified": False,
+        "serviceTokenSidVerified": False,
+        "releaseShaTextMatched": cls["releaseShaTextMatched"],
+        "deployedProcessReleaseVerified": False,
         "serviceTokenAccessCheckVerified": cls["serviceTokenAccessCheckVerified"],
         "dpapiServiceIdentityVerified": cls["dpapiServiceIdentityVerified"],
-        "releaseShaMatched": cls["releaseShaMatched"],
+        "releaseShaMatched": False,
         "status": cls["status"],
         "reason": cls["reason"],
         "liveAuthorized": False,
