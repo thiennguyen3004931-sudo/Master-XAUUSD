@@ -6,7 +6,7 @@ Strictly READ-ONLY / NO-ORDER / NO-SECRETS:
 - NEVER trusts caller-supplied booleans (such as `matchesExpectedRepoRoot=True`).
 - Explicitly separates:
   * `workingTreeHeadObserved` (`git rev-parse HEAD` on disk — observation only),
-  * `releaseManifestMatched` (exact SHA-256 comparison against an explicit manifest),
+  * `releaseManifestCheck` (local Git commit blob SHA-256 comparison; not host proof),
   * `portOwnerObserved` (read-only listener PID/owner hashes observed on 3711/5717/8765),
   * `gatewayProcessIdentified` (requires non-conflicting single listener with verified
     executable/script digest & endpoint role, NOT web-only 5717 without trade bridge 8765),
@@ -121,6 +121,45 @@ def verify_release_manifest_digests(
     if mismatches:
         return {"matched": False, "reason": "RELEASE_MANIFEST_DIGEST_MISMATCH", "mismatchedModules": mismatches}
     return {"matched": True, "reason": "RELEASE_MANIFEST_MATCHED", "mismatchedModules": []}
+
+
+def derive_local_git_commit_manifest(
+    repo_root: Path, expected_release_sha: str
+) -> tuple[dict[str, str] | None, str]:
+    """Hash core module blobs from a local immutable Git commit object.
+
+    This proves only that disk files match the locally available Git object.
+    It does NOT authenticate the origin of the Git repository, the owner of a
+    running process, the active release, or permission to trade.
+    """
+    sha = str(expected_release_sha or "").strip()
+    if len(sha) != 40:
+        return None, "INVALID_RELEASE_SHA"
+    try:
+        int(sha, 16)
+    except ValueError:
+        return None, "INVALID_RELEASE_SHA"
+
+    try:
+        commit = subprocess.run(
+            ["git", "cat-file", "-t", sha], cwd=str(repo_root),
+            capture_output=True, check=False, timeout=5,
+        )
+        if commit.returncode != 0 or commit.stdout.strip() != b"commit":
+            return None, "LOCAL_GIT_COMMIT_OBJECT_UNAVAILABLE"
+
+        manifest: dict[str, str] = {}
+        for rel in CORE_MODULE_PATHS:
+            blob = subprocess.run(
+                ["git", "show", f"{sha}:{rel}"], cwd=str(repo_root),
+                capture_output=True, check=False, timeout=5,
+            )
+            if blob.returncode != 0:
+                return None, "LOCAL_GIT_MODULE_OBJECT_UNAVAILABLE"
+            manifest[rel] = hashlib.sha256(blob.stdout).hexdigest()
+        return manifest, "LOCAL_GIT_COMMIT_BLOBS_HASHED"
+    except (OSError, subprocess.TimeoutExpired):
+        return None, "LOCAL_GIT_OBJECT_READ_FAILED"
 
 
 def _normalize_listener_entries(raw_entry: Any) -> list[dict[str, Any]]:
@@ -267,7 +306,18 @@ def collect_runtime_process_attestation(
     expected_sha = str(expected_release_sha or "").strip()
     git_state = inspect_working_tree_git_state(repo_root, cmd_runner=cmd_runner)
     digests = inspect_redacted_module_digests(repo_root)
-    manifest_check = verify_release_manifest_digests(digests, expected_release_manifest)
+    if expected_release_manifest is None:
+        # Git commit blobs are a local, source-only reference, not a signed
+        # external release attestation or proof of code loaded by a process.
+        manifest, manifest_reason = derive_local_git_commit_manifest(repo_root, expected_sha)
+        manifest_provenance = (
+            "LOCAL_GIT_COMMIT_OBJECT_UNTRUSTED" if manifest is not None else "UNAVAILABLE"
+        )
+    else:
+        manifest = expected_release_manifest
+        manifest_reason = "CALLER_SUPPLIED_MANIFEST_NOT_INDEPENDENT"
+        manifest_provenance = "CALLER_SUPPLIED_UNTRUSTED"
+    manifest_check = verify_release_manifest_digests(digests, manifest)
     port_state = inspect_port_owners(V6_MONITORED_PORTS, port_inspector=port_inspector)
     arm_sizing = inspect_readonly_arm_and_sizing_source(repo_root)
 
@@ -329,6 +379,8 @@ def collect_runtime_process_attestation(
         "workingTreeClean": git_state["workingTreeClean"],
         "moduleDigestsSha256": digests,
         "releaseManifestCheck": manifest_check,
+        "manifestProvenance": manifest_provenance,
+        "manifestDerivationReason": manifest_reason,
         "portAttestation": port_state,
         "portOwnerObserved": port_owner_observed,
         "gatewayProcessIdentified": gateway_process_identified,
