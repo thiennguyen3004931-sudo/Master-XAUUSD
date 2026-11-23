@@ -177,7 +177,7 @@ def evaluate_final_production_acceptance(
         "trading_sl_be_trailing_verified": bool(trading_sl_be_trailing_verified),
         "release_manifest_and_rollback_verified": bool(release_manifest_and_rollback_verified),
     }
-    unverified_items = sorted([k for k, v in checks.items() if not v])
+    unverified_items = sorted([k for k, v in checks.items() if not v] + ["independent_provenance_bound_evidence"])
 
 
     report: dict[str, Any] = {
