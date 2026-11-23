@@ -61,11 +61,16 @@ def verify_no_lookahead(
                     "decisionBarIndex": decision_bar,
                 }
             )
+    event_count = len(signal_events)
     return {
-        "passed": len(violations) == 0,
-        "checkedCount": len(signal_events),
+        "passed": event_count > 0 and len(violations) == 0,
+        "checkedCount": event_count,
         "violations": violations,
-        "reason": "CLAIMED_BAR_INDEX_CONTRACT_SCREENED" if not violations else "LOOKAHEAD_VIOLATION_DETECTED",
+        "reason": (
+            "EMPTY_SIGNAL_EVENTS_UNVERIFIED" if event_count == 0
+            else "CLAIMED_BAR_INDEX_CONTRACT_SCREENED" if not violations
+            else "LOOKAHEAD_VIOLATION_DETECTED"
+        ),
         "causalReplayProvenanceVerified": False,
     }
 
@@ -123,7 +128,7 @@ def evaluate_stress_and_walkforward_report(
             "complete": complete,
             "invalidIndices": invalid_indices,
             "winRate": round((wins / total), 4) if complete and total > 0 else None,
-            "netPnlAfterCostsUsd": round(net_pnl, 4) if complete else None,
+            "netPnlAfterCostsUsd": round(net_pnl, 4) if complete and total > 0 else None,
         }
 
     required_scenarios = {
@@ -144,6 +149,9 @@ def evaluate_stress_and_walkforward_report(
     if not in_summary["complete"] or not out_summary["complete"]:
         status = "REJECTED"
         reason = "INVALID_TRADE_ROWS_MUST_NOT_BE_SILENTLY_SKIPPED"
+    elif in_summary["tradeCount"] == 0 or out_summary["tradeCount"] == 0:
+        status = "UNVERIFIED"
+        reason = "EMPTY_IN_SAMPLE_OR_OUT_OF_SAMPLE_TRADES"
     elif missing_scenarios:
         status = "INCOMPLETE_STRESS_COVERAGE"
         reason = f"MISSING_STRESS_SCENARIOS:{','.join(missing_scenarios)}"
