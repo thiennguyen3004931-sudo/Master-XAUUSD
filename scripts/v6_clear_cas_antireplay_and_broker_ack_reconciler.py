@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Offline/source-only V6 G1 (#7) CLEAR CAS/anti-replay audit contract and broker ACK/partial-fill reconciler."""
+"""OFFLINE V6 G1 (#7) CLEAR claim screen and broker ACK scenario reconciler.
+
+No caller-provided ACL/DPAPI/signature booleans or synthetic broker observation
+can authorize CLEAR, unset an emergency STOP, or unblock runtime new entries.
+"""
 
 from __future__ import annotations
 
@@ -90,9 +94,37 @@ def validate_and_apply_clear_cas(
     clear_request: Mapping[str, Any],
     now_utc: int,
 ) -> dict[str, Any]:
-    """Validate a CLEAR request with CAS generation, anti-replay nonce, and trust preconditions.
+    """Production-facing fail-closed CLEAR entrypoint; trusted host proof absent.
 
-    Always returns ``liveAuthorized: False``. Does not mutate caller inputs.
+    Source-only inputs are not authenticated by a Windows service token.
+    Seeing four Verified=True flags cannot release an emergency stop.
+    Does not mutate the caller's state, files, or any MT5 order.
+    """
+    original = dict(current_state) if isinstance(current_state, Mapping) else {}
+    state = copy.deepcopy(original)
+    state["emergencyStopActive"] = True
+    state["blockNewOrders"] = True
+    state["liveAuthorized"] = False
+    return {
+        "accepted": False,
+        "reason": "TRUSTED_WINDOWS_SERVICE_CLEAR_PROOF_UNAVAILABLE",
+        "state": state,
+        "liveAuthorized": False,
+        "runtimeClearAuthorized": False,
+        "blockNewOrders": True,
+    }
+
+
+def simulate_offline_clear_cas(
+    *,
+    current_state: Mapping[str, Any],
+    clear_request: Mapping[str, Any],
+    now_utc: int,
+) -> dict[str, Any]:
+    """Screen a synthetic CLEAR claim and append a mock audit event only.
+
+    NOT a trusted Windows AccessCheck/DPAPI/operator verification. Always keeps
+    STOP and new-entry quarantine active even when the offline claim passes.
     """
     state = copy.deepcopy(dict(current_state))
     current_gen = state.get("generation")
@@ -214,7 +246,7 @@ def validate_and_apply_clear_cas(
     prev_hash = audit_chain[-1]["entrySha256"] if audit_chain else "GENESIS"
     audit_entry: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
-        "action": "AUTHORIZED_CLEAR",
+        "action": "OFFLINE_CLEAR_CLAIM_SCREENED",
         "fromGeneration": current_gen,
         "toGeneration": next_gen,
         "appliedAtUtc": now_utc,
@@ -229,19 +261,22 @@ def validate_and_apply_clear_cas(
 
     new_state = dict(state)
     new_state["generation"] = next_gen
-    new_state["emergencyStopActive"] = False
-    new_state["blockNewOrders"] = False
-    new_state["lastAction"] = "AUTHORIZED_CLEAR"
+    new_state["emergencyStopActive"] = True
+    new_state["blockNewOrders"] = True
+    new_state["lastAction"] = "OFFLINE_CLEAR_CLAIM_SCREENED"
     new_state["lastUpdatedAtUtc"] = now_utc
     new_state["consumedNonces"] = consumed_nonces + [nonce]
     new_state["auditChain"] = audit_chain + [audit_entry]
     new_state["liveAuthorized"] = False
 
     return {
-        "accepted": True,
-        "reason": "CLEAR_CAS_APPLIED_AUDIT_CHAINED",
+        "accepted": False,
+        "claimScreened": True,
+        "reason": "OFFLINE_CLEAR_CLAIM_SCREENED_NO_TRUSTED_HOST_PROOF",
         "state": new_state,
         "auditEntry": audit_entry,
+        "blockNewOrders": True,
+        "runtimeClearAuthorized": False,
         "liveAuthorized": False,
     }
 
@@ -253,7 +288,7 @@ def reconcile_broker_ack_and_fills(
     observed_deals: Sequence[Mapping[str, Any]],
     observed_pending_orders: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
-    """Reconcile broker ACK, opening DEAL_ENTRY_IN fills, and pending orders fail-closed."""
+    """Screen untrusted offline ACK/fills; never certify broker runtime."""
     client_order_id = str(intent.get("clientOrderId") or "").strip()
     account_login = intent.get("accountLogin")
     server = str(intent.get("server") or "").strip()
@@ -281,6 +316,8 @@ def reconcile_broker_ack_and_fills(
             "uncertainExposure": True,
             "emergencyStopActive": True,
             "blockNewOrders": True,
+            "runtimeBrokerEvidenceVerified": False,
+            "evaluationScope": "OFFLINE_SYNTHETIC_BROKER_SCENARIO",
             "requiresPartialFillReconciliation": False,
             "requiresPostStopFlattenOrReview": True,
             "liveAuthorized": False,
@@ -400,7 +437,10 @@ def reconcile_broker_ack_and_fills(
         "outcome": outcome,
         "uncertainExposure": uncertain_exposure,
         "emergencyStopActive": emergency_stop,
-        "blockNewOrders": block_new_orders,
+        "blockNewOrders": True,
+        "scenarioWouldBlockNewOrders": block_new_orders,
+        "runtimeBrokerEvidenceVerified": False,
+        "evaluationScope": "OFFLINE_SYNTHETIC_BROKER_SCENARIO",
         "requiresPartialFillReconciliation": requires_partial,
         "requiresPostStopFlattenOrReview": requires_post_stop,
         "liveAuthorized": False,
