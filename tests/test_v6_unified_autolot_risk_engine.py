@@ -192,6 +192,72 @@ class TestUnifiedAutoLotRiskEngine(unittest.TestCase):
         self.assertIn("MAX_DCA_LAYERS_LIMIT_REACHED", res_dca["hardBlocks"])
         self.assertIn("NETTING_ACCOUNT_COMBINES_DCA_INTO_SINGLE_POSITION", res_dca["warnings"])
 
+    def test_missing_or_invalid_broker_loss_never_uses_contract_distance_fallback(self) -> None:
+        for raw_loss in (None, 0.0, float("nan"), float("inf"), -1.0, False):
+            with self.subTest(loss=repr(raw_loss)):
+                result = eng.evaluate_unified_autolot_and_risk(
+                    requested_mode="AUTO_LOT",
+                    auto_lot_owner_approved=True,
+                    fixed_lot=0.01,
+                    direction="BUY",
+                    entry_price=2650.25,
+                    stop_loss_price=2643.25,
+                    account=_account(),
+                    broker_spec=_spec(orderCalcLossPerOneLotUsd=raw_loss),
+                    risk_policy=_policy(),
+                    now_utc=1795414005,
+                )
+                self.assertFalse(result["allowed"])
+                self.assertEqual(result["effectiveLot"], 0.0)
+                self.assertIn(
+                    "BROKER_ORDER_CALC_PROFIT_LOSS_UNVERIFIED", result["hardBlocks"]
+                )
+                self.assertFalse(result["liveAuthorized"])
+
+    def test_missing_cost_model_and_inverted_broker_volume_range_block(self) -> None:
+        for spec in (
+            _spec(commissionPerLotUsd=None),
+            _spec(estimatedSlippageUsdPerOz=None),
+            _spec(volumeMin=2.0, volumeMax=1.0),
+        ):
+            with self.subTest(spec=repr(spec)):
+                result = eng.evaluate_unified_autolot_and_risk(
+                    requested_mode="AUTO_LOT",
+                    auto_lot_owner_approved=True,
+                    fixed_lot=0.01,
+                    direction="SELL",
+                    entry_price=2650.0,
+                    stop_loss_price=2657.0,
+                    account=_account(),
+                    broker_spec=spec,
+                    risk_policy=_policy(),
+                    now_utc=1795414005,
+                )
+                self.assertFalse(result["allowed"])
+                self.assertFalse(result["runtimePreSendIntegrated"])
+                self.assertEqual(
+                    result["evaluationScope"],
+                    "OFFLINE_ONLY_NOT_WIRED_TO_FINAL_MT5_ORDER_SEND",
+                )
+
+    def test_candidate_allowed_not_equivalent_to_live_approval_or_broker_verification(self) -> None:
+        result = eng.evaluate_unified_autolot_and_risk(
+            requested_mode="AUTO_LOT",
+            auto_lot_owner_approved=True,
+            fixed_lot=0.01,
+            direction="BUY",
+            entry_price=2650.25,
+            stop_loss_price=2643.25,
+            account=_account(),
+            broker_spec=_spec(),
+            risk_policy=_policy(),
+            now_utc=1795414005,
+        )
+        self.assertTrue(result["allowed"])
+        self.assertFalse(result["runtimePreSendIntegrated"])
+        self.assertFalse(result["brokerPricingProvenanceVerified"])
+        self.assertFalse(result["liveAuthorized"])
+
     def test_shadow_mode_computes_auto_lot_without_changing_fixed_execution_lot(self) -> None:
         res = eng.evaluate_unified_autolot_and_risk(
             requested_mode="SHADOW",
