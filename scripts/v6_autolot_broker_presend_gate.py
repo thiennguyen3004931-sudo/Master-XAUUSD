@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""V6 Auto Lot Broker-Snapshot & Same-Tick Final Pre-Send Hard Gate (Stream C — Issue #76)."""
+"""Offline risk-candidate screener — NOT a broker-proven final pre-send gate.
+
+Caller-supplied broker snapshots, STOP state and risk policy cannot establish
+running service identity, actual broker data provenance or atomic send admission.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import math
+from decimal import Decimal, ROUND_FLOOR
 from typing import Any, Mapping, Sequence
 
 
@@ -29,17 +34,41 @@ def _sha256_canonical(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _lot_grid_specs_supported(vol_min: Any, vol_step: Any, vol_max: Any) -> bool:
+    """Proposals are reported at 8 decimal places. Refuse finer broker grids."""
+    if not (_is_pos(vol_min) and _is_pos(vol_step) and _is_pos(vol_max)):
+        return False
+    parts = (Decimal(str(v)) for v in (vol_min, vol_step, vol_max))
+    return all(d.as_tuple().exponent >= -8 for d in parts)
+
+
 def _floor_lot_on_broker_grid(raw_lot: float, vol_min: float, vol_step: float, vol_max: float) -> float:
-    if raw_lot < vol_min - EPS or vol_step <= 0.0:
+    """Round DOWN from volumeMin + N * volumeStep using exact decimal arithmetic."""
+    if not _is_pos(raw_lot) or not _lot_grid_specs_supported(vol_min, vol_step, vol_max):
         return 0.0
-    n = math.floor(((raw_lot - vol_min) / vol_step) + 1e-12)
-    if n < 0:
+    minimum = Decimal(str(vol_min))
+    maximum = Decimal(str(vol_max))
+    capped = min(Decimal(str(raw_lot)), maximum)
+    if capped < minimum or maximum < minimum:
         return 0.0
-    grid_lot = round(vol_min + n * vol_step, 8)
-    if grid_lot > vol_max + EPS:
-        n_max = math.floor(((vol_max - vol_min) / vol_step) + 1e-12)
-        grid_lot = round(vol_min + max(0, n_max) * vol_step, 8)
-    return grid_lot
+    step = Decimal(str(vol_step))
+    count = ((capped - minimum) / step).to_integral_value(rounding=ROUND_FLOOR)
+    result = minimum + count * step
+    return float(result) if result <= capped else 0.0
+
+
+def _fixed_lot_exactly_on_grid(
+    fixed_lot: Any, vol_min: Any, vol_step: Any, vol_max: Any
+) -> bool:
+    """Reject off-grid FIXED/SHADOW sizes, never silently change user lot."""
+    if not _is_pos(fixed_lot) or not _lot_grid_specs_supported(vol_min, vol_step, vol_max):
+        return False
+    value = Decimal(str(fixed_lot))
+    minimum = Decimal(str(vol_min))
+    step = Decimal(str(vol_step))
+    maximum = Decimal(str(vol_max))
+    return minimum <= value <= maximum and (value - minimum) % step == 0
+
 
 
 def evaluate_same_tick_presend_autolot_gate(
@@ -57,7 +86,7 @@ def evaluate_same_tick_presend_autolot_gate(
     now_utc: int,
     emergency_stop_active: bool = True,
 ) -> dict[str, Any]:
-    """Same-tick final pre-send hard gate combining Emergency Stop, Auto Lot, and daily-loss stop."""
+    """Screen caller claims OFFLINE; no MT5 adapter or authority to send orders."""
     blocks: list[str] = []
 
     if emergency_stop_active is not False:
@@ -112,7 +141,7 @@ def evaluate_same_tick_presend_autolot_gate(
         blocks.append("ORDER_CALC_PROFIT_UNVERIFIED")
     if not _is_pos(calc_margin_1lot):
         blocks.append("ORDER_CALC_MARGIN_UNVERIFIED")
-    if not _is_pos(vol_min) or not _is_pos(vol_max) or not _is_pos(vol_step) or not _is_pos(contract_size):
+    if not _lot_grid_specs_supported(vol_min, vol_step, vol_max) or not _is_pos(contract_size) or float(vol_min) > float(vol_max):
         blocks.append("BROKER_SYMBOL_SPEC_INVALID")
     if not _is_nonneg(commission_per_lot) or not _is_nonneg(slippage_usd_per_oz):
         blocks.append("BROKER_COST_SPEC_INVALID")
@@ -200,12 +229,12 @@ def evaluate_same_tick_presend_autolot_gate(
             if mode == "FIXED_LOT":
                 if not _is_pos(fixed_lot):
                     blocks.append("FIXED_LOT_INVALID")
+                elif not _fixed_lot_exactly_on_grid(
+                    fixed_lot, vol_min, vol_step, min(float(vol_max), float(max_lot_cap))
+                ):
+                    blocks.append("FIXED_LOT_OUT_OF_GRID")
                 else:
-                    effective_lot = _floor_lot_on_broker_grid(
-                        float(fixed_lot), float(vol_min), float(vol_step), min(float(vol_max), float(max_lot_cap))
-                    )
-                    if effective_lot < float(vol_min) - EPS:
-                        blocks.append("FIXED_LOT_OUT_OF_GRID")
+                    effective_lot = float(fixed_lot)
             elif mode == "AUTO_LOT":
                 if computed_lot < float(vol_min) - EPS:
                     blocks.append("AUTO_LOT_BELOW_VOLUME_MIN_RISK_GUARD")
@@ -214,10 +243,12 @@ def evaluate_same_tick_presend_autolot_gate(
             elif mode == "SHADOW":
                 if not _is_pos(fixed_lot):
                     blocks.append("SHADOW_FIXED_LOT_INVALID")
+                elif not _fixed_lot_exactly_on_grid(
+                    fixed_lot, vol_min, vol_step, min(float(vol_max), float(max_lot_cap))
+                ):
+                    blocks.append("SHADOW_FIXED_LOT_OUT_OF_GRID")
                 else:
-                    effective_lot = _floor_lot_on_broker_grid(
-                        float(fixed_lot), float(vol_min), float(vol_step), min(float(vol_max), float(max_lot_cap))
-                    )
+                    effective_lot = float(fixed_lot)
 
             if effective_lot > 0.0:
                 order_risk_usd = round(effective_lot * total_loss_1lot, 4)
@@ -227,18 +258,28 @@ def evaluate_same_tick_presend_autolot_gate(
                 if fm < required_margin_usd * float(margin_buf) - EPS:
                     blocks.append("INSUFFICIENT_FREE_MARGIN")
 
-    admitted = len(blocks) == 0 and effective_lot > 0.0
+    candidate_eligible = len(blocks) == 0 and effective_lot > 0.0
     rep: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
-        "scope": "OFFLINE_SAME_TICK_PRESEND_AUTOLOT_GATE_NO_ORDER",
+        "scope": "OFFLINE_UNVERIFIED_RISK_CANDIDATE_NO_BROKER_SEND",
         "requestedMode": mode,
         "direction": direction,
         "computedAutoLot": round(computed_lot, 8),
-        "effectiveLot": round(effective_lot if admitted else 0.0, 8),
+        "candidateLot": round(effective_lot if candidate_eligible else 0.0, 8),
+        # Legacy execution-named fields always refuse order admission.
+        "effectiveLot": 0.0,
+        "admitted": False,
+        "candidateEligibleOffline": candidate_eligible,
+        "candidateExecutionLotMode": "FIXED_LOT" if mode == "SHADOW" else mode,
+        "advisoryAutoLotOnly": mode == "SHADOW",
         "estimatedOrderRiskUsd": order_risk_usd,
         "requiredMarginUsd": required_margin_usd,
-        "admitted": admitted,
         "hardBlocks": sorted(set(blocks)),
+        "runtimeAdmissionVerified": False,
+        "brokerPricingProvenanceVerified": False,
+        "brokerInventoryProvenanceVerified": False,
+        "dailyPnlBrokerDayVerified": False,
+        "emergencyStopAuthorityVerified": False,
         "liveAuthorized": False,
     }
     rep["reportSha256"] = _sha256_canonical(rep)
