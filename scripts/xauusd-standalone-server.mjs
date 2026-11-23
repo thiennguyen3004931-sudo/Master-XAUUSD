@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { parseRequiredTicket, parseOptionalBoolean } from "./v6-api-input-guards.mjs";
 import { getV6ExecutionSizingDisclosure } from "./v6-execution-sizing-disclosure.mjs";
 import { getV6BrokerStatusEvidence, readExplicitBacktestStartingBalance } from "./v6-broker-status-evidence.mjs";
+import { resolveAllowedOriginValue } from "./v6-api-cors-origin-policy.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1734,25 +1735,22 @@ function getLanIps() {
 }
 
 function resolveAllowedOrigin(req) {
-  const origin = String(req?.headers?.origin || "").trim();
-  if (!origin) return "http://127.0.0.1:5717";
-  if (
-    origin.startsWith("http://127.0.0.1:") ||
-    origin.startsWith("http://localhost:") ||
-    origin.endsWith(".trycloudflare.com")
-  ) {
-    return origin;
-  }
-  return "http://127.0.0.1:5717";
+  return resolveAllowedOriginValue(req?.headers?.origin, {
+    webPort: WEB_PORT,
+    apiPort: API_PORT,
+    configuredOrigins: process.env.V6_ALLOWED_ORIGINS || "",
+  });
 }
 
 function sendJson(res, status, payload, req = null) {
   const body = JSON.stringify(payload);
+  const corsOrigin = resolveAllowedOrigin(req);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
-    "access-control-allow-origin": resolveAllowedOrigin(req),
+    ...(corsOrigin ? { "access-control-allow-origin": corsOrigin } : {}),
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token",
+    "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token, x-v6-nonce, x-v6-timestamp",
+    "vary": "Origin",
     "cache-control": "no-store",
   });
   res.end(body);
@@ -1894,10 +1892,18 @@ function buildStatusPayload(probe) {
 
 export async function handleApiRequest(req, res) {
   if (req.method === "OPTIONS") {
+    const corsOrigin = resolveAllowedOrigin(req);
+    if (!corsOrigin) {
+      res.writeHead(403, { "vary": "Origin", "cache-control": "no-store" });
+      res.end();
+      return;
+    }
     res.writeHead(204, {
-      "access-control-allow-origin": resolveAllowedOrigin(req),
+      "access-control-allow-origin": corsOrigin,
       "access-control-allow-methods": "GET, POST, OPTIONS",
-      "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token",
+      "access-control-allow-headers": "content-type, x-phase7c-token, x-mt5-api-key, x-v6-control-token, x-v6-nonce, x-v6-timestamp",
+      "vary": "Origin",
+      "cache-control": "no-store",
     });
     res.end();
     return;
