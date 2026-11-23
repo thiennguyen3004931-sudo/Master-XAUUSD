@@ -206,6 +206,39 @@ class TestBreakEvenAndTrailingMonotonicity(unittest.TestCase):
                 self.assertIsNone(result["initialRiskUsd"])
                 self.assertFalse(result["liveAuthorized"])
 
+    def test_m5_and_m15_trail_requires_explicit_closed_fresh_evidence(self) -> None:
+        pos = {
+            "magic": BOT_MAGIC, "direction": "BUY", "entryPrice": 2650.0,
+            "initialSl": 2643.0, "initialRiskUsd": 7.0, "currentSl": 2652.0,
+        }
+        base = {
+            "position": pos, "bot_magic": BOT_MAGIC,
+            "current_bid": 2669.0, "current_ask": 2669.2,
+            "m5_new_structure_sl": 2658.0,
+            "m15_fast_move_active": True,
+            "favorable_extreme_price": 2673.0,
+        }
+        missing_evidence = eng.compute_next_protective_sl(**base)
+        self.assertFalse(missing_evidence["shouldModify"])
+        self.assertEqual(missing_evidence["nextSl"], 2652.0)
+        assert missing_evidence["reason"] == "HOLD_EXISTING_SL"
+
+        spoofed_text = eng.compute_next_protective_sl(
+            **base, m5_structure_candle_closed="true", m5_structure_stale="false",
+            m15_candle_closed="true", m15_signal_stale="false",
+        )
+        self.assertFalse(spoofed_text["shouldModify"])
+        self.assertFalse(spoofed_text["liveAuthorized"])
+
+        confirmed = eng.compute_next_protective_sl(
+            **base, m5_structure_candle_closed=True, m5_structure_stale=False,
+            m15_candle_closed=True, m15_signal_stale=False,
+        )
+        self.assertTrue(confirmed["shouldModify"])
+        self.assertEqual(confirmed["nextSl"], 2663.0)
+        self.assertEqual(confirmed["reason"], "M15_FAST_MOVE_10USD_TRAIL")
+        self.assertFalse(confirmed["liveAuthorized"])
+
     def test_foreign_magic_and_nan_freeze_fail_closed(self) -> None:
         foreign = {"magic": 999999, "direction": "SELL", "entryPrice": 2650.0, "currentSl": 2657.0}
         rf = eng.compute_next_protective_sl(
