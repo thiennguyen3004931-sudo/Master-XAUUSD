@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Unified V6 Auto Lot, Risk Cap & MT5 Broker Spec Engine (Stream C — Issue #76)."""
+"""Offline-only V6 lot/risk evaluator — NOT wired to MT5 pre-send (Issue #76).
+
+No boolean supplied to this module is evidence of broker authenticity, policy
+approval or runtime LIVE authorization. Fail closed on missing broker pricing.
+"""
 
 from __future__ import annotations
 
@@ -91,8 +95,8 @@ def evaluate_unified_autolot_and_risk(
     vol_step = broker_spec.get("volumeStep")
     loss_per_lot_at_sl = broker_spec.get("orderCalcLossPerOneLotUsd")
     margin_per_one_lot = broker_spec.get("marginRequiredPerOneLotUsd")
-    commission_per_lot = broker_spec.get("commissionPerLotUsd", 0.0)
-    slippage_usd_per_oz = broker_spec.get("estimatedSlippageUsdPerOz", 0.0)
+    commission_per_lot = broker_spec.get("commissionPerLotUsd")
+    slippage_usd_per_oz = broker_spec.get("estimatedSlippageUsdPerOz")
     trading_session_open = broker_spec.get("tradingSessionOpen") is True
 
     if not trading_session_open:
@@ -110,10 +114,13 @@ def evaluate_unified_autolot_and_risk(
         ("VOLUME_MAX_INVALID", vol_max),
         ("VOLUME_STEP_INVALID", vol_step),
         ("MARGIN_PER_LOT_INVALID", margin_per_one_lot),
+        ("BROKER_ORDER_CALC_PROFIT_LOSS_UNVERIFIED", loss_per_lot_at_sl),
     ):
         if not _is_finite_pos(val):
             hard_blocks.append(name)
 
+    if _is_finite_pos(vol_min) and _is_finite_pos(vol_max) and float(vol_min) > float(vol_max) + EPS:
+        hard_blocks.append("BROKER_VOLUME_RANGE_INVERTED")
     if not _is_finite_pos(entry_price) or not _is_finite_pos(stop_loss_price):
         hard_blocks.append("ENTRY_OR_SL_PRICE_INVALID")
     elif side == "BUY" and float(stop_loss_price) >= float(entry_price):
@@ -182,10 +189,9 @@ def evaluate_unified_autolot_and_risk(
         sl_dist_usd_per_oz = abs(float(entry_price) - float(stop_loss_price))
         cs = float(contract_size)
 
-        if _is_finite_pos(loss_per_lot_at_sl):
-            base_loss_per_lot = float(loss_per_lot_at_sl)
-        else:
-            base_loss_per_lot = sl_dist_usd_per_oz * cs
+        # An approximate distance * contractSize fallback can severely
+        # understate broker-specific loss. Require verified broker loss input.
+        base_loss_per_lot = float(loss_per_lot_at_sl)
 
         friction_per_lot = (spread_usd_per_oz + float(slippage_usd_per_oz)) * cs + float(commission_per_lot)
         total_risk_per_lot = base_loss_per_lot + friction_per_lot
@@ -251,6 +257,9 @@ def evaluate_unified_autolot_and_risk(
         "estimatedOrderRiskUsd": estimated_order_risk_usd,
         "requiredMarginUsd": required_margin_usd,
         "allowed": allowed,
+        "evaluationScope": "OFFLINE_ONLY_NOT_WIRED_TO_FINAL_MT5_ORDER_SEND",
+        "runtimePreSendIntegrated": False,
+        "brokerPricingProvenanceVerified": False,
         "hardBlocks": sorted(set(hard_blocks)),
         "warnings": sorted(set(warnings)),
         "liveAuthorized": False,
