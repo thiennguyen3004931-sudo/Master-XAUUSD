@@ -48,17 +48,18 @@ def _quote(**overrides):
 
 
 def _evaluate(*, position=None, quote=None, sl=2650.2, sender=None, **extra):
-    return adapter.execute_protective_sltp_update_mock_boundary(
-        position=_pos() if position is None else position,
-        bot_magic=BOT_MAGIC,
-        quote=_quote() if quote is None else quote,
-        now_utc=1795416003,
-        proposed_sl=sl,
-        broker_stops_level_usd=0.5,
-        broker_freeze_level_usd=0.3,
-        broker_sltp_sender=sender,
-        **extra,
-    )
+    kwargs = {
+        "position": _pos() if position is None else position,
+        "bot_magic": BOT_MAGIC,
+        "quote": _quote() if quote is None else quote,
+        "now_utc": 1795416003,
+        "proposed_sl": sl,
+        "broker_stops_level_usd": 0.5,
+        "broker_freeze_level_usd": 0.3,
+        "broker_sltp_sender": sender,
+    }
+    kwargs.update(extra)
+    return adapter.execute_protective_sltp_update_mock_boundary(**kwargs)
 
 
 class TestSltpBrokerModifyAdapter(unittest.TestCase):
