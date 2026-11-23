@@ -26,7 +26,7 @@ def _seed_fake_repo(root: Path) -> dict[str, str]:
     }
     manifest: dict[str, str] = {}
     for rel, content in files.items():
-        (root / rel).write_text(content, encoding="utf-8")
+        (root / rel).write_bytes(content.encode("utf-8"))
         manifest[rel] = hashlib.sha256(content.encode("utf-8")).hexdigest()
     return manifest
 
