@@ -41,6 +41,53 @@ class TestBacktestAntiLookaheadAndStress(unittest.TestCase):
         self.assertFalse(bad["passed"])
         self.assertEqual(len(bad["violations"]), 2)
 
+    def test_invalid_bar_claims_and_missing_unclosed_flag_cannot_pass(self) -> None:
+        bad = bt.verify_no_lookahead([
+            {"decisionBarIndex": 10, "maxReadBarIndex": -1, "usesUnclosedCandle": False},
+            {"decisionBarIndex": 10, "maxReadBarIndex": 10},
+            {"decisionBarIndex": 10, "maxReadBarIndex": 10, "usesUnclosedCandle": "false"},
+        ])
+        self.assertFalse(bad["passed"])
+        self.assertEqual(len(bad["violations"]), 3)
+        ok = bt.verify_no_lookahead([
+            {"decisionBarIndex": 10, "maxReadBarIndex": 10, "usesUnclosedCandle": False},
+        ])
+        self.assertTrue(ok["passed"])
+        self.assertFalse(ok["causalReplayProvenanceVerified"])
+        self.assertEqual(ok["reason"], "CLAIMED_BAR_INDEX_CONTRACT_SCREENED")
+
+    def test_spoofed_stopout_and_stress_bools_never_certify_execution(self) -> None:
+        rep = bt.evaluate_stress_and_walkforward_report(
+            in_sample_trades=[{"netPnlAfterCostsUsd": 70.0}],
+            out_of_sample_trades=[{"netPnlAfterCostsUsd": -10.0}],
+            stress_scenarios=_all_stress_pass(),
+            broker_stopout_verified=True,
+            contains_demo_or_synthetic_data=False,
+        )
+        self.assertEqual(rep["status"], "UNVERIFIED")
+        self.assertEqual(rep["reason"], "CALLER_CLAIMS_NOT_CAUSAL_BROKER_STOPOUT_EVIDENCE")
+        self.assertFalse(rep["brokerStopOutVerified"])
+        self.assertTrue(rep["brokerStopOutClaimedByCaller"])
+        self.assertFalse(rep["walkForwardSplitVerified"])
+        self.assertFalse(rep["stressScenariosExecutedAndVerified"])
+        self.assertFalse(rep["liveAuthorized"])
+
+    def test_malformed_losing_trade_cannot_be_silently_omitted_from_stats(self) -> None:
+        rep = bt.evaluate_stress_and_walkforward_report(
+            in_sample_trades=[{"netPnlAfterCostsUsd": 90.0}, {"netPnlAfterCostsUsd": float("nan")}],
+            out_of_sample_trades=[{"netPnlAfterCostsUsd": 10.0}],
+            stress_scenarios=_all_stress_pass(),
+            broker_stopout_verified=True,
+        )
+        self.assertEqual(rep["status"], "REJECTED")
+        self.assertEqual(rep["reason"], "INVALID_TRADE_ROWS_MUST_NOT_BE_SILENTLY_SKIPPED")
+        self.assertEqual(rep["inSampleSummary"]["inputCount"], 2)
+        self.assertFalse(rep["inSampleSummary"]["complete"])
+        self.assertEqual(rep["inSampleSummary"]["invalidIndices"], [1])
+        self.assertIsNone(rep["inSampleSummary"]["winRate"])
+        self.assertIsNone(rep["inSampleSummary"]["netPnlAfterCostsUsd"])
+        self.assertFalse(rep["liveAuthorized"])
+
     def test_unverified_broker_stopout_always_reports_unverified(self) -> None:
         rep = bt.evaluate_stress_and_walkforward_report(
             in_sample_trades=[{"netPnlAfterCostsUsd": 120.0}, {"netPnlAfterCostsUsd": -40.0}],
