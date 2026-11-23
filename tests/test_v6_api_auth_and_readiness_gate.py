@@ -127,7 +127,7 @@ class TestFiveStageReadinessSeparation(unittest.TestCase):
         self.assertTrue(rep["claimOnlyStages"]["HOST_VERIFIED"])
         self.assertFalse(rep["runtimeIntegrationVerified"])
         self.assertEqual(rep["classification"], "LIVE_BLOCKED")
-        self.assertEqual(rep["unverifiedItems"], [])
+        self.assertEqual(rep["unverifiedItems"], ["independent_provenance_bound_evidence"])
         self.assertEqual(
             rep["reason"], "CALLER_BOOLEAN_CLAIMS_NOT_VERIFIED_HOST_BROKER_EVIDENCE"
         )
