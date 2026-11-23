@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V6 Trading Entry, Structural M5 SL, Break-Even & Trailing Stop Engine (Stream D — #7)."""
+"""V6 Trading Entry, Structural M5 SL, Break-Even & Trailing Stop Engine (Stream D - #7)."""
 
 from __future__ import annotations
 
@@ -105,9 +105,11 @@ def evaluate_entry_and_initial_sl(
 
     return {
         "action": "ADMIT_OFFLINE_CANDIDATE",
+        "evaluationScope": "OFFLINE_ENTRY_PROPOSAL_NO_MT5_ORDER",
         "direction": direction,
         "entryPrice": round(entry, 4),
         "initialSl": round(sl, 4),
+        "initialRiskUsd": round(sl_dist, 4),
         "takeProfit": round(tp, 4),
         "slDistanceUsd": round(sl_dist, 4),
         "rrRatio": round(rr, 4),
@@ -123,7 +125,11 @@ def compute_next_protective_sl(
     current_bid: float,
     current_ask: float,
     m5_new_structure_sl: float | None = None,
+    m5_structure_candle_closed: bool = True,
+    m5_structure_stale: bool = False,
     m15_fast_move_active: bool = False,
+    m15_candle_closed: bool = True,
+    m15_signal_stale: bool = False,
     favorable_extreme_price: float | None = None,
     be_trigger_usd: float | None = None,
     be_offset_usd: float = 0.2,
@@ -131,7 +137,7 @@ def compute_next_protective_sl(
     broker_stops_level_usd: float = 0.5,
     broker_freeze_level_usd: float = 0.3,
 ) -> dict[str, Any]:
-    """Offline monotonic SL proposal: BE at >=1R initial risk; no live order."""
+    """Offline monotonic SL proposal: BE at >=1R immutable initial risk; no live order."""
     pos_magic = position.get("magic")
     if type(pos_magic) is not int or pos_magic != bot_magic:
         return {
@@ -163,7 +169,6 @@ def compute_next_protective_sl(
     cur_sl_f = float(current_sl)
     bid_f = float(current_bid)
     ask_f = float(current_ask)
-    # Unknown/invalid broker constraints must never result in a suggested SL.
     if (
         not _is_nonneg(broker_stops_level_usd)
         or not _is_nonneg(broker_freeze_level_usd)
@@ -191,58 +196,69 @@ def compute_next_protective_sl(
 
     candidates: list[tuple[float, str]] = []
 
-    profit_usd = (bid_f - entry_f) if direction == "BUY" else (entry_f - ask_f)
-    # Break-even is triggered by 1R of the ORIGINAL stop distance, not a
-    # hard-coded 6 USD price move. Trailing can still raise protection when
-    # original risk evidence is absent, but BE must remain unverified.
-    initial_risk = position.get("initialRiskUsd")
-    if not _is_pos(initial_risk):
-        initial_sl = position.get("initialSl")
-        if _is_pos(initial_sl):
-            structural_risk = (
-                entry_f - float(initial_sl)
-                if direction == "BUY" else float(initial_sl) - entry_f
-            )
-            initial_risk = structural_risk if structural_risk > EPS else None
+    raw_initial_risk = position.get("initialRiskUsd")
+    raw_initial_sl = position.get("initialSl")
+    risk_from_field = float(raw_initial_risk) if _is_pos(raw_initial_risk) else None
+    risk_from_sl: float | None = None
+    if _is_pos(raw_initial_sl):
+        dist = (entry_f - float(raw_initial_sl)) if direction == "BUY" else (float(raw_initial_sl) - entry_f)
+        if dist > EPS:
+            risk_from_sl = dist
+
+    initial_risk_consistent = True
+    if risk_from_field is not None and risk_from_sl is not None:
+        if abs(risk_from_field - risk_from_sl) > 1e-4:
+            initial_risk_consistent = False
+            initial_r = None
         else:
-            initial_risk = None
-    if _is_pos(initial_risk):
-        initial_r = float(initial_risk)
+            initial_r = risk_from_sl
+    elif risk_from_sl is not None:
+        initial_r = risk_from_sl
+    elif risk_from_field is not None:
+        initial_r = risk_from_field
     else:
         initial_r = None
-    # Explicit override may only INCREASE the required 1R trigger.
+
+    profit_usd = (bid_f - entry_f) if direction == "BUY" else (entry_f - ask_f)
     trigger = (
         max(initial_r, float(be_trigger_usd))
         if initial_r is not None and be_trigger_usd is not None
         else initial_r
     )
-    if trigger is not None and profit_usd >= trigger - EPS:
+    if initial_risk_consistent and trigger is not None and profit_usd >= trigger - EPS:
         be_sl = (entry_f + float(be_offset_usd)) if direction == "BUY" else (entry_f - float(be_offset_usd))
         candidates.append((be_sl, "BREAK_EVEN"))
 
-    if _is_pos(m5_new_structure_sl):
+    if m5_structure_candle_closed and not m5_structure_stale and _is_pos(m5_new_structure_sl):
         candidates.append((float(m5_new_structure_sl), "M5_STRUCTURAL_TRAIL"))
 
-    if m15_fast_move_active and _is_pos(favorable_extreme_price):
+    if (
+        m15_fast_move_active
+        and m15_candle_closed
+        and not m15_signal_stale
+        and _is_pos(favorable_extreme_price)
+    ):
         ext = float(favorable_extreme_price)
         fast_sl = (ext - float(m15_fast_trail_distance_usd)) if direction == "BUY" else (ext + float(m15_fast_trail_distance_usd))
         candidates.append((fast_sl, "M15_FAST_MOVE_10USD_TRAIL"))
 
     best_sl = cur_sl_f
-    best_reason = "HOLD_EXISTING_SL"
+    best_reason = "HOLD_EXISTING_SL" if initial_risk_consistent else "IMMUTABLE_INITIAL_RISK_MISMATCH"
 
     for cand_sl, reason in candidates:
         if direction == "BUY":
             if cand_sl <= best_sl + EPS:
                 continue
-            if (bid_f - cand_sl) < stops_lvl - EPS:
+            target_dist = bid_f - cand_sl
+            if target_dist < stops_lvl - EPS or target_dist <= freeze_lvl + EPS:
                 continue
             best_sl = cand_sl
             best_reason = reason
         else:
             if cand_sl >= best_sl - EPS:
                 continue
-            if (cand_sl - ask_f) < stops_lvl - EPS:
+            target_dist = cand_sl - ask_f
+            if target_dist < stops_lvl - EPS or target_dist <= freeze_lvl + EPS:
                 continue
             best_sl = cand_sl
             best_reason = reason
@@ -251,7 +267,7 @@ def compute_next_protective_sl(
     return {
         "shouldModify": changed,
         "evaluationScope": "OFFLINE_PROTECTIVE_SL_PROPOSAL_NO_MT5_ORDER",
-        "initialRiskUsd": initial_r,
+        "initialRiskUsd": round(initial_r, 4) if initial_r is not None else None,
         "direction": direction,
         "previousSl": round(cur_sl_f, 4),
         "nextSl": round(best_sl, 4),
