@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""V6 Standalone Protective SL/TP Broker Readback & Reconciliation Contract (Stream D — Issue #7)."""
+"""OFFLINE comparison of caller-supplied SLTP state; not broker evidence.
+
+A matching dict, timestamp or closing_deal_observed bool does not authenticate
+MT5, bind the service process, reconcile an ACK, or permit retry/new orders.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +14,7 @@ from typing import Any, Mapping
 
 
 SCHEMA_VERSION = 1
-SCOPE = "READONLY_SLTP_BROKER_READBACK_RECONCILIATION_CONTRACT_NO_ORDER"
+SCOPE = "OFFLINE_CALLER_SLTP_FIELDS_COMPARISON_UNVERIFIED_NO_ORDER"
 EPS = 1e-4
 
 
@@ -32,9 +36,11 @@ def reconcile_sltp_broker_readback(
     max_snapshot_age_seconds: int = 10,
     closing_deal_observed: bool = False,
 ) -> dict[str, Any]:
-    """Reconcile expected protective SL/TP against a read-only broker position snapshot."""
+    """Compare inert caller-supplied fields, always fail closed for broker authority."""
     ticket = expected_state.get("ticket")
     bot_magic = expected_state.get("magic")
+    expected_login = expected_state.get("accountLogin")
+    expected_server = expected_state.get("server")
     symbol = str(expected_state.get("symbol") or "").strip().upper()
     direction = str(expected_state.get("direction") or "").strip().upper()
     prev_sl = expected_state.get("previousSl")
@@ -62,10 +68,15 @@ def reconcile_sltp_broker_readback(
             "direction": direction,
             "status": status,
             "reason": reason,
-            "reconciled": reconciled,
-            "retryRequired": retry_required,
+            "candidateFieldsMatch": reconciled,
+            "reconciled": False,
+            "retryRequired": False,
+            "reconciliationRequired": True,
+            "brokerReadbackProvenanceVerified": False,
+            "closingDealProvenanceVerified": False,
+            "brokerAcknowledgementVerified": False,
             "escalationRequired": escalation_required,
-            "blockNewOrders": block_new_orders,
+            "blockNewOrders": True,
             "observedSl": observed_sl,
             "observedTp": observed_tp,
             "observedVolume": observed_vol,
@@ -80,6 +91,10 @@ def reconcile_sltp_broker_readback(
         type(ticket) is not int
         or ticket <= 0
         or type(bot_magic) is not int
+        or type(expected_login) is not int
+        or expected_login <= 0
+        or not isinstance(expected_server, str)
+        or not expected_server.strip()
         or not symbol
         or direction not in {"BUY", "SELL"}
         or not _is_pos(prev_sl)
@@ -118,12 +133,12 @@ def reconcile_sltp_broker_readback(
     if pos_exists is False:
         if closing_deal_observed is True:
             return _out(
-                status="RECONCILED_POSITION_CLOSED_AT_BROKER",
-                reason="POSITION_CLOSED_WITH_DEAL_ENTRY_OUT_EVIDENCE",
-                reconciled=True,
+                status="CALLER_CLOSING_DEAL_CLAIM_UNVERIFIED",
+                reason="CLOSING_DEAL_BOOLEAN_NOT_TRUSTED_BROKER_HISTORY",
+                reconciled=False,
                 retry_required=False,
-                escalation_required=False,
-                block_new_orders=False,
+                escalation_required=True,
+                block_new_orders=True,
                 observed_vol=0.0,
             )
         return _out(
@@ -147,8 +162,12 @@ def reconcile_sltp_broker_readback(
         )
 
     if (
-        broker_readback.get("ticket") != ticket
+        type(broker_readback.get("ticket")) is not int
+        or type(broker_readback.get("magic")) is not int
+        or broker_readback.get("ticket") != ticket
         or broker_readback.get("magic") != bot_magic
+        or broker_readback.get("accountLogin") != expected_login
+        or broker_readback.get("server") != expected_server
         or str(broker_readback.get("symbol") or "").strip().upper() != symbol
         or str(broker_readback.get("direction") or "").strip().upper() != direction
     ):
@@ -203,13 +222,26 @@ def reconcile_sltp_broker_readback(
             observed_vol=round(obs_vol_f, 8),
         )
 
+    if obs_vol_f > prev_vol_f + 1e-9:
+        return _out(
+            status="POSITION_VOLUME_INCREASED_UNVERIFIED_ESCALATE",
+            reason="VOLUME_RISE_REQUIRES_FRESH_BROKER_INVENTORY",
+            reconciled=False,
+            retry_required=False,
+            escalation_required=True,
+            block_new_orders=True,
+            observed_sl=round(obs_sl_f, 4),
+            observed_tp=round(obs_tp_f, 4),
+            observed_vol=round(obs_vol_f, 8),
+        )
+
     target_confirmed = abs(obs_sl_f - target_sl_f) <= EPS
     partial_reduced = obs_vol_f < prev_vol_f - 1e-9
 
     if target_confirmed and partial_reduced:
         return _out(
-            status="RECONCILED_PARTIAL_VOLUME_AND_TARGET_SL_CONFIRMED",
-            reason="PARTIAL_VOLUME_REDUCED_SLTP_PROTECTED",
+            status="CALLER_PARTIAL_VOLUME_TARGET_MATCH_UNVERIFIED",
+            reason="UNVERIFIED_CALLER_SNAPSHOT_PARTIAL_VOLUME",
             reconciled=True,
             retry_required=False,
             escalation_required=False,
@@ -221,8 +253,8 @@ def reconcile_sltp_broker_readback(
 
     if target_confirmed:
         return _out(
-            status="RECONCILED_TARGET_CONFIRMED",
-            reason="BROKER_READBACK_MATCHES_TARGET_SLTP",
+            status="CALLER_TARGET_FIELDS_MATCH_UNVERIFIED",
+            reason="TARGET_MATCH_IN_CALLER_SNAPSHOT_NOT_BROKER_EVIDENCE",
             reconciled=True,
             retry_required=False,
             escalation_required=False,
@@ -233,8 +265,8 @@ def reconcile_sltp_broker_readback(
         )
 
     return _out(
-        status="DRIFT_SL_NOT_APPLIED_RETRY_REQUIRED",
-        reason="BROKER_STILL_HOLDS_PREVIOUS_SL",
+        status="SL_DRIFT_UNVERIFIED_RECONCILE_BEFORE_RETRY",
+        reason="NO_TRUSTED_ACK_OR_FRESH_BROKER_READBACK_FOR_RETRY",
         reconciled=False,
         retry_required=True,
         escalation_required=False,
