@@ -99,7 +99,7 @@ class TestTradingEntryAndInitialSl(unittest.TestCase):
 
 class TestBreakEvenAndTrailingMonotonicity(unittest.TestCase):
     def test_buy_be_then_m5_trail_then_m15_fast_move_never_widens(self) -> None:
-        pos = {"magic": BOT_MAGIC, "direction": "BUY", "entryPrice": 2650.0, "currentSl": 2643.0}
+        pos = {"magic": BOT_MAGIC, "direction": "BUY", "entryPrice": 2650.0, "initialSl": 2643.0, "currentSl": 2643.0}
         r1 = eng.compute_next_protective_sl(
             position=pos, bot_magic=BOT_MAGIC, current_bid=2657.0, current_ask=2657.2
         )
@@ -143,6 +143,55 @@ class TestBreakEvenAndTrailingMonotonicity(unittest.TestCase):
         self.assertFalse(r4["shouldModify"])
         self.assertEqual(r4["nextSl"], 2662.0)
 
+    def test_break_even_requires_original_one_r_and_never_uses_six_price_default(self) -> None:
+        buy = {
+            "magic": BOT_MAGIC, "direction": "BUY",
+            "entryPrice": 2650.0, "initialSl": 2642.0, "currentSl": 2642.0,
+        }
+        before_one_r = eng.compute_next_protective_sl(
+            position=buy, bot_magic=BOT_MAGIC, current_bid=2656.5, current_ask=2656.7,
+        )
+        self.assertFalse(before_one_r["shouldModify"])
+        self.assertEqual(before_one_r["nextSl"], 2642.0)
+        self.assertEqual(before_one_r["initialRiskUsd"], 8.0)
+        self.assertFalse(before_one_r["liveAuthorized"])
+
+        at_one_r = eng.compute_next_protective_sl(
+            position=buy, bot_magic=BOT_MAGIC, current_bid=2658.0, current_ask=2658.2,
+        )
+        self.assertTrue(at_one_r["shouldModify"])
+        self.assertEqual(at_one_r["nextSl"], 2650.2)
+        self.assertEqual(at_one_r["reason"], "BREAK_EVEN")
+        self.assertEqual(at_one_r["evaluationScope"], "OFFLINE_PROTECTIVE_SL_PROPOSAL_NO_MT5_ORDER")
+
+        early_override = eng.compute_next_protective_sl(
+            position=buy, bot_magic=BOT_MAGIC, current_bid=2657.0,
+            current_ask=2657.2, be_trigger_usd=4.0,
+        )
+        self.assertFalse(early_override["shouldModify"])
+
+    def test_no_original_risk_cannot_implicitly_trigger_be_and_broker_nan_blocks(self) -> None:
+        without_initial = {
+            "magic": BOT_MAGIC, "direction": "BUY", "entryPrice": 2650.0,
+            "currentSl": 2643.0,
+        }
+        no_be = eng.compute_next_protective_sl(
+            position=without_initial, bot_magic=BOT_MAGIC,
+            current_bid=2660.0, current_ask=2660.2,
+        )
+        self.assertFalse(no_be["shouldModify"])
+        self.assertIsNone(no_be["initialRiskUsd"])
+        for stops in (None, float("nan"), -1.0):
+            with self.subTest(stops=repr(stops)):
+                blocked = eng.compute_next_protective_sl(
+                    position=without_initial, bot_magic=BOT_MAGIC,
+                    current_bid=2660.0, current_ask=2660.2,
+                    broker_stops_level_usd=stops,
+                    m5_new_structure_sl=2655.0,
+                )
+                self.assertFalse(blocked["shouldModify"])
+                self.assertEqual(blocked["reason"], "BROKER_OR_TRAILING_POLICY_UNVERIFIED")
+
     def test_sell_monotonic_and_foreign_magic_and_freeze_level_protected(self) -> None:
         foreign = {"magic": 999999, "direction": "SELL", "entryPrice": 2650.0, "currentSl": 2657.0}
         rf = eng.compute_next_protective_sl(
@@ -151,7 +200,7 @@ class TestBreakEvenAndTrailingMonotonicity(unittest.TestCase):
         self.assertFalse(rf["shouldModify"])
         self.assertEqual(rf["reason"], "POSITION_NOT_OWNED_BY_BOT")
 
-        pos = {"magic": BOT_MAGIC, "direction": "SELL", "entryPrice": 2650.0, "currentSl": 2657.0}
+        pos = {"magic": BOT_MAGIC, "direction": "SELL", "entryPrice": 2650.0, "initialSl": 2657.0, "currentSl": 2657.0}
         rs = eng.compute_next_protective_sl(
             position=pos,
             bot_magic=BOT_MAGIC,
