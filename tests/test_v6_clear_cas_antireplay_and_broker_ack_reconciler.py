@@ -62,13 +62,18 @@ def _base_intent(*, stop_active: bool = False) -> dict:
 
 
 class TestClearCasAntiReplay(unittest.TestCase):
-    def test_valid_clear_increments_generation_and_appends_verified_audit_chain(self) -> None:
-        res = mod.validate_and_apply_clear_cas(
+    def test_offline_clear_claim_increments_mock_generation_but_never_releases_stop(self) -> None:
+        res = mod.simulate_offline_clear_cas(
             current_state=_base_state(),
             clear_request=_valid_clear_request(),
             now_utc=1795413100,
         )
-        self.assertTrue(res["accepted"])
+        self.assertFalse(res["accepted"])
+        self.assertTrue(res["claimScreened"])
+        self.assertTrue(res["blockNewOrders"])
+        self.assertTrue(res["state"]["emergencyStopActive"])
+        self.assertTrue(res["state"]["blockNewOrders"])
+        self.assertEqual(res["state"]["lastAction"], "OFFLINE_CLEAR_CLAIM_SCREENED")
         self.assertFalse(res["liveAuthorized"])
         self.assertFalse(res["state"]["liveAuthorized"])
         self.assertEqual(res["state"]["generation"], 4)
@@ -76,10 +81,36 @@ class TestClearCasAntiReplay(unittest.TestCase):
         self.assertEqual(len(res["state"]["auditChain"]), 1)
         self.assertTrue(mod.verify_audit_chain(res["state"]["auditChain"])["valid"])
 
+    def test_production_entrypoint_rejects_all_true_caller_claims_and_never_mutates_state(self) -> None:
+        original = _base_state()
+        request = _valid_clear_request()
+        result = mod.validate_and_apply_clear_cas(
+            current_state=original, clear_request=request, now_utc=1795413100
+        )
+        self.assertFalse(result["accepted"])
+        self.assertEqual(
+            result["reason"], "TRUSTED_WINDOWS_SERVICE_CLEAR_PROOF_UNAVAILABLE"
+        )
+        self.assertFalse(result["runtimeClearAuthorized"])
+        self.assertFalse(result["liveAuthorized"])
+        self.assertTrue(result["blockNewOrders"])
+        self.assertTrue(result["state"]["emergencyStopActive"])
+        self.assertTrue(result["state"]["blockNewOrders"])
+        self.assertEqual(original, _base_state())
+
+        # Even spoofing a cleared input state must be forced back into STOP.
+        spoofed = dict(original, emergencyStopActive=False, blockNewOrders=False)
+        blocked = mod.validate_and_apply_clear_cas(
+            current_state=spoofed, clear_request=request, now_utc=1795413100
+        )
+        self.assertFalse(blocked["accepted"])
+        self.assertTrue(blocked["state"]["emergencyStopActive"])
+        self.assertTrue(blocked["state"]["blockNewOrders"])
+
     def test_replay_nonce_is_rejected(self) -> None:
         req = _valid_clear_request()
         req["nonce"] = "already-used-nonce-0001"
-        res = mod.validate_and_apply_clear_cas(
+        res = mod.simulate_offline_clear_cas(
             current_state=_base_state(),
             clear_request=req,
             now_utc=1795413100,
@@ -91,7 +122,7 @@ class TestClearCasAntiReplay(unittest.TestCase):
     def test_cas_generation_mismatch_is_rejected(self) -> None:
         req = _valid_clear_request()
         req["expectedGeneration"] = 2
-        res = mod.validate_and_apply_clear_cas(
+        res = mod.simulate_offline_clear_cas(
             current_state=_base_state(),
             clear_request=req,
             now_utc=1795413100,
@@ -101,7 +132,7 @@ class TestClearCasAntiReplay(unittest.TestCase):
 
     def test_expired_or_excessive_ttl_window_is_rejected(self) -> None:
         req = _valid_clear_request()
-        res_expired = mod.validate_and_apply_clear_cas(
+        res_expired = mod.simulate_offline_clear_cas(
             current_state=_base_state(),
             clear_request=req,
             now_utc=1795413201,
@@ -111,7 +142,7 @@ class TestClearCasAntiReplay(unittest.TestCase):
 
         req_long = _valid_clear_request()
         req_long["expiresAtUtc"] = req_long["issuedAtUtc"] + 301
-        res_long = mod.validate_and_apply_clear_cas(
+        res_long = mod.simulate_offline_clear_cas(
             current_state=_base_state(),
             clear_request=req_long,
             now_utc=1795413100,
@@ -122,7 +153,7 @@ class TestClearCasAntiReplay(unittest.TestCase):
     def test_binding_mismatch_and_missing_trust_preconditions_fail_closed(self) -> None:
         req_srv = _valid_clear_request()
         req_srv["server"] = "OtherBroker-Demo"
-        res_srv = mod.validate_and_apply_clear_cas(
+        res_srv = mod.simulate_offline_clear_cas(
             current_state=_base_state(),
             clear_request=req_srv,
             now_utc=1795413100,
@@ -132,7 +163,7 @@ class TestClearCasAntiReplay(unittest.TestCase):
 
         req_trust = _valid_clear_request()
         req_trust["dpapiServiceIdentityVerified"] = False
-        res_trust = mod.validate_and_apply_clear_cas(
+        res_trust = mod.simulate_offline_clear_cas(
             current_state=_base_state(),
             clear_request=req_trust,
             now_utc=1795413100,
@@ -141,7 +172,7 @@ class TestClearCasAntiReplay(unittest.TestCase):
         self.assertIn("dpapiServiceIdentityVerified", res_trust["reason"])
 
     def test_tampered_audit_chain_is_detected(self) -> None:
-        first = mod.validate_and_apply_clear_cas(
+        first = mod.simulate_offline_clear_cas(
             current_state=_base_state(),
             clear_request=_valid_clear_request(),
             now_utc=1795413100,
@@ -153,7 +184,7 @@ class TestClearCasAntiReplay(unittest.TestCase):
         req2 = _valid_clear_request()
         req2["expectedGeneration"] = 4
         req2["nonce"] = "fresh-operator-nonce-20261123-002"
-        res2 = mod.validate_and_apply_clear_cas(
+        res2 = mod.simulate_offline_clear_cas(
             current_state=tampered_state,
             clear_request=req2,
             now_utc=1795413150,
@@ -194,7 +225,9 @@ class TestBrokerAckAndPartialFillReconciler(unittest.TestCase):
         self.assertEqual(res["matchingOpeningDealCount"], 1)
         self.assertEqual(res["ignoredDealCount"], 1)
         self.assertFalse(res["uncertainExposure"])
-        self.assertFalse(res["blockNewOrders"])
+        self.assertTrue(res["blockNewOrders"])
+        self.assertFalse(res["runtimeBrokerEvidenceVerified"])
+        self.assertEqual(res["evaluationScope"], "OFFLINE_SYNTHETIC_BROKER_SCENARIO")
         self.assertFalse(res["liveAuthorized"])
 
     def test_partial_fill_blocks_new_orders_and_tracks_remaining_volume(self) -> None:
