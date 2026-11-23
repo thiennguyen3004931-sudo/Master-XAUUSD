@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""V6 API Auth, Fail-Closed Safe Startup & 5-Stage Production Readiness Gate (Streams B & F)."""
+"""OFFLINE V6 API auth, safe-startup and readiness policy contracts (Streams B/F).
+
+These functions are not wired into the production API or verified V6 process.
+Caller-provided booleans and an owner-approval flag cannot attest host/broker
+evidence or authorize LIVE. All emitted production gates remain blocked.
+"""
 
 from __future__ import annotations
 
@@ -106,6 +111,7 @@ def build_safe_startup_state(
         "persistedStateMissingOrCorrupt": state_corrupt,
         "suppressedPersistedFlags": sorted(ignored_flags),
         "reason": "SAFE_STARTUP_DISARMED_FAIL_CLOSED",
+        "runtimeStartupIntegrated": False,
     }
 
 
@@ -125,8 +131,11 @@ def evaluate_final_production_acceptance(
     release_manifest_and_rollback_verified: bool,
     owner_explicit_live_approval: bool = False,
 ) -> dict[str, Any]:
-    """Compute separated 5-stage readiness flags and Final Production Acceptance (Stream F)."""
-    code_ready = bool(
+    """Report untrusted checklist claims; never self-authorize LIVE in offline evaluator."""
+    # This function receives untrusted booleans, not provenance-bound
+    # attestations. A caller can set every flag to True, including the owner
+    # approval claim, so NONE can independently certify actual LIVE readiness.
+    claimed_code_ready = bool(
         ci_all_required_green
         and branch_protection_enforced
         and emergency_stop_and_clear_verified
@@ -134,16 +143,25 @@ def evaluate_final_production_acceptance(
         and broker_ack_reconciliation_verified
         and release_manifest_and_rollback_verified
     )
-    host_verified = bool(
+    claimed_host_verified = bool(
         windows_runtime_process_verified
         and windows_acl_dpapi_service_verified
         and api_auth_hardened_verified
     )
-    broker_verified = bool(mt5_readonly_contract_verified)
-    risk_verified = bool(autolot_and_daily_loss_verified and trading_sl_be_trailing_verified)
-
-    all_prelive_verified = code_ready and host_verified and broker_verified and risk_verified
-    live_authorized = bool(all_prelive_verified and owner_explicit_live_approval)
+    claimed_broker_verified = bool(mt5_readonly_contract_verified)
+    claimed_risk_verified = bool(
+        autolot_and_daily_loss_verified and trading_sl_be_trailing_verified
+    )
+    all_claims_true = bool(
+        claimed_code_ready
+        and claimed_host_verified
+        and claimed_broker_verified
+        and claimed_risk_verified
+    )
+    # Source-only advisory; it cannot promote a runtime authorization gate.
+    code_ready = host_verified = broker_verified = risk_verified = False
+    live_authorized = False
+    classification = "LIVE_BLOCKED"
 
     checks = {
         "ci_all_required_green": bool(ci_all_required_green),
@@ -161,12 +179,6 @@ def evaluate_final_production_acceptance(
     }
     unverified_items = sorted([k for k, v in checks.items() if not v])
 
-    if live_authorized:
-        classification = "LIVE_AUTHORIZED_BY_OWNER"
-    elif all_prelive_verified:
-        classification = "READY_FOR_OWNER_LIVE_APPROVAL"
-    else:
-        classification = "LIVE_BLOCKED"
 
     report: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
@@ -176,6 +188,16 @@ def evaluate_final_production_acceptance(
         "RISK_VERIFIED": risk_verified,
         "LIVE_AUTHORIZED": live_authorized,
         "classification": classification,
+        "reason": "CALLER_BOOLEAN_CLAIMS_NOT_VERIFIED_HOST_BROKER_EVIDENCE",
+        "runtimeIntegrationVerified": False,
+        "claimedPreLiveChecklistComplete": all_claims_true,
+        "claimedOwnerApproval": bool(owner_explicit_live_approval),
+        "claimOnlyStages": {
+            "CODE_READY": claimed_code_ready,
+            "HOST_VERIFIED": claimed_host_verified,
+            "BROKER_VERIFIED": claimed_broker_verified,
+            "RISK_VERIFIED": claimed_risk_verified,
+        },
         "unverifiedItems": unverified_items,
         "checks": checks,
     }
