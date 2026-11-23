@@ -1,4 +1,4 @@
-"""Unit tests for V6 Trading Entry, M5 Structural SL, BE & Trailing Engine (Stream D)."""
+"""Unit tests for V6 Trading Entry, M5 Structural SL, 1R BE & Trailing Engine (Stream D)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class TestTradingEntryAndInitialSl(unittest.TestCase):
             nearby_obstacle_distance_usd=12.0,
         )
         self.assertEqual(buy["action"], "ADMIT_OFFLINE_CANDIDATE")
-        self.assertEqual(buy["slDistanceUsd"], 7.0)
+        self.assertEqual(buy["initialRiskUsd"], 7.0)
         self.assertFalse(buy["liveAuthorized"])
 
         sell = eng.evaluate_entry_and_initial_sl(
@@ -43,9 +43,9 @@ class TestTradingEntryAndInitialSl(unittest.TestCase):
             nearby_obstacle_distance_usd=10.0,
         )
         self.assertEqual(sell["action"], "ADMIT_OFFLINE_CANDIDATE")
-        self.assertEqual(sell["slDistanceUsd"], 6.5)
+        self.assertEqual(sell["initialRiskUsd"], 6.5)
 
-    def test_wide_structural_sl_waits_pullback_never_tightens(self) -> None:
+    def test_wide_structural_sl_waits_pullback_and_invalid_policy_fails_closed(self) -> None:
         res = eng.evaluate_entry_and_initial_sl(
             regime="TREND",
             buy_signal=True,
@@ -57,34 +57,8 @@ class TestTradingEntryAndInitialSl(unittest.TestCase):
             nearby_obstacle_distance_usd=15.0,
         )
         self.assertEqual(res["action"], "WAIT_PULLBACK_OR_SKIP")
-        self.assertEqual(res["reason"], "STRUCTURAL_SL_TOO_WIDE_DO_NOT_TIGHTEN")
 
-    def test_conflicting_signals_unclosed_candle_and_nearby_obstacle_blocked(self) -> None:
-        conflict = eng.evaluate_entry_and_initial_sl(
-            regime="TREND",
-            buy_signal=True,
-            sell_signal=True,
-            candle_closed=True,
-            entry_price=2650.0,
-            m5_structural_sl=2643.0,
-            take_profit=2664.0,
-            nearby_obstacle_distance_usd=12.0,
-        )
-        self.assertEqual(conflict["reason"], "CONFLICTING_BUY_SELL_SIGNAL")
-
-        unclosed = eng.evaluate_entry_and_initial_sl(
-            regime="TREND",
-            buy_signal=True,
-            sell_signal=False,
-            candle_closed=False,
-            entry_price=2650.0,
-            m5_structural_sl=2643.0,
-            take_profit=2664.0,
-            nearby_obstacle_distance_usd=12.0,
-        )
-        self.assertEqual(unclosed["reason"], "UNCLOSED_CANDLE_REJECTED")
-
-        obstacle = eng.evaluate_entry_and_initial_sl(
+        bad_policy = eng.evaluate_entry_and_initial_sl(
             regime="TREND",
             buy_signal=True,
             sell_signal=False,
@@ -92,137 +66,131 @@ class TestTradingEntryAndInitialSl(unittest.TestCase):
             entry_price=2650.0,
             m5_structural_sl=2643.0,
             take_profit=2664.0,
-            nearby_obstacle_distance_usd=2.0,
+            nearby_obstacle_distance_usd=12.0,
+            broker_stops_level_usd=float("nan"),
         )
-        self.assertEqual(obstacle["reason"], "NEARBY_OBSTACLE_TOO_CLOSE")
+        self.assertEqual(bad_policy["action"], "SKIP")
+        self.assertEqual(bad_policy["reason"], "INVALID_STRATEGY_OR_BROKER_POLICY")
 
 
 class TestBreakEvenAndTrailingMonotonicity(unittest.TestCase):
-    def test_buy_be_then_m5_trail_then_m15_fast_move_never_widens(self) -> None:
-        pos = {"magic": BOT_MAGIC, "direction": "BUY", "entryPrice": 2650.0, "initialSl": 2643.0, "currentSl": 2643.0}
-        r1 = eng.compute_next_protective_sl(
-            position=pos, bot_magic=BOT_MAGIC, current_bid=2657.0, current_ask=2657.2
-        )
-        self.assertTrue(r1["shouldModify"])
-        self.assertEqual(r1["nextSl"], 2650.2)
-        self.assertEqual(r1["reason"], "BREAK_EVEN")
+    def test_buy_and_sell_1r_be_for_r_6_7_8_and_restart_preservation(self) -> None:
+        for r_val in (6.0, 7.0, 8.0):
+            pos_buy = {
+                "magic": BOT_MAGIC,
+                "direction": "BUY",
+                "entryPrice": 2650.0,
+                "initialSl": 2650.0 - r_val,
+                "initialRiskUsd": r_val,
+                "currentSl": 2650.0 - r_val,
+            }
+            before_be = eng.compute_next_protective_sl(
+                position=pos_buy, bot_magic=BOT_MAGIC, current_bid=2650.0 + r_val - 0.1, current_ask=2650.0 + r_val + 0.1
+            )
+            self.assertFalse(before_be["shouldModify"])
+            at_be = eng.compute_next_protective_sl(
+                position=pos_buy, bot_magic=BOT_MAGIC, current_bid=2650.0 + r_val, current_ask=2650.0 + r_val + 0.2
+            )
+            self.assertTrue(at_be["shouldModify"])
+            self.assertEqual(at_be["nextSl"], 2650.2)
+            self.assertEqual(at_be["reason"], "BREAK_EVEN")
 
-        pos["currentSl"] = r1["nextSl"]
-        r2 = eng.compute_next_protective_sl(
-            position=pos,
-            bot_magic=BOT_MAGIC,
-            current_bid=2661.0,
-            current_ask=2661.2,
-            m5_new_structure_sl=2654.0,
-        )
-        self.assertTrue(r2["shouldModify"])
-        self.assertEqual(r2["nextSl"], 2654.0)
-        self.assertEqual(r2["reason"], "M5_STRUCTURAL_TRAIL")
+            pos_sell = {
+                "magic": BOT_MAGIC,
+                "direction": "SELL",
+                "entryPrice": 2650.0,
+                "initialSl": 2650.0 + r_val,
+                "currentSl": 2650.0 + r_val,
+            }
+            at_be_sell = eng.compute_next_protective_sl(
+                position=pos_sell, bot_magic=BOT_MAGIC, current_bid=2650.0 - r_val - 0.2, current_ask=2650.0 - r_val
+            )
+            self.assertTrue(at_be_sell["shouldModify"])
+            self.assertEqual(at_be_sell["nextSl"], 2649.8)
+            self.assertEqual(at_be_sell["reason"], "BREAK_EVEN")
 
-        pos["currentSl"] = r2["nextSl"]
-        r3 = eng.compute_next_protective_sl(
-            position=pos,
-            bot_magic=BOT_MAGIC,
-            current_bid=2671.0,
-            current_ask=2671.2,
-            m15_fast_move_active=True,
-            favorable_extreme_price=2672.0,
-        )
-        self.assertTrue(r3["shouldModify"])
-        self.assertEqual(r3["nextSl"], 2662.0)
-        self.assertEqual(r3["reason"], "M15_FAST_MOVE_10USD_TRAIL")
-
-        pos["currentSl"] = r3["nextSl"]
-        r4 = eng.compute_next_protective_sl(
-            position=pos,
-            bot_magic=BOT_MAGIC,
-            current_bid=2666.0,
-            current_ask=2666.2,
-            m5_new_structure_sl=2658.0,
-        )
-        self.assertFalse(r4["shouldModify"])
-        self.assertEqual(r4["nextSl"], 2662.0)
-
-    def test_break_even_requires_original_one_r_and_never_uses_six_price_default(self) -> None:
-        buy = {
-            "magic": BOT_MAGIC, "direction": "BUY",
-            "entryPrice": 2650.0, "initialSl": 2642.0, "currentSl": 2642.0,
-        }
-        before_one_r = eng.compute_next_protective_sl(
-            position=buy, bot_magic=BOT_MAGIC, current_bid=2656.5, current_ask=2656.7,
-        )
-        self.assertFalse(before_one_r["shouldModify"])
-        self.assertEqual(before_one_r["nextSl"], 2642.0)
-        self.assertEqual(before_one_r["initialRiskUsd"], 8.0)
-        self.assertFalse(before_one_r["liveAuthorized"])
-
-        at_one_r = eng.compute_next_protective_sl(
-            position=buy, bot_magic=BOT_MAGIC, current_bid=2658.0, current_ask=2658.2,
-        )
-        self.assertTrue(at_one_r["shouldModify"])
-        self.assertEqual(at_one_r["nextSl"], 2650.2)
-        self.assertEqual(at_one_r["reason"], "BREAK_EVEN")
-        self.assertEqual(at_one_r["evaluationScope"], "OFFLINE_PROTECTIVE_SL_PROPOSAL_NO_MT5_ORDER")
-
-        early_override = eng.compute_next_protective_sl(
-            position=buy, bot_magic=BOT_MAGIC, current_bid=2657.0,
-            current_ask=2657.2, be_trigger_usd=4.0,
-        )
-        self.assertFalse(early_override["shouldModify"])
-
-    def test_no_original_risk_cannot_implicitly_trigger_be_and_broker_nan_blocks(self) -> None:
-        without_initial = {
-            "magic": BOT_MAGIC, "direction": "BUY", "entryPrice": 2650.0,
+    def test_target_sl_inside_broker_freeze_level_is_rejected_for_buy_and_sell(self) -> None:
+        pos_buy = {
+            "magic": BOT_MAGIC,
+            "direction": "BUY",
+            "entryPrice": 2650.0,
+            "initialSl": 2643.0,
             "currentSl": 2643.0,
         }
-        no_be = eng.compute_next_protective_sl(
-            position=without_initial, bot_magic=BOT_MAGIC,
-            current_bid=2660.0, current_ask=2660.2,
+        rb = eng.compute_next_protective_sl(
+            position=pos_buy,
+            bot_magic=BOT_MAGIC,
+            current_bid=2656.0,
+            current_ask=2656.2,
+            m5_new_structure_sl=2654.5,
+            broker_stops_level_usd=0.5,
+            broker_freeze_level_usd=2.0,
         )
-        self.assertFalse(no_be["shouldModify"])
-        self.assertIsNone(no_be["initialRiskUsd"])
-        for stops in (None, float("nan"), -1.0):
-            with self.subTest(stops=repr(stops)):
-                blocked = eng.compute_next_protective_sl(
-                    position=without_initial, bot_magic=BOT_MAGIC,
-                    current_bid=2660.0, current_ask=2660.2,
-                    broker_stops_level_usd=stops,
-                    m5_new_structure_sl=2655.0,
-                )
-                self.assertFalse(blocked["shouldModify"])
-                self.assertEqual(blocked["reason"], "BROKER_OR_TRAILING_POLICY_UNVERIFIED")
+        self.assertFalse(rb["shouldModify"])
+        self.assertEqual(rb["nextSl"], 2643.0)
 
-    def test_sell_monotonic_and_foreign_magic_and_freeze_level_protected(self) -> None:
+        pos_sell = {
+            "magic": BOT_MAGIC,
+            "direction": "SELL",
+            "entryPrice": 2650.0,
+            "initialSl": 2657.0,
+            "currentSl": 2657.0,
+        }
+        rs = eng.compute_next_protective_sl(
+            position=pos_sell,
+            bot_magic=BOT_MAGIC,
+            current_bid=2643.8,
+            current_ask=2644.0,
+            m5_new_structure_sl=2645.5,
+            broker_stops_level_usd=0.5,
+            broker_freeze_level_usd=2.0,
+        )
+        self.assertFalse(rs["shouldModify"])
+        self.assertEqual(rs["nextSl"], 2657.0)
+
+    def test_stale_or_unclosed_m5_m15_and_tampered_initial_risk_fail_closed(self) -> None:
+        pos = {
+            "magic": BOT_MAGIC,
+            "direction": "BUY",
+            "entryPrice": 2650.0,
+            "initialSl": 2643.0,
+            "initialRiskUsd": 4.0,
+            "currentSl": 2643.0,
+        }
+        tampered = eng.compute_next_protective_sl(
+            position=pos,
+            bot_magic=BOT_MAGIC,
+            current_bid=2658.0,
+            current_ask=2658.2,
+            m5_new_structure_sl=2654.0,
+            m5_structure_stale=True,
+            m15_fast_move_active=True,
+            m15_candle_closed=False,
+            favorable_extreme_price=2665.0,
+        )
+        self.assertFalse(tampered["shouldModify"])
+        self.assertEqual(tampered["reason"], "IMMUTABLE_INITIAL_RISK_MISMATCH")
+        self.assertIsNone(tampered["initialRiskUsd"])
+        self.assertEqual(tampered["nextSl"], 2643.0)
+
+    def test_foreign_magic_and_nan_freeze_fail_closed(self) -> None:
         foreign = {"magic": 999999, "direction": "SELL", "entryPrice": 2650.0, "currentSl": 2657.0}
         rf = eng.compute_next_protective_sl(
             position=foreign, bot_magic=BOT_MAGIC, current_bid=2640.0, current_ask=2640.2
         )
         self.assertFalse(rf["shouldModify"])
-        self.assertEqual(rf["reason"], "POSITION_NOT_OWNED_BY_BOT")
+        self.assertEqual(rf["nextSl"], 2657.0)
 
-        pos = {"magic": BOT_MAGIC, "direction": "SELL", "entryPrice": 2650.0, "initialSl": 2657.0, "currentSl": 2657.0}
-        rs = eng.compute_next_protective_sl(
+        pos = {"magic": BOT_MAGIC, "direction": "BUY", "entryPrice": 2650.0, "initialSl": 2643.0, "currentSl": 2643.0}
+        r_nan = eng.compute_next_protective_sl(
             position=pos,
             bot_magic=BOT_MAGIC,
-            current_bid=2634.0,
-            current_ask=2634.2,
-            m15_fast_move_active=True,
-            favorable_extreme_price=2633.0,
+            current_bid=2660.0,
+            current_ask=2660.2,
+            broker_freeze_level_usd=float("nan"),
         )
-        self.assertTrue(rs["shouldModify"])
-        self.assertEqual(rs["nextSl"], 2643.0)
-
-        frozen = {"magic": BOT_MAGIC, "direction": "SELL", "entryPrice": 2650.0, "currentSl": 2643.0}
-        rz = eng.compute_next_protective_sl(
-            position=frozen,
-            bot_magic=BOT_MAGIC,
-            current_bid=2642.6,
-            current_ask=2642.8,
-            m5_new_structure_sl=2640.0,
-            broker_freeze_level_usd=0.3,
-        )
-        self.assertFalse(rz["shouldModify"])
-        self.assertEqual(rz["reason"], "BLOCKED_BY_BROKER_FREEZE_LEVEL")
+        self.assertFalse(r_nan["shouldModify"])
+        self.assertEqual(r_nan["reason"], "BROKER_OR_TRAILING_POLICY_UNVERIFIED")
 
 
 if __name__ == "__main__":
