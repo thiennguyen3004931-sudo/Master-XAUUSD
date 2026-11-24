@@ -90,6 +90,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     proc_rep = acl_rep = mt5_rep = None
     try:
+        from scripts import v6_runtime_process_attestation as process_probe  # type: ignore
+
+        proc_rep = process_probe.collect_runtime_process_attestation(
+            repo_root=args.repo_root,
+            expected_release_sha=args.release_commit_sha,
+        )
+    except Exception:
+        # A missing or failing read-only process probe remains explicit in the
+        # bundle; never replace it with a caller-supplied PASS claim.
+        proc_rep = None
+    try:
         from scripts import v6_windows_effective_acl_dpapi_probe as acl_probe  # type: ignore
 
         acl_rep = acl_probe.build_probe_report(args.repo_root, runtime_dir=args.runtime_dir)

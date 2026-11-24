@@ -49,6 +49,12 @@ class TestPreliveReadonlyAcceptanceBundle(unittest.TestCase):
         self.assertFalse(rep["liveAuthorized"])
         self.assertEqual(len(rep["bundleSha256"]), 64)
 
+    def test_main_wires_process_attestation_into_bundle(self) -> None:
+        source = (ROOT / "scripts" / "v6_prelive_readonly_acceptance_bundle.py").read_text(encoding="utf-8")
+        self.assertIn("v6_runtime_process_attestation", source)
+        self.assertIn("collect_runtime_process_attestation", source)
+        self.assertIn("expected_release_sha=args.release_commit_sha", source)
+
     def test_digest_tracks_observed_content_not_declared_hash(self) -> None:
         def digest(timestamp, claimed):
             result = mod.assemble_prelive_evidence_bundle(
