@@ -13,21 +13,25 @@ if str(ROOT) not in sys.path:
 from scripts import v6_final_production_acceptance_report as fpa
 
 
+def _valid_sha_ref(seed: str) -> str:
+    import hashlib
+    return "sha256:" + hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
 def _all_pass_evidence() -> dict:
     return {
-        cid: {"verdict": "PASS", "evidenceRef": f"sha256:verified-{cid}"}
+        cid: {"verdict": "PASS", "evidenceRef": _valid_sha_ref(cid)}
         for cid, _dom in fpa.REQUIRED_CRITERIA
     }
 
 
 class TestFinalProductionAcceptanceReport(unittest.TestCase):
-    def test_missing_host_evidence_stays_live_blocked_even_with_owner_flag(self) -> None:
+    def test_missing_host_evidence_stays_live_blocked(self) -> None:
         ev = _all_pass_evidence()
         ev["windows_running_v6_process_attestation"] = {"verdict": "UNVERIFIED", "evidenceRef": "host-not-started"}
         rep = fpa.build_final_production_acceptance_report(
             release_commit_sha="29fab95",
             evidence_map=ev,
-            owner_explicit_live_approval=True,
         )
         self.assertTrue(rep["CODE_READY"])
         self.assertFalse(rep["HOST_VERIFIED"])
@@ -35,22 +39,20 @@ class TestFinalProductionAcceptanceReport(unittest.TestCase):
         self.assertEqual(rep["classification"], "LIVE_BLOCKED")
         self.assertIn("windows_running_v6_process_attestation", rep["blockingCriteria"])
 
-    def test_pass_without_evidence_ref_downgrades_to_unverified(self) -> None:
+    def test_arbitrary_or_empty_evidence_ref_downgrades_to_unverified(self) -> None:
         ev = _all_pass_evidence()
-        ev["mt5_readonly_account_and_contract"] = {"verdict": "PASS", "evidenceRef": ""}
+        ev["mt5_readonly_account_and_contract"] = {"verdict": "PASS", "evidenceRef": "arbitrary-text-not-sha256"}
         rep = fpa.build_final_production_acceptance_report(
             release_commit_sha="29fab95",
             evidence_map=ev,
-            owner_explicit_live_approval=False,
         )
         self.assertFalse(rep["BROKER_VERIFIED"])
         self.assertEqual(rep["classification"], "LIVE_BLOCKED")
 
-    def test_all_12_pass_without_owner_approval_is_ready_for_approval_not_live(self) -> None:
+    def test_all_12_pass_never_self_authorizes_live(self) -> None:
         rep = fpa.build_final_production_acceptance_report(
             release_commit_sha="29fab95",
             evidence_map=_all_pass_evidence(),
-            owner_explicit_live_approval=False,
         )
         self.assertTrue(rep["CODE_READY"])
         self.assertTrue(rep["HOST_VERIFIED"])
