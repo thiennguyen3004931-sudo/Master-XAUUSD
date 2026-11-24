@@ -24,6 +24,7 @@ from scripts.v6_cross_process_stop_send_protocol import (
     execute_linearized_new_order,
     persist_nonblocking_stop_intent_and_latch,
 )
+from scripts.v6_emergency_stop_gate import read_bound_emergency_stop_latch
 
 KEY = b"test-dpapi-custody-key-32-bytes!"
 
@@ -145,6 +146,29 @@ result = execute_linearized_new_order(
 Path(out_text).write_text(json.dumps({"result": result, "calls": calls}))
 """
 
+
+class CrossProcessStopSendProtocolTests(unittest.TestCase):
+    def test_published_stop_uses_runtime_latch_schema(self):
+        with robust_tempdir(prefix="v6-protocol-schema-") as rt:
+            published = persist_nonblocking_stop_intent_and_latch(
+                runtime_dir=rt,
+                account_login=1001,
+                server="Broker-Demo",
+                operator_id="operator-1",
+                reason="TEST_STOP",
+                now_utc=1700000000,
+            )
+            self.assertEqual(published["stopCategory"], "OPERATOR_EMERGENCY_STOP")
+            self.assertTrue(published["allowProtectivePositionManagement"])
+            self.assertTrue(published["blockNewOrders"])
+            readback = read_bound_emergency_stop_latch(
+                rt / "v6-emergency-stop-latch.json",
+                account_login=1001,
+                server="Broker-Demo",
+            )
+            self.assertTrue(readback["emergencyStopActive"])
+            self.assertTrue(readback["blockNewOrders"])
+            self.assertEqual(readback["stopCategory"], "OPERATOR_EMERGENCY_STOP")
 
 class CrossProcessStopSendProtocolTests(unittest.TestCase):
     def test_two_process_stop_before_send_blocks_child_sender_with_zero_orders(self):

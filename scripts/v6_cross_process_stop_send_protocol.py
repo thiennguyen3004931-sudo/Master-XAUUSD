@@ -94,7 +94,9 @@ def persist_nonblocking_stop_intent_and_latch(
         "server": str(server).strip(),
         "emergencyStopActive": True,
         "blockNewOrders": True,
-        "stopCategory": "OPERATOR_STOP",
+        "allowProtectivePositionManagement": True,
+        # Match the durable latch schema consumed by the runtime gate.
+        "stopCategory": "OPERATOR_EMERGENCY_STOP",
         "triggeredBy": str(operator_id).strip(),
         "reason": str(reason).strip(),
         "stopRevision": stop_rev,

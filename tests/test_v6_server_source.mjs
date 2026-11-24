@@ -113,6 +113,17 @@ function requireGuardedGit() {
   return { execFileSync: gitExecFileSync };
 }
 
+test("Emergency Stop durably publishes intent and account-bound latch before returning success", () => {
+  assert.match(server, /export function persistDurableEmergencyStop\(/);
+  assert.match(server, /const EMERGENCY_STOP_LATCH_FILE = path\.join\(RUNTIME_DIR, "v6-emergency-stop-latch\.json"\)/);
+  assert.match(server, /const STOP_INTENT_FILE = path\.join\(RUNTIME_DIR, "v6-stop-intent\.flag"\)/);
+  assert.match(server, /atomicWriteFileSync\(STOP_INTENT_FILE, JSON\.stringify\(intent\)\)/);
+  assert.match(server, /atomicWriteFileSync\(EMERGENCY_STOP_LATCH_FILE, JSON\.stringify\(latch\)\)/);
+  assert.match(server, /stopCategory: "OPERATOR_EMERGENCY_STOP"/);
+  assert.match(server, /durable: true/);
+  assert.match(server, /EMERGENCY_STOP_ACCOUNT_BINDING_UNVERIFIED/);
+});
+
 test("P0 LIVE ARM is revoked when MT5 probe is missing, disconnected or identity incomplete", () => {
   const gate = server.slice(
     server.indexOf("export function getCanonicalLiveArmState("),

@@ -135,14 +135,73 @@ export function armLiveSessionForAccount(login, server, device = "WEB") {
 function atomicWriteFileSync(targetPath, content) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
   const tmpPath = `${targetPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2, 8)}.tmp`;
+  let fd = null;
   try {
-    fs.writeFileSync(tmpPath, content, "utf8");
+    fd = fs.openSync(tmpPath, "w");
+    fs.writeFileSync(fd, content, "utf8");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
     fs.renameSync(tmpPath, targetPath);
   } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch {}
+    }
     if (fs.existsSync(tmpPath)) {
       try { fs.unlinkSync(tmpPath); } catch {}
     }
   }
+}
+
+const EMERGENCY_STOP_LATCH_FILE = path.join(RUNTIME_DIR, "v6-emergency-stop-latch.json");
+const STOP_INTENT_FILE = path.join(RUNTIME_DIR, "v6-stop-intent.flag");
+
+function strictPositiveAccountLogin(value) {
+  const text = String(value ?? "").trim();
+  if (!/^[1-9][0-9]*$/.test(text)) return null;
+  const parsed = Number(text);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function persistDurableEmergencyStop({ accountLogin, server, reason = "OPERATOR_EMERGENCY_STOP", operatorId = "authenticated-control" } = {}) {
+  const login = strictPositiveAccountLogin(accountLogin);
+  const cleanServer = String(server ?? "").trim();
+  const cleanReason = String(reason ?? "OPERATOR_EMERGENCY_STOP").trim().slice(0, 256);
+  const cleanOperator = String(operatorId ?? "authenticated-control").trim().slice(0, 128);
+  if (login === null || !cleanServer || !cleanReason || !cleanOperator) {
+    return { ok: false, error: "EMERGENCY_STOP_ACCOUNT_BINDING_UNVERIFIED" };
+  }
+  const nowUtc = Math.floor(Date.now() / 1000);
+  const stopRevision = crypto.randomBytes(16).toString("hex");
+  const intent = {
+    schemaVersion: 1,
+    stopIntentActive: true,
+    accountLogin: login,
+    server: cleanServer,
+    operatorId: cleanOperator,
+    reason: cleanReason,
+    stopRevision,
+    requestedAtUtc: nowUtc,
+  };
+  const latch = {
+    schemaVersion: 1,
+    emergencyStopActive: true,
+    blockNewOrders: true,
+    allowProtectivePositionManagement: true,
+    stopCategory: "OPERATOR_EMERGENCY_STOP",
+    stopRevision,
+    reason: cleanReason,
+    accountLogin: login,
+    server: cleanServer,
+    triggeredBy: cleanOperator,
+    triggeredAtUtc: nowUtc,
+    releaseAuthorized: false,
+  };
+  // Publish intent first, then the account-bound latch. Both writes are atomic
+  // and fsync-backed; the Python final entry gate observes the intent fail-closed.
+  atomicWriteFileSync(STOP_INTENT_FILE, JSON.stringify(intent));
+  atomicWriteFileSync(EMERGENCY_STOP_LATCH_FILE, JSON.stringify(latch));
+  return { ok: true, stopRevision, accountLogin: login, server: cleanServer, triggeredAtUtc: nowUtc };
 }
 
 export function validateFixedLotAgainstBroker(lotVal, brokerSpecs = null) {
@@ -2020,15 +2079,27 @@ export async function handleApiRequest(req, res) {
 
   if (pathname === "/api/v1/mt5/emergency-stop" && req.method === "POST") {
     const body = await readJsonBody(req);
+    const stop = persistDurableEmergencyStop({
+      accountLogin: currentAccountConfig.login,
+      server: currentAccountConfig.server,
+      reason: body.reason || "OPERATOR_EMERGENCY_STOP",
+      // Authentication is established by the CONTROL route guard above; the
+      // client-controlled sourceDevice is audit metadata, never authorization.
+      operatorId: "authenticated-control",
+    });
+    if (!stop.ok) {
+      sendJson(res, 409, { ok: false, error: stop.error, liveAuthorized: false }, req);
+      return;
+    }
     autoBotState.enabled = false;
     autoBotState.strategyMode = "PAUSE";
     positiveDcaConfig.enabled = false;
     disarmLiveSession("Người vận hành kích hoạt Emergency Stop");
-    recordSyncAction(body.sourceDevice || "WEB", "EMERGENCY STOP: Đã tắt Auto, tắt DCA và khóa ARM LIVE (giữ nguyên bảo vệ SL vị thế đang mở).");
+    recordSyncAction(body.sourceDevice || "WEB", "EMERGENCY STOP: Đã ghi latch bền vững, tắt Auto, tắt DCA và khóa ARM LIVE (giữ nguyên bảo vệ SL vị thế đang mở).");
     const probe = lastDirectProbeSnapshot || (await invokeMt5PythonEngine({ action: "probe" }, false));
     sendJson(res, 200, {
       ...buildStatusPayload(probe),
-      emergencyStop: { ok: true, paused: true, liveArmed: false, protectiveManagementActive: true },
+      emergencyStop: { ok: true, durable: true, stopRevision: stop.stopRevision, paused: true, liveArmed: false, protectiveManagementActive: true },
     }, req);
     return;
   }
