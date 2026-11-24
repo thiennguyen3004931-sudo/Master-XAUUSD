@@ -2,6 +2,11 @@
 import os
 import sys
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -42,7 +47,7 @@ class HostAclProvenanceProbeTests(unittest.TestCase):
         self.assertEqual(len(bad["broadWriteGrants"]), 1)
 
     def test_symlink_detection_fails_closed_and_never_certifies_windows_acl_on_posix(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             real_dir = Path(folder) / "real_runtime"
             real_dir.mkdir()
             latch = real_dir / "latch.json"
@@ -74,7 +79,7 @@ class HostAclProvenanceProbeTests(unittest.TestCase):
             self.assertEqual(acl_res["reason"], "SYMLINK_OR_REPARSE_DETECTED")
 
     def test_simulated_windows_icacls_passes_only_when_restricted(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             real_dir = Path(folder) / "win_runtime"
             real_dir.mkdir()
             latch = real_dir / "latch.json"
@@ -124,7 +129,7 @@ class HostAclProvenanceProbeTests(unittest.TestCase):
 
 
     def test_incomplete_acl_text_or_custom_runner_never_proves_host_access(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "state.json"
             path.write_text("{}", encoding="utf-8")
             for fake in (

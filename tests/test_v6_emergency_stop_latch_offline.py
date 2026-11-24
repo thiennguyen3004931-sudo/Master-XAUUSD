@@ -2,6 +2,11 @@
 import importlib.util
 import json
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import unittest
 from pathlib import Path
 
@@ -18,7 +23,7 @@ def load():
 class StopLatchOfflineTests(unittest.TestCase):
     def test_missing_corrupt_and_unapproved_false_are_all_blocking(self):
         m = load()
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "stop.json"
             for state in (None, "{bad-json", '{"emergencyStopActive": false}', "[]"):
                 if state is not None:
@@ -30,7 +35,7 @@ class StopLatchOfflineTests(unittest.TestCase):
 
     def test_latch_persists_across_module_reload_and_never_unlocks_itself(self):
         m = load()
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "stop.json"
             state = m.persist_emergency_stop_latch(path, reason="TEST_OPERATOR_STOP", now_utc=1000)
             self.assertEqual(state["reason"], "TEST_OPERATOR_STOP")
@@ -43,7 +48,7 @@ class StopLatchOfflineTests(unittest.TestCase):
 
     def test_failed_serialization_cannot_replace_existing_active_latch(self):
         m = load()
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "stop.json"
             m.persist_emergency_stop_latch(path, reason="MUST_REMAIN_LATCHED")
             with self.assertRaises(TypeError):
@@ -55,7 +60,7 @@ class StopLatchOfflineTests(unittest.TestCase):
 
     def test_latch_only_carries_status_not_broker_capabilities(self):
         m = load()
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "stop.json"
             record = m.persist_emergency_stop_latch(path)
             self.assertNotIn("liveArmed", record)

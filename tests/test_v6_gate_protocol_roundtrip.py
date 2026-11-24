@@ -4,6 +4,11 @@ import hmac
 import json
 import sys
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import unittest
 from pathlib import Path
 
@@ -30,7 +35,7 @@ def _sign_release(login: int, server: str, stop_rev: str, released_at: int, oper
 
 class GateProtocolRoundTripTests(unittest.TestCase):
     def test_offline_clear_without_windows_proof_remains_rejected_by_protocol(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder)
             latch_path = rt / "v6-emergency-stop-latch.json"
             stop_state = persist_operator_emergency_stop(
@@ -68,7 +73,7 @@ class GateProtocolRoundTripTests(unittest.TestCase):
             self.assertEqual(calls, [])
 
     def test_pending_send_written_by_protocol_is_recognized_as_freeze_and_preserved_across_restart(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder)
             latch_path = rt / "v6-emergency-stop-latch.json"
             stop_rev = "abcdef1234567890"
@@ -139,7 +144,7 @@ class GateProtocolRoundTripTests(unittest.TestCase):
                    "status": "PENDING_SEND", "requestId": "original-request"}
         other = dict(pending, accountLogin=1003, requestId="second-request")
         for login, server in ((1002, "Broker-A"), (1001, "Broker-B")):
-            with self.subTest(login=login, server=server), tempfile.TemporaryDirectory() as folder:
+            with self.subTest(login=login, server=server), robust_tempdir() as folder:
                 rt = Path(folder)
                 inventory = rt / "v6-uncertain-entry-state.json"
                 inventory.write_text(json.dumps({"1003|Broker-A": other, "1001|Broker-A": pending}),

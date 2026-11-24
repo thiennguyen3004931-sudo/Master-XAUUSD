@@ -1,6 +1,11 @@
 """Offline mock tests: never invoke real Windows commands or touch MT5."""
 import sys
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,7 +40,7 @@ class MockReadOnlyRunner:
 
 class WindowsAclReadOnlyEvidenceTests(unittest.TestCase):
     def setUp(self):
-        self.folder = tempfile.TemporaryDirectory()
+        self.folder = robust_tempdir()
         self.addCleanup(self.folder.cleanup)
         self.base = Path(self.folder.name)
         self.latch = self.base / "emergency-stop.json"
@@ -107,7 +112,15 @@ class WindowsAclReadOnlyEvidenceTests(unittest.TestCase):
 
         self.latch.write_text("test", encoding="utf-8")
         redirect = self.base / "redirect"
-        redirect.symlink_to(self.latch)
+        try:
+            redirect.symlink_to(self.latch)
+        except OSError as exc:
+            # WinError 1314: non-elevated Windows without Developer Mode cannot
+            # create symlinks. The missing-path half above already ran; the
+            # reparse half stays enforced on CI (Linux) and elevated hosts.
+            if getattr(exc, "winerror", None) == 1314:
+                self.skipTest("SYMLINK_PRIVILEGE_NOT_HELD: reparse half not exercised on this host")
+            raise
         result = collect_windows_acl_evidence(
             state_directory=str(self.base), latch_file=str(redirect),
             uncertain_entry_file=str(self.uncertain), runner=runner, host_os_name="nt",
@@ -118,7 +131,7 @@ class WindowsAclReadOnlyEvidenceTests(unittest.TestCase):
 
     def test_outside_directory_or_duplicate_file_fails_closed(self):
         runner = MockReadOnlyRunner()
-        with tempfile.TemporaryDirectory() as other:
+        with robust_tempdir() as other:
             foreign = Path(other) / "foreign.json"
             foreign.write_text("test", encoding="utf-8")
             result = collect_windows_acl_evidence(

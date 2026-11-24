@@ -5,6 +5,11 @@ import importlib.util
 import json
 import sys
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import threading
 import time
 import unittest
@@ -60,7 +65,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
 
     def test_runtime_latch_blocks_active_corrupt_missing_and_unverified_clear(self):
         probe = _load_probe_module()
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             latch_file = Path(folder) / "v6-emergency-stop-latch.json"
             intent_file = Path(folder) / "v6-stop-intent.flag"
             with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
@@ -109,7 +114,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
 
     def test_spoofed_windows_acl_and_valid_hmac_never_authorize_runtime_entry(self):
         probe = _load_probe_module()
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             latch_file = Path(folder) / "v6-emergency-stop-latch.json"
             intent_file = Path(folder) / "v6-stop-intent.flag"
             key_file = Path(folder) / "v6-stop-release.key"
@@ -172,7 +177,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
 
     def test_missing_corrupt_and_reader_failure_always_denied_without_order(self):
         probe = _load_probe_module()
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             latch_file = Path(folder) / "unavailable-stop.json"
             intent_file = Path(folder) / "v6-stop-intent.flag"
             with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
@@ -198,7 +203,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
 
     def test_concurrent_emergency_stop_write_does_not_deadlock_and_protective_sltp_unblocked(self):
         probe = _load_probe_module()
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             latch_file = Path(folder) / "v6-emergency-stop-latch.json"
             intent_file = Path(folder) / "v6-stop-intent.flag"
             persist_operator_emergency_stop(
@@ -270,7 +275,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
 
     def test_execute_order_public_entry_blocked_by_stop_intent_with_zero_order_send(self):
         probe = _load_probe_module()
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder)
             latch_file = rt / "v6-emergency-stop-latch.json"
             intent_file = rt / "v6-stop-intent.flag"

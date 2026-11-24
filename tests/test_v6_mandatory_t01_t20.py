@@ -9,6 +9,11 @@ import json
 import subprocess
 import sys
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import time
 import unittest
 from pathlib import Path
@@ -1476,7 +1481,7 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
 
     def test_T34_state_isolation_empty_vs_none_and_lost_initial_r_recovery(self):
         """T34 (P0/P1): Account B empty positions or positions_get()=None does NOT wipe Account A; duplicate ticket isolated; lost initialR with trailed SL does NOT fabricate R."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with robust_tempdir() as tmpdir:
             orig_file = engine.MANAGER_STATE_FILE
             engine.MANAGER_STATE_FILE = Path(tmpdir) / "mgr_state.json"
             try:
@@ -1821,7 +1826,7 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
 
     def test_T47_p0_position_manager_never_falls_back_to_68_when_initial_r_missing(self):
         """T47 (P0.3): Position manager marks STATE_UNVERIFIED and keeps existing SL unchanged when initialR is missing (no 6.8 fallback)."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with robust_tempdir() as tmpdir:
             orig_file = engine.MANAGER_STATE_FILE
             engine.MANAGER_STATE_FILE = Path(tmpdir) / "mgr.json"
             try:

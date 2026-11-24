@@ -2,6 +2,11 @@
 import json
 import sys
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import threading
 import unittest
 from pathlib import Path
@@ -100,7 +105,7 @@ class RuntimeBoundaryAttestationTests(unittest.TestCase):
         self.assertEqual(no_lock["reason"], "ENTRY_LOCK_NOT_HELD")
 
     def test_pending_marker_and_unknown_ack_or_crash_latch_blocks_subsequent_retry(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             marker = Path(folder) / "v6-uncertain-entry-state.json"
             lock = threading.Lock()
 
@@ -141,7 +146,7 @@ class RuntimeBoundaryAttestationTests(unittest.TestCase):
             self.assertEqual(called, [])
 
     def test_exception_during_order_send_latches_and_mock_success_is_still_unverified(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             marker_crash = Path(folder) / "crash.json"
             lock = threading.Lock()
 
@@ -186,7 +191,7 @@ class RuntimeBoundaryAttestationTests(unittest.TestCase):
 
 
     def test_existing_unrecognized_or_nondict_marker_blocks_mock_send(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             marker = Path(folder) / "latch.json"
             for text in (
                 '{"status": "UNRECOGNIZED_LEGACY_STATUS"}',

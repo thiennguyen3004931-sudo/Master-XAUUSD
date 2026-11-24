@@ -6,6 +6,11 @@ import subprocess
 import sys
 import threading
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import time
 import unittest
 from pathlib import Path
@@ -143,7 +148,7 @@ Path(out_text).write_text(json.dumps({"result": result, "calls": calls}))
 
 class CrossProcessStopSendProtocolTests(unittest.TestCase):
     def test_two_process_stop_before_send_blocks_child_sender_with_zero_orders(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder) / "runtime"
             rt.mkdir()
             _write_trusted_clear_latch(rt, now_utc=1700000100)
@@ -179,7 +184,7 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
             self.assertEqual(out["calls"], 0)
 
     def test_nonblocking_stop_completes_immediately_while_broker_send_is_blocked_and_restart_stays_latched(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder) / "runtime"
             rt.mkdir()
             _write_trusted_clear_latch(rt, now_utc=1700000100)
@@ -233,7 +238,7 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
 
 
     def _interleave_stop_with_child(self, mode: str):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder) / "runtime"
             rt.mkdir()
             _write_trusted_clear_latch(rt, now_utc=1700000100)
@@ -304,7 +309,7 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
         self.assertEqual(len(result["calls"]), 1)
 
     def test_mock_done_ack_does_not_clear_pending_or_prove_real_fill(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder) / "runtime"
             rt.mkdir()
             _write_trusted_clear_latch(rt)
@@ -342,7 +347,7 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
             self.assertEqual(len(calls), 1)
 
     def test_mock_host_verifier_exception_and_invalid_latch_shape_fail_closed(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder) / "runtime"
             rt.mkdir()
             _write_trusted_clear_latch(rt)
@@ -387,7 +392,7 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
             self.assertEqual(calls, [])
 
     def test_account_switch_and_invalid_binding_do_not_create_new_send(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder) / "runtime"
             rt.mkdir()
             _write_trusted_clear_latch(rt)
@@ -430,7 +435,7 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
             self.assertEqual(calls, [])
 
     def test_invalid_uncertain_inventory_shape_blocks_without_dispatch(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder) / "runtime"
             rt.mkdir()
             _write_trusted_clear_latch(rt)
@@ -447,7 +452,7 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
             self.assertEqual(calls, [])
 
     def test_fails_closed_without_host_dpapi_verifier(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder) / "runtime"
             rt.mkdir()
             _write_trusted_clear_latch(rt, now_utc=1700000100)
@@ -468,7 +473,7 @@ class CrossProcessStopSendProtocolTests(unittest.TestCase):
 
     def test_safe_pre_send_abort_clears_only_matching_request_reservation(self):
         from unittest.mock import patch
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             rt = Path(folder) / "runtime"
             rt.mkdir()
             _write_trusted_clear_latch(rt, now_utc=1700000100)

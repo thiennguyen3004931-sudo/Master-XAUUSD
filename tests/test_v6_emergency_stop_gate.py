@@ -2,6 +2,11 @@
 import json
 import sys
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import unittest
 from pathlib import Path
 
@@ -62,7 +67,7 @@ POSITION = {
 
 class EmergencyStopGateTests(unittest.TestCase):
     def test_freeze_state_shape_verification_fails_closed_on_malformed_and_allows_valid_other_account(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "latch.json"
             stop = persist_operator_emergency_stop(
                 path, account_login=123456, server="DBGMarkets-Live", operator_id="owner-op", now_utc=1700000000
@@ -135,7 +140,7 @@ class EmergencyStopGateTests(unittest.TestCase):
             self.assertTrue(gate_other["allowedByStopLatchOnly"])
 
     def test_same_second_stops_have_distinct_revisions_and_block_aba_release(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "latch.json"
             same_ts = 1700000000
             stop_a = persist_operator_emergency_stop(
@@ -190,7 +195,7 @@ class EmergencyStopGateTests(unittest.TestCase):
             self.assertFalse(ok_b["liveAuthorized"])
 
     def test_forged_or_missing_revision_on_active_record_or_release_is_denied(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "latch.json"
             missing_rev_record = json.dumps({
                 "schemaVersion": 1,
@@ -233,7 +238,7 @@ class EmergencyStopGateTests(unittest.TestCase):
             self.assertTrue(stop["stopRevision"])
 
     def test_recovery_restores_active_stop_with_fresh_revision_and_never_unlocks_directly(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "latch.json"
             recovered = initialize_or_recover_emergency_stop_latch(
                 path,
@@ -266,7 +271,7 @@ class EmergencyStopGateTests(unittest.TestCase):
             self.assertFalse(released["emergencyStopActive"])
 
     def test_protective_semantics_and_enriched_fill_evidence_mocks_never_clear_freeze(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "latch.json"
             persist_operator_emergency_stop(
                 path, account_login=123456, server="DBGMarkets-Live", operator_id="owner-op", now_utc=1700000000

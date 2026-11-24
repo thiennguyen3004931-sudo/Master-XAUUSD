@@ -3,6 +3,11 @@ import hashlib
 import sys
 import subprocess
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import unittest
 from pathlib import Path
 
@@ -33,7 +38,7 @@ def _seed_fake_repo(root: Path) -> dict[str, str]:
 
 class RuntimeProcessAttestationTests(unittest.TestCase):
     def test_spoofed_boolean_and_web_only_5717_without_8765_always_stay_unverified(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             repo = Path(folder)
             manifest = _seed_fake_repo(repo)
             clean_cmd = lambda argv, _cwd: (0, VALID_SHA) if "rev-parse" in argv else (0, "")
@@ -67,7 +72,7 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
             self.assertNotIn("SecretPath", str(rep))
 
     def test_missing_or_mismatched_release_manifest_always_fails_closed(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             repo = Path(folder)
             manifest = _seed_fake_repo(repo)
             clean_cmd = lambda argv, _cwd: (0, VALID_SHA) if "rev-parse" in argv else (0, "")
@@ -102,7 +107,7 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
             self.assertEqual(r_mismatch["reason"], "RELEASE_MANIFEST_DIGEST_MISMATCH")
 
     def test_multiple_listeners_pid_change_and_readonly_observation_never_self_certify(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             repo = Path(folder)
             manifest = _seed_fake_repo(repo)
             clean_cmd = lambda argv, _cwd: (0, VALID_SHA) if "rev-parse" in argv else (0, "")
@@ -162,7 +167,7 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
 
 
     def test_local_git_object_manifest_matches_files_but_never_verifies_process(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             repo = Path(folder)
             _seed_fake_repo(repo)
             subprocess.run(["git", "init", "--quiet"], cwd=repo, check=True, capture_output=True)
@@ -200,7 +205,7 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
             self.assertEqual(tampered["status"], "UNVERIFIED")
 
     def test_windows_crlf_checkout_equivalence_without_source_mutation(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             repo = Path(folder)
             _seed_fake_repo(repo)
             probe = repo / "scripts" / "mt5-direct-probe.py"
@@ -264,7 +269,7 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
             self.assertIn("scripts/mt5-direct-probe.py", mixed["releaseManifestCheck"]["mismatchedModules"])
 
     def test_explicit_caller_manifest_does_not_relax_crlf_byte_match(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             repo = Path(folder)
             manifest = _seed_fake_repo(repo)
             from scripts.v6_runtime_process_attestation import CORE_MODULE_PATHS
@@ -285,7 +290,7 @@ class RuntimeProcessAttestationTests(unittest.TestCase):
             self.assertEqual(rep["status"], "UNVERIFIED")
 
     def test_missing_or_invalid_local_git_commit_never_passes_manifest_check(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             repo = Path(folder)
             _seed_fake_repo(repo)
             for sha in ("NOT_A_SHA", "0" * 40):

@@ -5,6 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import unittest
 from unittest.mock import patch
 
@@ -84,7 +89,7 @@ class TestWindowsServiceAccessCheckDpapi(unittest.TestCase):
         self.assertFalse(linux["serviceTokenAccessCheckVerified"])
 
     def test_simulated_windows_success_is_still_not_service_identity(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with robust_tempdir() as temp:
             runtime = Path(temp) / ".runtime"
             runtime.mkdir()
             (runtime / "v6-emergency-stop-latch.json").write_text("{}", encoding="utf8")
@@ -114,7 +119,7 @@ class TestWindowsServiceAccessCheckDpapi(unittest.TestCase):
             self.assertTrue(all(not t["verified"] for t in rep["targets"]))
 
     def test_non_windows_report_fail_closed_and_self_digest_not_signature(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with robust_tempdir() as temp:
             with patch.object(mod.platform, "system", return_value="Linux"):
                 report = mod.build_service_token_report(
                     runtime_dir=Path(temp) / ".runtime",

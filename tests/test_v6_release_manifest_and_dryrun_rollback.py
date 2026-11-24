@@ -5,6 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -16,7 +21,7 @@ from scripts import v6_release_manifest_and_dryrun_rollback as rel
 
 class TestReleaseManifestAndDryRunRollback(unittest.TestCase):
     def test_manifest_build_verify_and_crlf_equivalence(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with robust_tempdir() as tmp:
             root = Path(tmp)
             (root / "scripts").mkdir()
             (root / "scripts" / "a.py").write_bytes(b"print('ok')\n")
@@ -46,7 +51,7 @@ class TestReleaseManifestAndDryRunRollback(unittest.TestCase):
             self.assertEqual(drift["mismatchedFiles"], ["scripts/a.py"])
 
     def test_dryrun_plan_requires_matching_backup_and_blocks_non_dryrun(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with robust_tempdir() as tmp:
             root = Path(tmp)
             (root / "a.py").write_bytes(b"v1\n")
             cur = rel.build_release_manifest(
@@ -96,7 +101,7 @@ class TestReleaseManifestAndDryRunRollback(unittest.TestCase):
 
 
     def test_untrusted_manifest_paths_cannot_escape_root_or_use_symlink(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with robust_tempdir() as tmp:
             parent = Path(tmp)
             root = parent / "release"
             root.mkdir()
@@ -146,7 +151,7 @@ class TestReleaseManifestAndDryRunRollback(unittest.TestCase):
                 self.assertEqual(linked["invalidPaths"], ["linked.py"])
 
     def test_crlf_canonicalization_only_for_uniform_text_not_binary(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with robust_tempdir() as tmp:
             root = Path(tmp)
             text = root / "logic.py"
             text.write_bytes(b"a=1\nb=2\n")
@@ -162,7 +167,7 @@ class TestReleaseManifestAndDryRunRollback(unittest.TestCase):
             self.assertNotEqual(with_crlf, rel._normalized_file_sha256(binary))
 
     def test_invalid_commit_and_untrusted_self_digest_are_never_live_evidence(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with robust_tempdir() as tmp:
             root = Path(tmp)
             (root / "safe.py").write_bytes(b"pass\n")
             short = rel.build_release_manifest(
