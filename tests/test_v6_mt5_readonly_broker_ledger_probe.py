@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from unittest.mock import Mock, patch
 import json
 from pathlib import Path
 import sys
@@ -87,6 +89,31 @@ class TestMt5ReadonlyBrokerLedgerProbe(unittest.TestCase):
                 self.assertEqual(rep["quote"]["rawUtcQuoteWindowPlausible"], -15 <= delta <= 0)
                 self.assertIsNone(rep["quote"]["brokerServerUtcOffsetSeconds"])
                 self.assertFalse(rep["quote"]["quoteFresh"])
+                self.assertFalse(rep["brokerProvenanceVerified"])
+                self.assertFalse(rep["liveAuthorized"])
+
+    def test_mock_history_unavailable_at_utc_midnight_on_dst_weekends(self) -> None:
+        # UTC diagnostic window only; neither weekend is a broker-day policy.
+        for month, day in ((3, 29), (10, 25)):
+            before = datetime(2026, month, day-1, 23, 59, 59, tzinfo=timezone.utc)
+            end = datetime(2026, month, day, 0, 0, 1, tzinfo=timezone.utc)
+            with self.subTest(end=end):
+                mt5 = Mock(spec=["initialize", "account_info", "symbol_info", "symbol_info_tick",
+                                 "positions_get", "orders_get", "history_deals_get", "shutdown"])
+                mt5.initialize.return_value = True
+                mt5.account_info.return_value._asdict.return_value = _acct()
+                mt5.symbol_info.return_value._asdict.return_value = _sym()
+                mt5.symbol_info_tick.return_value = None
+                mt5.positions_get.return_value = ()
+                mt5.orders_get.return_value = ()
+                mt5.history_deals_get.return_value = None
+                with patch.dict(sys.modules, {"MetaTrader5": mt5}), patch.object(probe, "datetime") as clock:
+                    clock.now.side_effect = (before, end)
+                    rep = probe.collect_live_mt5_readonly_ledger(allow_live_mt5_init=True)
+                mt5.history_deals_get.assert_called_once_with(end.replace(second=0), end)
+                mt5.shutdown.assert_called_once_with()
+                self.assertEqual(rep["missingFields"], ["DAILY_DEALS_HISTORY_UNAVAILABLE", "TICK_INFO_MISSING"])
+                self.assertEqual(rep["generatedAtUtc"], int(end.timestamp()))
                 self.assertFalse(rep["brokerProvenanceVerified"])
                 self.assertFalse(rep["liveAuthorized"])
 
