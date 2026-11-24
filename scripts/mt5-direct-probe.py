@@ -263,15 +263,27 @@ def verify_mt5_account_binding(mt5, config, account=None, terminal=None):
     return True, None
 
 
-def verify_tick_freshness_utc(tick, max_age_sec=DEFAULT_MAX_QUOTE_AGE_SEC, now_utc=None, broker_utc_offset_hours=0.0):
-    """Verify MT5 tick freshness strictly in UTC using explicit deterministic broker offset (no 2h/3h guessing)."""
+def verify_tick_freshness_utc(tick, max_age_sec=DEFAULT_MAX_QUOTE_AGE_SEC, now_utc=None, broker_utc_offset_hours=None):
+    """Verify freshness only with an explicitly verified broker-server UTC offset.
+
+    MT5 ``tick.time`` is not treated as UTC by assumption.  A missing, malformed,
+    out-of-range, or non-quarter-hour offset is therefore an unknown timestamp
+    convention and must fail closed rather than silently defaulting to UTC.
+    """
     if tick is None:
         return False, 999999.0, "Missing MT5 tick"
     tick_ts = float(getattr(tick, "time", 0) or 0)
     if not isfinite(tick_ts) or tick_ts <= 0:
-        return False, 999999.0, "Invalid or nonpositive UTC tick timestamp"
+        return False, 999999.0, "Invalid or nonpositive broker tick timestamp"
+    if (isinstance(broker_utc_offset_hours, bool)
+            or not isinstance(broker_utc_offset_hours, (int, float))):
+        return False, 999999.0, "Broker UTC offset unverified"
+    offset_hours = float(broker_utc_offset_hours)
+    if (not isfinite(offset_hours) or offset_hours < -12.0 or offset_hours > 14.0
+            or abs(offset_hours * 4.0 - round(offset_hours * 4.0)) > 1e-9):
+        return False, 999999.0, "Broker UTC offset invalid or unverified"
     now_sec = float(time.time() if now_utc is None else now_utc)
-    offset_sec = float(broker_utc_offset_hours or 0.0) * 3600.0
+    offset_sec = offset_hours * 3600.0
     tick_utc = tick_ts - offset_sec
     quote_age = now_sec - tick_utc
     max_allowed = max(1.0, float(max_age_sec or DEFAULT_MAX_QUOTE_AGE_SEC))
@@ -2458,11 +2470,21 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
     if not isfinite(price) or price <= 0:
         return {"ok": False, "message": "Invalid executable quote price"}
 
-    # Gate 3: Pure UTC Tick Freshness & Spread Gate
+    # Gate 3: Freshness requires the same explicit broker offset used by daily risk.
     stops_gap = max(point, stops_level * point)
     spread_points = (float(tick.ask) - float(tick.bid)) / point
     max_quote_age = float(cfg_o.get("maxQuoteAgeSeconds") or DEFAULT_MAX_QUOTE_AGE_SEC)
-    fresh_ok, quote_age, fresh_err = verify_tick_freshness_utc(tick, max_age_sec=max_quote_age)
+    broker_offset_hours = _verified_broker_utc_offset_hours(cfg_o)
+    if broker_offset_hours is None:
+        return {
+            "ok": False,
+            "submitted": False,
+            "status": "BLOCKED_BROKER_UTC_OFFSET_UNVERIFIED",
+            "message": "Broker server UTC offset is required for tick freshness",
+        }
+    fresh_ok, quote_age, fresh_err = verify_tick_freshness_utc(
+        tick, max_age_sec=max_quote_age, broker_utc_offset_hours=broker_offset_hours
+    )
     max_spread = float(cfg_o.get("maxSpreadPoints", 65))
     if not fresh_ok or not (0 <= spread_points <= max_spread):
         return {
@@ -5252,9 +5274,17 @@ def main():
     signal_ask = float(getattr(tick_for_signal, "ask", 0.0) or 0.0)
     signal_mode = str(cfg.get("strategyMode") or "PAUSE")
 
-    fresh_sig_ok, sig_age, fresh_sig_err = verify_tick_freshness_utc(
-        tick_for_signal, max_age_sec=float(cfg.get("maxQuoteAgeSeconds") or DEFAULT_MAX_QUOTE_AGE_SEC)
-    )
+    signal_offset_hours = _verified_broker_utc_offset_hours(cfg)
+    if signal_offset_hours is None:
+        fresh_sig_ok, sig_age, fresh_sig_err = (
+            False, 999999.0, "Broker server UTC offset is required for signal freshness"
+        )
+    else:
+        fresh_sig_ok, sig_age, fresh_sig_err = verify_tick_freshness_utc(
+            tick_for_signal,
+            max_age_sec=float(cfg.get("maxQuoteAgeSeconds") or DEFAULT_MAX_QUOTE_AGE_SEC),
+            broker_utc_offset_hours=signal_offset_hours,
+        )
     live_acc_login = int(getattr(account, "login", 0) or cfg.get("login") or 0)
     live_acc_server = str(getattr(account, "server", "") or cfg.get("server") or "DEFAULT").strip()
     regime_key = f"{live_acc_login}|{live_acc_server}|{active_symbol}|V6"

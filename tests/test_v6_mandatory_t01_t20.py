@@ -1626,11 +1626,11 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
         self.assertIn("mode mismatch", err_demo.lower())
 
         now_ts = 1794000000.0
-        ok_fut, _, _ = engine.verify_tick_freshness_utc(SimpleNamespace(time=now_ts + 7200.0), now_utc=now_ts)
+        ok_fut, _, _ = engine.verify_tick_freshness_utc(SimpleNamespace(time=now_ts + 7200.0), now_utc=now_ts, broker_utc_offset_hours=0.0)
         self.assertFalse(ok_fut)
-        ok_old, _, _ = engine.verify_tick_freshness_utc(SimpleNamespace(time=now_ts - 7200.0), now_utc=now_ts)
+        ok_old, _, _ = engine.verify_tick_freshness_utc(SimpleNamespace(time=now_ts - 7200.0), now_utc=now_ts, broker_utc_offset_hours=0.0)
         self.assertFalse(ok_old)
-        ok_valid, _, _ = engine.verify_tick_freshness_utc(SimpleNamespace(time=now_ts - 5.0), now_utc=now_ts)
+        ok_valid, _, _ = engine.verify_tick_freshness_utc(SimpleNamespace(time=now_ts - 5.0), now_utc=now_ts, broker_utc_offset_hours=0.0)
         self.assertTrue(ok_valid)
 
 
