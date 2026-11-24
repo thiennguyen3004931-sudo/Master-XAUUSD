@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 SCHEMA_VERSION = 1
 ALLOWED_VERDICTS = {"PASS", "FAIL", "UNVERIFIED"}
+HEX_CHARS = set("0123456789abcdef")
 
 REQUIRED_CRITERIA: tuple[tuple[str, str], ...] = (
     ("emergency_stop_and_clear", "CODE"),
@@ -27,6 +28,13 @@ REQUIRED_CRITERIA: tuple[tuple[str, str], ...] = (
 )
 
 
+def _is_valid_sha256_ref(ref: str) -> bool:
+    if not ref.startswith("sha256:"):
+        return False
+    digest = ref[7:].lower()
+    return len(digest) == 64 and all(ch in HEX_CHARS for ch in digest)
+
+
 def _sha256_canonical(payload: Mapping[str, Any]) -> str:
     body = {k: v for k, v in payload.items() if k != "reportSha256"}
     encoded = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -37,9 +45,8 @@ def build_final_production_acceptance_report(
     *,
     release_commit_sha: str,
     evidence_map: Mapping[str, Mapping[str, Any]],
-    owner_explicit_live_approval: bool = False,
 ) -> dict[str, Any]:
-    """Build tamper-evident Final Production Acceptance report with PASS/FAIL/UNVERIFIED rows."""
+    """Build non-authorizing Final Production Acceptance report with PASS/FAIL/UNVERIFIED rows."""
     rows: list[dict[str, Any]] = []
     domain_passed = {"CODE": True, "HOST": True, "BROKER": True, "RISK": True}
 
@@ -52,7 +59,7 @@ def build_final_production_acceptance_report(
             raw_v = str(entry.get("verdict") or "").strip().upper()
             verdict = raw_v if raw_v in ALLOWED_VERDICTS else "UNVERIFIED"
             evidence_ref = str(entry.get("evidenceRef") or "").strip() or "NO_REFERENCE"
-            if verdict == "PASS" and evidence_ref == "NO_REFERENCE":
+            if verdict == "PASS" and not _is_valid_sha256_ref(evidence_ref):
                 verdict = "UNVERIFIED"
 
         if verdict != "PASS":
@@ -72,16 +79,10 @@ def build_final_production_acceptance_report(
     broker_verified = domain_passed["BROKER"]
     risk_verified = domain_passed["RISK"]
     all_prelive_pass = code_ready and host_verified and broker_verified and risk_verified
-    live_authorized = bool(all_prelive_pass and owner_explicit_live_approval is True)
 
-    if live_authorized:
-        classification = "LIVE_AUTHORIZED_BY_OWNER"
-    elif all_prelive_pass:
-        classification = "READY_FOR_OWNER_LIVE_APPROVAL"
-    else:
-        classification = "LIVE_BLOCKED"
-
+    classification = "READY_FOR_OWNER_LIVE_APPROVAL" if all_prelive_pass else "LIVE_BLOCKED"
     blocking = [r["criterion"] for r in rows if r["verdict"] != "PASS"]
+
     report: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
         "releaseCommitSha": str(release_commit_sha or "").strip().lower(),
@@ -89,7 +90,7 @@ def build_final_production_acceptance_report(
         "HOST_VERIFIED": host_verified,
         "BROKER_VERIFIED": broker_verified,
         "RISK_VERIFIED": risk_verified,
-        "LIVE_AUTHORIZED": live_authorized,
+        "LIVE_AUTHORIZED": False,
         "classification": classification,
         "passCount": sum(1 for r in rows if r["verdict"] == "PASS"),
         "failCount": sum(1 for r in rows if r["verdict"] == "FAIL"),
