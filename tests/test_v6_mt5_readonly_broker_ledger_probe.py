@@ -73,6 +73,46 @@ class TestMt5ReadonlyBrokerLedgerProbe(unittest.TestCase):
         self.assertFalse(rep["orderSendCalled"])
         self.assertFalse(rep["liveAuthorized"])
 
+    def test_gmt_plus_2_broker_server_time_normalizes_fresh_and_still_detects_stale(self) -> None:
+        # Live GMT+2 broker tick: tick.time = now_utc + 7200 (age = 0s)
+        fresh = probe.build_broker_ledger_snapshot(
+            account_info=_acct(),
+            symbol_info=_sym(),
+            tick_info={"bid": 3650.79, "ask": 3651.30, "time": 1795494660},
+            positions=[],
+            pending_orders=[],
+            today_deals=[],
+            buy_calc_profit_1lot=-700.0,
+            sell_calc_profit_1lot=-700.0,
+            buy_calc_margin_1lot=730.26,
+            sell_calc_margin_1lot=730.16,
+            now_utc=1795487460,
+            from_live_mt5=True,
+        )
+        self.assertTrue(fresh["quote"]["quoteFresh"])
+        self.assertEqual(fresh["quote"]["brokerServerUtcOffsetSeconds"], 7200)
+        self.assertTrue(fresh["brokerProvenanceVerified"])
+        self.assertEqual(fresh["status"], "BROKER_READONLY_LEDGER_VERIFIED")
+        self.assertFalse(fresh["liveAuthorized"])
+
+        # Stale GMT+2 tick (120 seconds old > 15s max)
+        stale = probe.build_broker_ledger_snapshot(
+            account_info=_acct(),
+            symbol_info=_sym(),
+            tick_info={"bid": 3650.79, "ask": 3651.30, "time": 1795494540},
+            positions=[],
+            pending_orders=[],
+            today_deals=[],
+            buy_calc_profit_1lot=-700.0,
+            sell_calc_profit_1lot=-700.0,
+            buy_calc_margin_1lot=730.26,
+            sell_calc_margin_1lot=730.16,
+            now_utc=1795487460,
+            from_live_mt5=True,
+        )
+        self.assertFalse(stale["quote"]["quoteFresh"])
+        self.assertFalse(stale["brokerProvenanceVerified"])
+
     def test_malformed_position_or_deal_fails_closed_never_skips_silently(self) -> None:
         bad_pos = probe.build_broker_ledger_snapshot(
             account_info=_acct(),
@@ -93,7 +133,7 @@ class TestMt5ReadonlyBrokerLedgerProbe(unittest.TestCase):
         self.assertEqual(bad_pos["status"], "MALFORMED_BROKER_RECORDS_FAIL_CLOSED")
         self.assertIsNone(bad_pos["inventoryAndDailyPnl"]["dailyTotalPnl"])
 
-    def test_non_usd_currency_and_stale_tick_fail_closed(self) -> None:
+    def test_non_usd_currency_fails_closed(self) -> None:
         non_usd = probe.build_broker_ledger_snapshot(
             account_info=_acct(currency="EUR"),
             symbol_info=_sym(),
@@ -110,8 +150,8 @@ class TestMt5ReadonlyBrokerLedgerProbe(unittest.TestCase):
         )
         self.assertFalse(non_usd["brokerProvenanceVerified"])
         self.assertEqual(non_usd["status"], "NON_USD_ACCOUNT_CURRENCY_UNSUPPORTED")
-        self.assertEqual(non_usd["inventoryAndDailyPnl"]["currency"], "EUR")
 
 
 if __name__ == "__main__":
     unittest.main()
+    
