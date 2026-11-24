@@ -1252,6 +1252,22 @@ function invokeMt5PythonEngineDirect(extraPayload = {}, force = false) {
     ...extraPayload,
   });
 
+  // Offline-test guard: never spawn the real MT5 Python bridge from a test run.
+  if (process.env.V6_OFFLINE_TEST_FORBID_REAL_MT5 === "1") {
+    const blocked = {
+      connected: false,
+      errorCode: "REAL_MT5_FORBIDDEN_IN_OFFLINE_TEST",
+      errorMessage: "Offline test run: real MT5 Python bridge spawn blocked (inject setMt5EngineInvokerForTest).",
+      orderSent: false,
+      timestamp: Date.now(),
+    };
+    if (isProbeOnly) {
+      lastDirectProbeSnapshot = blocked;
+      lastDirectProbeTime = Date.now();
+    }
+    return Promise.resolve(blocked);
+  }
+
   const py = resolveRealPythonOnWindows();
   const args = [...py.prefixArgs, DIRECT_PROBE_SCRIPT, "--stdin"];
 

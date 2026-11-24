@@ -65,7 +65,9 @@ def ensure_mt5_installed():
     try:
         import MetaTrader5 as mt5
         return mt5, None
-    except ImportError:
+    except ImportError as import_err:
+        if os.environ.get("V6_OFFLINE_TEST_FORBID_REAL_MT5") == "1":
+            return None, f"REAL_MT5_FORBIDDEN_IN_OFFLINE_TEST ({import_err})"
         try:
             subprocess.check_call(
                 [sys.executable, "-m", "pip", "install", "--quiet", "MetaTrader5"],
