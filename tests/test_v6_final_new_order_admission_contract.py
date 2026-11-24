@@ -1,6 +1,11 @@
 """Offline crash/stop-latch/ACL/reset admission tests for V6 G1/G4 (#7)."""
 import sys
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import unittest
 from pathlib import Path
 
@@ -36,7 +41,7 @@ OPERATOR_SECRET = "offline-test-operator-secret-32b"
 
 class FinalNewOrderAdmissionContractTests(unittest.TestCase):
     def test_protective_sl_tp_remains_unaffected_under_stop_latch_and_unverified_acl(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "latch.json"
             persist_operator_emergency_stop(
                 path, account_login=123456, server="DBGMarkets-Live", operator_id="owner-op", now_utc=1700000000
@@ -59,7 +64,7 @@ class FinalNewOrderAdmissionContractTests(unittest.TestCase):
             self.assertFalse(res["liveAuthorized"])
 
     def test_authenticated_hmac_reset_and_full_admission_contract(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "latch.json"
             stop = persist_operator_emergency_stop(
                 path, account_login=123456, server="DBGMarkets-Live", operator_id="owner-op", now_utc=1700000000
@@ -202,7 +207,7 @@ class FinalNewOrderAdmissionContractTests(unittest.TestCase):
 
 
     def test_hmac_rejects_unbounded_ttl_and_future_issued_token_without_mutation(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with robust_tempdir() as folder:
             path = Path(folder) / "latch.json"
             stop = persist_operator_emergency_stop(
                 path, account_login=123456, server="DBGMarkets-Live",

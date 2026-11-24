@@ -6,6 +6,11 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+
+try:
+    from tests.v6_test_tempdir import robust_tempdir
+except ImportError:  # discover -s tests imports modules top-level
+    from v6_test_tempdir import robust_tempdir
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -300,7 +305,7 @@ class TestV6WindowsEffectiveAclDpapiProbe(unittest.TestCase):
         self.assertFalse(result["liveAuthorized"])
 
     def test_build_probe_report_fail_closed_and_deterministic_sha256(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with robust_tempdir() as tmp:
             root = Path(tmp)
             rt = root / ".runtime"
             rt.mkdir()
