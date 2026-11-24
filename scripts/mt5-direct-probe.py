@@ -477,6 +477,39 @@ def _safe_read_positions(mt5, symbol=None):
         return [], False, f"MT5 positions_get() raised: {exc}" 
 
 
+BROKER_UTC_OFFSET_ENV = "V6_BROKER_UTC_OFFSET_HOURS"
+
+
+def _verified_broker_utc_offset_hours(cfg):
+    """Return the broker server UTC offset in hours, or None (fail-closed).
+
+    Source order: explicit cfg["brokerUtcOffsetHours"] (number), else the
+    operator-set env var V6_BROKER_UTC_OFFSET_HOURS (decimal string). The
+    value must be finite, within [-12, 14] and on a 15-minute grid.
+    Booleans, non-numeric strings, missing values and NaN/inf are rejected.
+    There is deliberately NO default: 0 silently mis-anchors the risk day.
+    """
+    raw = None
+    if isinstance(cfg, dict) and "brokerUtcOffsetHours" in cfg:
+        raw = cfg.get("brokerUtcOffsetHours")
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return None
+    else:
+        env_raw = os.environ.get(BROKER_UTC_OFFSET_ENV)
+        if env_raw is None or not env_raw.strip():
+            return None
+        try:
+            raw = float(env_raw.strip())
+        except ValueError:
+            return None
+    value = float(raw)
+    if not isfinite(value) or value < -12.0 or value > 14.0:
+        return None
+    if abs(value * 4.0 - round(value * 4.0)) > 1e-9:
+        return None
+    return value
+
+
 def compute_and_persist_daily_loss_state(
     mt5,
     account,
@@ -522,6 +555,18 @@ def compute_and_persist_daily_loss_state(
     net_cashflow_usd = 0.0
     deal_count_today = 0
 
+    # P0: MT5 deal timestamps are broker *server* time. Without an explicit,
+    # verified server UTC offset, yesterday's realized profit can leak into
+    # today's window and shrink the measured loss. Never default to 0.
+    broker_offset_hours = _verified_broker_utc_offset_hours(cfg_d)
+    if broker_offset_hours is None:
+        return {
+            "ok": False,
+            "reason": "BROKER_UTC_OFFSET_UNVERIFIED: brokerUtcOffsetHours missing/invalid; "
+                      "daily loss window cannot be anchored (fail-closed)",
+        }
+    broker_offset_sec = broker_offset_hours * 3600.0
+
     if has_deal_api:
         try:
             deals = mt5.history_deals_get(day_start_utc_ts - 14400.0, now_sec + 86400.0)
@@ -539,8 +584,7 @@ def compute_and_persist_daily_loss_state(
             raw_t = float(getattr(d, "time", 0) or 0)
             if raw_t <= 0:
                 continue
-            # Explicit deterministic broker server UTC offset (no heuristic 2h/3h guessing from now_sec)
-            broker_offset_sec = float(cfg_d.get("brokerUtcOffsetHours") or 0.0) * 3600.0
+            # Explicit, verified broker server UTC offset (no 2h/3h guessing, no 0 default)
             deal_utc = raw_t - broker_offset_sec
             if deal_utc < day_start_utc_ts:
                 continue
@@ -624,6 +668,7 @@ def compute_and_persist_daily_loss_state(
         "server": server_name,
         "dayKey": day_key,
         "timezoneRule": f"UTC{tz_offset_hours:+.1f}h (00:00 reset)",
+        "brokerUtcOffsetHours": broker_offset_hours,
         "dayStartUtcTs": int(day_start_utc_ts),
         "dayStartBalanceUsd": round(day_start_balance, 2),
         "effectiveBaseBalanceUsd": round(effective_base_balance, 2),
