@@ -12,7 +12,7 @@ import time
 from typing import Any, Mapping, Sequence
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCOPE = "READONLY_PRELIVE_EVIDENCE_BUNDLE_NO_ORDER_NO_MUTATION"
 
 
@@ -37,70 +37,28 @@ def assemble_prelive_evidence_bundle(
     norm_sha = str(release_commit_sha or "").strip().lower()
     is_windows = str(platform_name or "").strip().lower() == "windows"
 
-    proc_verified = bool(
-        is_windows
-        and isinstance(process_entrypoint_report, Mapping)
-        and process_entrypoint_report.get("activeRuntimeReleaseVerified") is True
-        and process_entrypoint_report.get("liveAuthorized") is False
-    )
-    acl_dpapi_verified = bool(
-        is_windows
-        and isinstance(effective_acl_dpapi_report, Mapping)
-        and effective_acl_dpapi_report.get("effectiveAclVerified") is True
-        and effective_acl_dpapi_report.get("dpapiReady") is True
-        and effective_acl_dpapi_report.get("liveAuthorized") is False
-    )
-    broker_verified = bool(
-        is_windows
-        and isinstance(mt5_readonly_ledger_report, Mapping)
-        and mt5_readonly_ledger_report.get("brokerProvenanceVerified") is True
-        and mt5_readonly_ledger_report.get("orderSendCalled") is False
-        and mt5_readonly_ledger_report.get("liveAuthorized") is False
-    )
-    ci_verified = bool(
-        ci_required_all_green_sha
-        and norm_sha
-        and str(ci_required_all_green_sha).strip().lower() == norm_sha
-    )
-
-    blocking: list[str] = []
+    # This assembler consumes caller-supplied JSON, not authenticated receipts.
+    # A content digest identifies the input; it does not establish who produced it.
+    reports = {
+        "processEntrypointSha256": process_entrypoint_report,
+        "effectiveAclDpapiSha256": effective_acl_dpapi_report,
+        "mt5ReadonlyLedgerSha256": mt5_readonly_ledger_report,
+    }
+    evidence_hashes = {
+        key: _sha256_canonical(report, exclude={"reportSha256"})
+        if isinstance(report, Mapping) else None
+        for key, report in reports.items()
+    }
+    blocking = ["CI_EXACT_HEAD_UNVERIFIED", "RUNNING_V6_PROCESS_RELEASE_UNVERIFIED",
+                "WINDOWS_EFFECTIVE_ACL_OR_DPAPI_UNVERIFIED", "MT5_READONLY_BROKER_LEDGER_UNVERIFIED"]
     if not is_windows:
         blocking.append("WINDOWS_HOST_REQUIRED")
-    if not ci_verified:
-        blocking.append("CI_EXACT_HEAD_UNVERIFIED")
-    if not proc_verified:
-        blocking.append("RUNNING_V6_PROCESS_RELEASE_UNVERIFIED")
-    if not acl_dpapi_verified:
-        blocking.append("WINDOWS_EFFECTIVE_ACL_OR_DPAPI_UNVERIFIED")
-    if not broker_verified:
-        blocking.append("MT5_READONLY_BROKER_LEDGER_UNVERIFIED")
-
-    summary_verdicts = {
-        "ci_exact_head": "PASS" if ci_verified else "UNVERIFIED",
-        "running_v6_process": "PASS" if proc_verified else "UNVERIFIED",
-        "windows_acl_dpapi": "PASS" if acl_dpapi_verified else "UNVERIFIED",
-        "mt5_readonly_broker_ledger": "PASS" if broker_verified else "UNVERIFIED",
-    }
-
-    evidence_hashes = {
-        "processEntrypointSha256": (
-            process_entrypoint_report.get("reportSha256")
-            if isinstance(process_entrypoint_report, Mapping)
-            else None
-        ),
-        "effectiveAclDpapiSha256": (
-            effective_acl_dpapi_report.get("reportSha256")
-            if isinstance(effective_acl_dpapi_report, Mapping)
-            else None
-        ),
-        "mt5ReadonlyLedgerSha256": (
-            mt5_readonly_ledger_report.get("reportSha256")
-            if isinstance(mt5_readonly_ledger_report, Mapping)
-            else None
-        ),
-    }
-
-    ready_for_approval = len(blocking) == 0
+    if len(norm_sha) != 40 or any(c not in "0123456789abcdef" for c in norm_sha):
+        blocking.append("FULL_RELEASE_SHA_REQUIRED")
+    summary_verdicts = dict.fromkeys(
+        ("ci_exact_head", "running_v6_process", "windows_acl_dpapi", "mt5_readonly_broker_ledger"),
+        "UNVERIFIED",
+    )
     bundle: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
         "scope": SCOPE,
@@ -110,7 +68,7 @@ def assemble_prelive_evidence_bundle(
         "verdicts": summary_verdicts,
         "evidenceHashes": evidence_hashes,
         "blockingReasons": sorted(blocking),
-        "classification": "READY_FOR_OWNER_LIVE_APPROVAL" if ready_for_approval else "LIVE_BLOCKED",
+        "classification": "LIVE_BLOCKED",
         "orderSendCalled": False,
         "liveAuthorized": False,
         "secretsExposed": False,
