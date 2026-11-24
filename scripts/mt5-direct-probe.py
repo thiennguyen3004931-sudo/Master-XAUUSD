@@ -56,6 +56,88 @@ DEFAULT_MAX_DRAWDOWN_PCT = 6.0
 ONE_PRICE_UNIT_USD_PER_OZ = 1.0
 
 RUNTIME_DIR = Path(__file__).resolve().parent.parent / ".runtime"
+EMERGENCY_STOP_LATCH_FILE = RUNTIME_DIR / "v6-emergency-stop-latch.json"
+STOP_INTENT_FILE = RUNTIME_DIR / "v6-stop-intent.flag"
+_ENTRY_LOCK_STATE = threading.local()
+
+try:
+    from scripts.v6_emergency_stop_gate import (
+        _exclusive_latch_lock as _latch_file_lock,
+        read_bound_emergency_stop_latch as _read_bound_emergency_stop_latch,
+    )
+except ImportError:
+    from v6_emergency_stop_gate import (
+        _exclusive_latch_lock as _latch_file_lock,
+        read_bound_emergency_stop_latch as _read_bound_emergency_stop_latch,
+    )
+
+
+def _strict_new_order_lock_held() -> bool:
+    return bool(getattr(_ENTRY_LOCK_STATE, "held", False))
+
+
+def _check_runtime_emergency_stop_latch(
+    account_login,
+    server: str,
+    *,
+    now_utc: int | None = None,
+    host_acl_checker=None,
+) -> dict:
+    """P0 fail-closed quarantine for all new orders until real host acceptance.
+
+    No caller-supplied ACL checker, local HMAC key, or syntactically valid
+    AUTHORIZED_CLEAR record can prove trusted Windows operator identity and
+    broker reconciliation. The latch lock only serializes state reads/writes;
+    it does NOT yet linearize stop requests against broker order_send. Thus
+    a non-blocked return here would be unsafe until a separate vetted
+    runtime integration provides shared STOP/send ordering.
+    """
+    try:
+        if STOP_INTENT_FILE.exists():
+            return {
+                "emergencyStopActive": True,
+                "blockNewOrders": True,
+                "reason": "STOP_INTENT_ACTIVE_FAIL_CLOSED",
+                "liveAuthorized": False,
+            }
+    except Exception:
+        return {
+            "emergencyStopActive": True,
+            "blockNewOrders": True,
+            "reason": "STOP_INTENT_CHECK_EXCEPTION_FAIL_CLOSED",
+            "liveAuthorized": False,
+        }
+    try:
+        with _latch_file_lock(EMERGENCY_STOP_LATCH_FILE):
+            latch = _read_bound_emergency_stop_latch(
+                EMERGENCY_STOP_LATCH_FILE,
+                account_login=account_login,
+                server=server,
+            )
+    except Exception:
+        return {
+            "emergencyStopActive": True,
+            "blockNewOrders": True,
+            "reason": "STOP_LATCH_READ_EXCEPTION_FAIL_CLOSED",
+            "liveAuthorized": False,
+        }
+    if not isinstance(latch, dict):
+        return {
+            "emergencyStopActive": True,
+            "blockNewOrders": True,
+            "reason": "STOP_LATCH_RESULT_UNVERIFIED",
+            "liveAuthorized": False,
+        }
+    if latch.get("emergencyStopActive") is True or latch.get("blockNewOrders") is True:
+        return latch
+    return {
+        "emergencyStopActive": True,
+        "blockNewOrders": True,
+        "reason": "STOP_RELEASE_HOST_AUTH_UNVERIFIED",
+        "liveAuthorized": False,
+        "stopCategory": latch.get("stopCategory", "UNVERIFIED"),
+    }
+
 MANAGER_STATE_FILE = RUNTIME_DIR / "v6-position-manager-state.json"
 DAILY_RISK_STATE_FILE = RUNTIME_DIR / "v6-daily-risk-state.json"
 REGIME_STATE_FILE = RUNTIME_DIR / "v6-regime-state.json"
@@ -298,9 +380,11 @@ def _strict_new_order_lock():
                     msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
                 except (OSError, ImportError) as exc:
                     raise _EntryExecutionLockUnavailable(str(exc)) from exc
+                _ENTRY_LOCK_STATE.held = True
                 try:
                     yield
                 finally:
+                    _ENTRY_LOCK_STATE.held = False
                     fh.seek(0)
                     msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
             else:
@@ -309,9 +393,11 @@ def _strict_new_order_lock():
                     fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                 except (OSError, ImportError) as exc:
                     raise _EntryExecutionLockUnavailable(str(exc)) from exc
+                _ENTRY_LOCK_STATE.held = True
                 try:
                     yield
                 finally:
+                    _ENTRY_LOCK_STATE.held = False
                     fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         finally:
             fh.close()
@@ -1938,6 +2024,9 @@ def _entry_fill_evidence(mt5, intent):
             if (deal.comment == intent["brokerComment"] and deal.symbol == intent["symbol"]
                     and deal.magic == 270715 and deal.type == {"BUY": 0, "SELL": 1}[intent["side"]]
                     and deal.ticket > 0 and deal.volume > 0 and isfinite(deal.volume)):
+                entry = getattr(deal, "entry", None)
+                if type(entry) is not int or entry != 0:  # DEAL_ENTRY_IN
+                    return unknown
                 ticket = int(deal.ticket)
                 fill = (float(deal.volume), getattr(deal, "position_id", None))
                 if ticket in fills and fills[ticket] != fill:
@@ -2093,6 +2182,13 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
     """Unified Fail-Closed Execution Gateway & Final Pre-Send SL Gate (Section 1.2, 1.3, 1.4).
     Unit convention: 1 price unit ("1 giá") = 1.00 USD/oz (distinct from broker `point`).
     """
+    if not _strict_new_order_lock_held():
+        return {
+            "ok": False,
+            "submitted": False,
+            "status": "BLOCKED_ENTRY_LOCK_NOT_HELD",
+            "message": "_execute_order_serialized requires _strict_new_order_lock",
+        }
     cfg_o = order_cfg or {}
     side = str(cfg_o.get("side") or "").strip().upper()
     if side not in ("BUY", "SELL"):
@@ -2505,6 +2601,18 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
         return final_margin
     risk_metrics["freeMarginUsd"] = final_margin["freeMarginUsd"]
     risk_metrics["requiredMarginUsd"] = final_margin["requiredMarginUsd"]
+    estop_block = _check_runtime_emergency_stop_latch(
+        getattr(account, "login", 0),
+        str(getattr(account, "server", "") or "").strip(),
+     )
+    if estop_block is not None:
+        return {
+            "ok": False,
+            "submitted": False,
+            "status": "BLOCKED_EMERGENCY_STOP_LATCH",
+            "message": str(estop_block.get("reason") or "Emergency stop latch blocked new order"),
+            "emergencyStopLatch": estop_block,
+        }
 
     try:
         res = mt5.order_send(req)
