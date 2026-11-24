@@ -73,45 +73,22 @@ class TestMt5ReadonlyBrokerLedgerProbe(unittest.TestCase):
         self.assertFalse(rep["orderSendCalled"])
         self.assertFalse(rep["liveAuthorized"])
 
-    def test_gmt_plus_2_broker_server_time_normalizes_fresh_and_still_detects_stale(self) -> None:
-        # Live GMT+2 broker tick: tick.time = now_utc + 7200 (age = 0s)
-        fresh = probe.build_broker_ledger_snapshot(
-            account_info=_acct(),
-            symbol_info=_sym(),
-            tick_info={"bid": 3650.79, "ask": 3651.30, "time": 1795494660},
-            positions=[],
-            pending_orders=[],
-            today_deals=[],
-            buy_calc_profit_1lot=-700.0,
-            sell_calc_profit_1lot=-700.0,
-            buy_calc_margin_1lot=730.26,
-            sell_calc_margin_1lot=730.16,
-            now_utc=1795487460,
-            from_live_mt5=True,
-        )
-        self.assertTrue(fresh["quote"]["quoteFresh"])
-        self.assertEqual(fresh["quote"]["brokerServerUtcOffsetSeconds"], 7200)
-        self.assertTrue(fresh["brokerProvenanceVerified"])
-        self.assertEqual(fresh["status"], "BROKER_READONLY_LEDGER_VERIFIED")
-        self.assertFalse(fresh["liveAuthorized"])
-
-        # Stale GMT+2 tick (120 seconds old > 15s max)
-        stale = probe.build_broker_ledger_snapshot(
-            account_info=_acct(),
-            symbol_info=_sym(),
-            tick_info={"bid": 3650.79, "ask": 3651.30, "time": 1795494540},
-            positions=[],
-            pending_orders=[],
-            today_deals=[],
-            buy_calc_profit_1lot=-700.0,
-            sell_calc_profit_1lot=-700.0,
-            buy_calc_margin_1lot=730.26,
-            sell_calc_margin_1lot=730.16,
-            now_utc=1795487460,
-            from_live_mt5=True,
-        )
-        self.assertFalse(stale["quote"]["quoteFresh"])
-        self.assertFalse(stale["brokerProvenanceVerified"])
+    def test_utc_window_never_infers_offset_or_attests_caller(self) -> None:
+        now = 1795487460
+        for delta in (-172800, -3600, -900, -16, -15, 0, 1, 900, 6300, 7200, 10800):
+            with self.subTest(delta=delta):
+                rep = probe.build_broker_ledger_snapshot(
+                    account_info=_acct(), symbol_info=_sym(), positions=[], pending_orders=[],
+                    today_deals=[], tick_info={"time": now + delta, "bid": 100, "ask": 101},
+                    buy_calc_profit_1lot=-1, sell_calc_profit_1lot=-1,
+                    buy_calc_margin_1lot=1, sell_calc_margin_1lot=1, now_utc=now,
+                    from_live_mt5=True,
+                )
+                self.assertEqual(rep["quote"]["rawUtcQuoteWindowPlausible"], -15 <= delta <= 0)
+                self.assertIsNone(rep["quote"]["brokerServerUtcOffsetSeconds"])
+                self.assertFalse(rep["quote"]["quoteFresh"])
+                self.assertFalse(rep["brokerProvenanceVerified"])
+                self.assertFalse(rep["liveAuthorized"])
 
     def test_malformed_position_or_deal_fails_closed_never_skips_silently(self) -> None:
         bad_pos = probe.build_broker_ledger_snapshot(
