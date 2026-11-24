@@ -190,6 +190,10 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
             engine, "_check_runtime_emergency_stop_latch", return_value=None
         )
         self._isolated_g1_gate.start()
+        # Broker server UTC offset must be explicit (no implicit 0 default).
+        _offset_env = patch.dict(os.environ, {"V6_BROKER_UTC_OFFSET_HOURS": "0"})
+        _offset_env.start()
+        self.addCleanup(_offset_env.stop)
         self.addCleanup(self._isolated_g1_gate.stop)
 
     def tearDown(self):

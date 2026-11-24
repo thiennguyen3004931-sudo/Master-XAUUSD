@@ -80,7 +80,8 @@ def _sent_comment(broker):
 class BrokerAckRejectionWiringTest(unittest.TestCase):
     def setUp(self):
         self._tmp_rt = Path(tempfile.mkdtemp(prefix="v6-ackwire-rt-"))
-        self._env = patch.dict(os.environ, {"V6_RUNTIME_DIR": str(self._tmp_rt)})
+        self._env = patch.dict(os.environ, {"V6_RUNTIME_DIR": str(self._tmp_rt),
+                                            "V6_BROKER_UTC_OFFSET_HOURS": "0"})
         self._env.start()
         self.addCleanup(self._env.stop)
         for name, value in {

@@ -4,6 +4,7 @@ import hmac
 import importlib.util
 import json
 import sys
+import os
 import tempfile
 
 try:
@@ -286,7 +287,7 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
                 probe, "EMERGENCY_STOP_LATCH_FILE", latch_file
             ), patch.object(probe, "STOP_INTENT_FILE", intent_file), patch.object(
                 probe, "DAILY_RISK_STATE_FILE", rt / "v6-daily-risk-state.json"
-            ):
+            ), patch.dict(os.environ, {"V6_BROKER_UTC_OFFSET_HOURS": "0"}):
                 res = probe.execute_order(
                     broker,
                     "XAUUSD.G",
