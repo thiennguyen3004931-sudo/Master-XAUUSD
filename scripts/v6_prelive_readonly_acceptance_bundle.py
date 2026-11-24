@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import platform
+import sys
 import time
 from typing import Any, Mapping, Sequence
 
@@ -88,6 +89,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--allow-live-mt5-init", action="store_true", default=False)
     args = parser.parse_args(argv)
 
+    repo_root = args.repo_root.resolve()
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
     proc_rep = acl_rep = mt5_rep = None
     try:
         from scripts import v6_runtime_process_attestation as process_probe  # type: ignore
@@ -103,7 +108,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         from scripts import v6_windows_effective_acl_dpapi_probe as acl_probe  # type: ignore
 
-        acl_rep = acl_probe.build_probe_report(args.repo_root, runtime_dir=args.runtime_dir)
+        acl_rep = acl_probe.build_probe_report(repo_root, runtime_dir=args.runtime_dir)
     except Exception:
         acl_rep = None
 
