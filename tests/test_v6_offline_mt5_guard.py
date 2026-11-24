@@ -56,7 +56,7 @@ class OfflineMt5GuardTest(unittest.TestCase):
             "    print(json.dumps({'imported': False, 'err': str(e)}))\n"
         )
         out = subprocess.run([sys.executable, "-c", code], cwd=ROOT,
-                             capture_output=True, text=True, timeout=60)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr[-2000:])
         res = _last_json(out.stdout)
         self.assertFalse(res["imported"])
@@ -76,7 +76,7 @@ class OfflineMt5GuardTest(unittest.TestCase):
             "print(json.dumps({'mt5': mt5 is not None, 'err': err}))\n"
         )
         out = subprocess.run([sys.executable, "-c", code], cwd=ROOT,
-                             capture_output=True, text=True, timeout=60)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr[-2000:])
         res = _last_json(out.stdout)
         self.assertFalse(res["mt5"])
@@ -95,7 +95,7 @@ class OfflineMt5GuardTest(unittest.TestCase):
         )
         env = dict(os.environ, ZIQ_V6_CONTROL_TOKEN=TEST_TOKEN)
         out = subprocess.run(["node", "--input-type=module", "-e", script], cwd=ROOT, env=env,
-                             capture_output=True, text=True, timeout=90)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
         self.assertEqual(out.returncode, 0, out.stderr[-2000:])
         self.assertNotIn("V6_CONTROL_TOKEN", out.stdout, "request must pass auth to reach the bridge")
         self.assertIn("REAL_MT5_FORBIDDEN_IN_OFFLINE_TEST", out.stdout)
