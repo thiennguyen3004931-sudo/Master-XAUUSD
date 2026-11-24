@@ -4,9 +4,7 @@
 Safety invariants:
 - Strictly READ-ONLY: zero ``order_send``, zero ``order_check`` mutations, zero ``.runtime``
   writes, masks account login, never exposes credentials, always ``liveAuthorized: False``.
-- Handles MT5 broker server timezone offset (e.g., GMT+2/+3 where ``tick.time`` is in
-  broker server time rather than UTC) by normalizing whole-15-minute offsets within
-  [-12h, +14h] while strictly enforcing ``max_quote_age_seconds`` freshness.
+- Raw UTC comparisons are diagnostics only: clock, timezone and broker provenance are not attested.
 """
 
 from __future__ import annotations
@@ -23,8 +21,6 @@ SCHEMA_VERSION = 1
 SCOPE = "READONLY_MT5_BROKER_PRICING_INVENTORY_AND_DAILY_PNL_NO_ORDER"
 DEFAULT_SL_PROBE_DISTANCE_USD = 7.0
 DEAL_ENTRY_CLOSING_TYPES = {1, 2}
-MIN_TZ_OFFSET_SEC = -12 * 3600
-MAX_TZ_OFFSET_SEC = 14 * 3600
 
 
 def _is_finite_num(val: Any) -> bool:
@@ -67,28 +63,13 @@ def _evaluate_quote_freshness(
     tick_ts: Any,
     now_utc: int,
     max_quote_age_seconds: int,
-    allow_server_tz_normalization: bool = True,
 ) -> tuple[bool, int | None, int | None]:
-    """Return (quote_fresh, normalized_age_seconds, inferred_server_utc_offset_seconds)."""
+    """Return raw UTC-window plausibility, signed age, and no inferred offset."""
     if type(tick_ts) is not int or type(now_utc) is not int or type(max_quote_age_seconds) is not int or max_quote_age_seconds <= 0:
         return (False, None, None)
 
     raw_age = now_utc - tick_ts
-    if 0 <= raw_age <= max_quote_age_seconds:
-        return (True, raw_age, 0)
-
-    if allow_server_tz_normalization:
-        # MT5 tick.time is reported in broker server time (typically GMT+2 or GMT+3).
-        # Snap offset to nearest 15-minute (900s) timezone boundary within [-12h, +14h].
-        inferred_offset = int(round((tick_ts - now_utc) / 900.0)) * 900
-        if inferred_offset != 0 and MIN_TZ_OFFSET_SEC <= inferred_offset <= MAX_TZ_OFFSET_SEC:
-            normalized_tick_utc = tick_ts - inferred_offset
-            norm_age = now_utc - normalized_tick_utc
-            if -2 <= norm_age <= max_quote_age_seconds:
-                return (True, max(0, norm_age), inferred_offset)
-            return (False, norm_age, inferred_offset)
-
-    return (False, raw_age, 0)
+    return (0 <= raw_age <= max_quote_age_seconds, raw_age, None)
 
 
 def build_broker_ledger_snapshot(
@@ -127,7 +108,7 @@ def build_broker_ledger_snapshot(
             "schemaVersion": SCHEMA_VERSION,
             "scope": SCOPE,
             "generatedAtUtc": int(now_utc),
-            "provenanceSource": "LIVE_MT5_READONLY_SESSION" if from_live_mt5 else "INJECTED_OR_OFFLINE_SNAPSHOT",
+            "provenanceSource": "REPORTED_MT5_SESSION_UNVERIFIED" if from_live_mt5 else "INJECTED_OR_OFFLINE_SNAPSHOT",
             "status": "BROKER_READONLY_INCOMPLETE",
             "missingFields": sorted(missing),
             "malformedRecordsDetected": False,
@@ -148,11 +129,11 @@ def build_broker_ledger_snapshot(
     bid = tick_info.get("bid")
     ask = tick_info.get("ask")
     tick_ts = tick_info.get("time")
-    price_valid = _is_finite_num(bid) and _is_finite_num(ask) and float(ask) >= float(bid) > 0.0
+    price_valid = _is_finite_num(bid) and _is_finite_num(ask) and float(ask) > float(bid) > 0.0
     ts_fresh, norm_age_sec, server_offset_sec = _evaluate_quote_freshness(
         tick_ts=tick_ts,
-        now_utc=int(now_utc),
-        max_quote_age_seconds=int(max_quote_age_seconds),
+        now_utc=now_utc,
+        max_quote_age_seconds=max_quote_age_seconds,
     )
     quote_fresh = bool(price_valid and ts_fresh)
 
@@ -195,8 +176,7 @@ def build_broker_ledger_snapshot(
         if type(d_time) is not int or type(d_entry) is not int or not all(_is_finite_num(v) for v in vals):
             malformed_reasons.append(f"DEAL_{idx}_MALFORMED")
             continue
-        adj_d_time = d_time - (server_offset_sec or 0)
-        if adj_d_time < day_start_utc or adj_d_time > int(now_utc) + 5:
+        if not day_start_utc <= d_time <= now_utc:
             malformed_reasons.append(f"DEAL_{idx}_OUTSIDE_UTC_DAY_WINDOW")
             continue
         if d_entry in DEAL_ENTRY_CLOSING_TYPES:
@@ -224,7 +204,7 @@ def build_broker_ledger_snapshot(
         and sell_margin is not None
         and quote_fresh
     )
-    broker_provenance_verified = bool(from_live_mt5 and inputs_valid)
+    broker_provenance_verified = False  # Neither a caller flag nor a self-hash authenticates this snapshot.
 
     if not currency_is_usd:
         status = "NON_USD_ACCOUNT_CURRENCY_UNSUPPORTED"
@@ -232,8 +212,6 @@ def build_broker_ledger_snapshot(
         status = "MALFORMED_BROKER_RECORDS_FAIL_CLOSED"
     elif not inputs_valid:
         status = "BROKER_READONLY_PARTIAL_OR_STALE"
-    elif broker_provenance_verified:
-        status = "BROKER_READONLY_LEDGER_VERIFIED"
     else:
         status = "OFFLINE_SNAPSHOT_VALIDATED_PROVENANCE_UNVERIFIED"
 
@@ -241,7 +219,7 @@ def build_broker_ledger_snapshot(
         "schemaVersion": SCHEMA_VERSION,
         "scope": SCOPE,
         "generatedAtUtc": int(now_utc),
-        "provenanceSource": "LIVE_MT5_READONLY_SESSION" if from_live_mt5 else "INJECTED_OR_OFFLINE_SNAPSHOT",
+        "provenanceSource": "REPORTED_MT5_SESSION_UNVERIFIED" if from_live_mt5 else "INJECTED_OR_OFFLINE_SNAPSHOT",
         "account": {
             "accountMasked": _mask_login(account_info.get("login")),
             "server": str(account_info.get("server") or "").strip(),
@@ -271,7 +249,8 @@ def build_broker_ledger_snapshot(
             "quoteTimestampRaw": tick_ts if type(tick_ts) is int else None,
             "brokerServerUtcOffsetSeconds": server_offset_sec,
             "normalizedQuoteAgeSeconds": norm_age_sec,
-            "quoteFresh": quote_fresh,
+            "rawUtcQuoteWindowPlausible": quote_fresh,
+            "quoteFresh": False,  # No independently verified clock and timestamp convention.
         },
         "brokerCalcOneLot": {
             "currency": currency,
@@ -369,8 +348,10 @@ def collect_live_mt5_readonly_ledger(
         tick = mt5.symbol_info_tick(symbol)
         pos_raw = mt5.positions_get()
         ord_raw = mt5.orders_get()
-        day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        deals_raw = mt5.history_deals_get(day_start, datetime.now(timezone.utc))
+        history_end = datetime.now(timezone.utc)
+        now_utc = int(history_end.timestamp())
+        day_start = history_end.replace(hour=0, minute=0, second=0, microsecond=0)
+        deals_raw = mt5.history_deals_get(day_start, history_end)
 
         acct_d = acct._asdict() if acct is not None else None
         sym_d = sym._asdict() if sym is not None else None
