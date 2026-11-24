@@ -1,20 +1,15 @@
-"""G4 P0 read-only runtime process, port-owner & release attestation (#7).
+"""G4 P0 read-only runtime process, port-owner & release attestation (#7, #91).
 
-Strictly READ-ONLY / NO-ORDER / NO-SECRETS:
-- NEVER imports MetaTrader5, NEVER calls `order_send`, NEVER mutates ARM/BOT_MODE/config.
-- NEVER emits raw local paths, usernames, SIDs, or environment secrets (redacts via SHA-256).
-- NEVER trusts caller-supplied booleans (such as `matchesExpectedRepoRoot=True`).
-- Explicitly separates:
-  * `workingTreeHeadObserved` (`git rev-parse HEAD` on disk — observation only),
-  * `releaseManifestCheck` (local Git blob SHA-256; strict Windows CRLF checkout equivalence only, not host proof),
-  * `portOwnerObserved` (read-only listener PID/owner hashes observed on 3711/5717/8765),
-  * `standaloneProcessCandidateObserved` (same PID/owner/executable on default
-    API 3711 and WEB 5717; optional Phase7C port 8765 is NOT required),
-  * `gatewayProcessIdentified` (always False until independent host script binding),
-  * `activeRuntimeReleaseVerified` (always `False` / `UNVERIFIED` unless full independent
-    host PID -> executable -> release manifest binding is verified without drift).
-- Separates static `sourceSizingModeHint` from `effectivePreSendSizingMode` (kept
-  `UNVERIFIED` without verified runtime config/path).
+Strictly READ-ONLY / NO-ORDER / NO-SECRETS / NO-PROCESS-MUTATION:
+- NEVER starts or stops any process.
+- NEVER imports or initializes MetaTrader5, NEVER calls ``order_send``.
+- NEVER modifies ARM, AUTO, BOT_MODE, DCA, ``.runtime``, secrets, or account config.
+- NEVER emits raw local paths, usernames, SIDs, command lines, or secrets (SHA-256 redaction).
+- NEVER trusts caller-supplied booleans (such as ``matchesExpectedRepoRoot=True``).
+- Inspects Windows ports 3711, 5717, and optional 8765 read-only.
+- Keeps ``gatewayProcessIdentified=False`` and ``activeRuntimeReleaseVerified=False`` unless
+  independent process-to-release binding is actually proven (a read-only port/PID probe
+  cannot prove in-memory loaded code matches disk or broker bridge binding).
 """
 from __future__ import annotations
 
@@ -26,18 +21,16 @@ from pathlib import Path
 import platform
 import subprocess
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
-# Default ports from xauusd-standalone-server.mjs. Deployments may override
-# API_PORT / WEB_PORT; an absent default listener is not proof no server exists.
-V6_PORT_ROLES = {
-    3711: "V6_STANDALONE_API_DEFAULT",
-    5717: "V6_STANDALONE_WEB_DEFAULT",
-    8765: "OPTIONAL_PHASE7C_MT5_BRIDGE",
+V6_PORT_ROLES: dict[int, str] = {
+    3711: "AUX_OR_API_SERVICE",
+    5717: "WEB_UI_CONTROL_SERVER",
+    8765: "OPTIONAL_TRADE_GATEWAY_BRIDGE",
 }
-V6_MONITORED_PORTS = tuple(V6_PORT_ROLES.keys())
+V6_MONITORED_PORTS: tuple[int, ...] = (3711, 5717, 8765)
 ATTESTATION_SCOPE = "READONLY_PROCESS_PORT_RELEASE_ATTESTATION_NO_ORDER"
-CORE_MODULE_PATHS = (
+CORE_MODULE_PATHS: tuple[str, ...] = (
     "scripts/mt5-direct-probe.py",
     "scripts/xauusd-standalone-server.mjs",
     "scripts/v6_emergency_stop_gate.py",
@@ -48,13 +41,8 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _sha256_file(path: Path) -> str | None:
-    try:
-        if not path.is_file():
-            return None
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError:
-        return None
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 def _is_valid_sha256(val: Any) -> bool:
@@ -65,6 +53,29 @@ def _is_valid_sha256(val: Any) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _is_valid_git_sha40(val: Any) -> bool:
+    if not isinstance(val, str) or len(val) != 40:
+        return False
+    try:
+        int(val, 16)
+        return True
+    except ValueError:
+        return False
+
+
+def _sha256_file_lf_canonical(path: Path) -> tuple[str | None, bool]:
+    """Return (canonical_lf_sha256, crlf_normalized_flag) without exposing path."""
+    try:
+        if not path.is_file():
+            return None, False
+        raw = path.read_bytes()
+        has_crlf = b"\r\n" in raw
+        normalized = raw.replace(b"\r\n", b"\n") if has_crlf else raw
+        return _sha256_bytes(normalized), has_crlf
+    except OSError:
+        return None, False
 
 
 def _run_cmd(args: list[str], *, cwd: Path | None = None, timeout: int = 5) -> tuple[int, str]:
@@ -87,12 +98,13 @@ def inspect_working_tree_git_state(
     *,
     cmd_runner: Callable[[list[str], Path], tuple[int, str]] | None = None,
 ) -> dict[str, Any]:
-    """Observe working-tree git HEAD & dirty state (never treated as active process proof)."""
+    """Observe working-tree git HEAD & dirty state (observation only, never runtime proof)."""
     runner = cmd_runner or (lambda argv, cwd: _run_cmd(argv, cwd=cwd))
     rc_head, head_out = runner(["git", "rev-parse", "HEAD"], repo_root)
     rc_dirty, dirty_out = runner(["git", "status", "--porcelain"], repo_root)
 
-    head_sha = head_out.strip() if (rc_head == 0 and len(head_out.strip()) == 40) else "UNVERIFIED"
+    cand_head = head_out.strip().lower()
+    head_sha = cand_head if (rc_head == 0 and _is_valid_git_sha40(cand_head)) else "UNVERIFIED"
     dirty_verified = rc_dirty == 0
     is_dirty = bool(dirty_out.strip()) if dirty_verified else True
 
@@ -103,124 +115,51 @@ def inspect_working_tree_git_state(
     }
 
 
+def _inspect_redacted_module_digests_with_crlf(repo_root: Path) -> tuple[dict[str, str | None], list[str]]:
+    digests: dict[str, str | None] = {}
+    crlf_files: list[str] = []
+    for rel in CORE_MODULE_PATHS:
+        digest, had_crlf = _sha256_file_lf_canonical(repo_root / rel)
+        digests[rel] = digest
+        if had_crlf:
+            crlf_files.append(rel)
+    return digests, crlf_files
+
+
 def inspect_redacted_module_digests(repo_root: Path) -> dict[str, str | None]:
-    """Compute SHA-256 digests of core V6 runtime files without exposing absolute paths."""
-    return {rel: _sha256_file(repo_root / rel) for rel in CORE_MODULE_PATHS}
-
-
-def _matches_windows_checkout_crlf_only(path: Path, expected_lf_sha256: str) -> bool:
-    """Accept only an exact LF -> CRLF checkout conversion, never arbitrary edits.
-
-    Git may transparently normalize Windows checkout CRLF back to LF in the
-    index. A raw file SHA-256 then differs from the Git blob even when
-    the working tree is clean. Do not ignore, replace, or mutate the file;
-    compare a strictly LF-normalized in-memory copy instead.
-    """
-    try:
-        raw = path.read_bytes()
-    except OSError:
-        return False
-    if b"\r\n" not in raw:
-        return False
-    normalized = raw.replace(b"\r\n", b"\n")
-    # Reject mixed LF/CRLF and lone CR. Only uniform CRLF line endings qualify.
-    if raw != normalized.replace(b"\n", b"\r\n"):
-        return False
-    return hashlib.sha256(normalized).hexdigest() == expected_lf_sha256
+    """Compute LF-canonical SHA-256 digests of core V6 files without exposing absolute paths."""
+    digests, _ = _inspect_redacted_module_digests_with_crlf(repo_root)
+    return digests
 
 
 def verify_release_manifest_digests(
     observed_digests: dict[str, str | None],
     expected_release_manifest: dict[str, str] | None,
-    *,
-    repo_root: Path | None = None,
-    allow_local_git_checkout_crlf: bool = False,
 ) -> dict[str, Any]:
-    """Compare Git blob hashes and disk bytes, accepting ONLY strict CRLF.
-
-    CRLF equivalence applies solely to the locally derived Git-blob baseline,
-    never to an arbitrary caller-supplied external manifest. This remains
-    source integrity evidence, not independent runtime process attestation.
-    """
+    """Verify every core module digest against an explicit SHA-256 release manifest."""
     if not isinstance(expected_release_manifest, dict) or not expected_release_manifest:
-        return {"matched": False, "reason": "RELEASE_MANIFEST_MISSING"}
+        return {"matched": False, "reason": "RELEASE_MANIFEST_MISSING", "mismatchedModules": []}
     mismatches: list[str] = []
-    line_endings_normalized: list[str] = []
     for rel in CORE_MODULE_PATHS:
         expected = expected_release_manifest.get(rel)
         actual = observed_digests.get(rel)
-        if _is_valid_sha256(expected) and _is_valid_sha256(actual) and actual == expected:
-            continue
         if (
-            allow_local_git_checkout_crlf
-            and repo_root is not None
-            and _is_valid_sha256(expected)
-            and _matches_windows_checkout_crlf_only(repo_root / rel, expected)
+            not _is_valid_sha256(expected)
+            or not _is_valid_sha256(actual)
+            or str(actual).lower() != str(expected).lower()
         ):
-            line_endings_normalized.append(rel)
-            continue
-        mismatches.append(rel)
+            mismatches.append(rel)
     if mismatches:
         return {
             "matched": False,
             "reason": "RELEASE_MANIFEST_DIGEST_MISMATCH",
             "mismatchedModules": mismatches,
-            "checkoutCrlfNormalizedModules": line_endings_normalized,
-            "rawBytesIdenticalToGitBlobs": False,
         }
-    return {
-        "matched": True,
-        "reason": (
-            "RELEASE_MANIFEST_MATCHED_CRLF_CHECKOUT_EQUIVALENT"
-            if line_endings_normalized else "RELEASE_MANIFEST_MATCHED"
-        ),
-        "mismatchedModules": [],
-        "checkoutCrlfNormalizedModules": line_endings_normalized,
-        "rawBytesIdenticalToGitBlobs": not line_endings_normalized,
-    }
-
-
-def derive_local_git_commit_manifest(
-    repo_root: Path, expected_release_sha: str
-) -> tuple[dict[str, str] | None, str]:
-    """Hash core module blobs from a local immutable Git commit object.
-
-    This proves only that disk files match the locally available Git object.
-    It does NOT authenticate the origin of the Git repository, the owner of a
-    running process, the active release, or permission to trade.
-    """
-    sha = str(expected_release_sha or "").strip()
-    if len(sha) != 40:
-        return None, "INVALID_RELEASE_SHA"
-    try:
-        int(sha, 16)
-    except ValueError:
-        return None, "INVALID_RELEASE_SHA"
-
-    try:
-        commit = subprocess.run(
-            ["git", "cat-file", "-t", sha], cwd=str(repo_root),
-            capture_output=True, check=False, timeout=5,
-        )
-        if commit.returncode != 0 or commit.stdout.strip() != b"commit":
-            return None, "LOCAL_GIT_COMMIT_OBJECT_UNAVAILABLE"
-
-        manifest: dict[str, str] = {}
-        for rel in CORE_MODULE_PATHS:
-            blob = subprocess.run(
-                ["git", "show", f"{sha}:{rel}"], cwd=str(repo_root),
-                capture_output=True, check=False, timeout=5,
-            )
-            if blob.returncode != 0:
-                return None, "LOCAL_GIT_MODULE_OBJECT_UNAVAILABLE"
-            manifest[rel] = hashlib.sha256(blob.stdout).hexdigest()
-        return manifest, "LOCAL_GIT_COMMIT_BLOBS_HASHED"
-    except (OSError, subprocess.TimeoutExpired):
-        return None, "LOCAL_GIT_OBJECT_READ_FAILED"
+    return {"matched": True, "reason": "RELEASE_MANIFEST_MATCHED", "mismatchedModules": []}
 
 
 def _normalize_listener_entries(raw_entry: Any) -> list[dict[str, Any]]:
-    """Normalize single or multiple listeners on one port; redact raw paths/owners."""
+    """Normalize single or multiple listeners on one port; strictly redact paths/owners/SIDs/cmdline."""
     if raw_entry is None:
         return []
     items = raw_entry if isinstance(raw_entry, list) else [raw_entry]
@@ -232,28 +171,26 @@ def _normalize_listener_entries(raw_entry: Any) -> list[dict[str, Any]]:
         if type(pid) is not int or pid <= 0:
             continue
         owner_raw = str(item.get("owner") or "").strip()
+        sid_raw = str(item.get("ownerSid") or item.get("sid") or "").strip()
         cmd_raw = str(item.get("commandLine") or "").strip()
         exe_raw = str(item.get("executablePath") or "").strip()
         exe_sha = item.get("executableSha256")
+        # Intentionally IGNORE caller-supplied trust flags such as matchesExpectedRepoRoot.
         listeners.append({
             "pid": pid,
             "ownerHash": _sha256_text(owner_raw) if owner_raw else None,
+            "ownerSidHash": _sha256_text(sid_raw) if sid_raw else None,
             "cmdHash": _sha256_text(cmd_raw) if cmd_raw else None,
             "executablePathHash": _sha256_text(exe_raw) if exe_raw else None,
-            "executableSha256": exe_sha if _is_valid_sha256(exe_sha) else None,
+            "executableSha256": str(exe_sha).lower() if _is_valid_sha256(exe_sha) else None,
         })
     return listeners
 
 
-def inspect_port_owners(
-    ports: tuple[int, ...] = V6_MONITORED_PORTS,
-    *,
-    port_inspector: Callable[[tuple[int, ...]], dict[Any, Any]] | None = None,
-) -> dict[str, Any]:
-    """Inspect PIDs & redacted owner/executable hashes for ports 3711/5717/8765."""
-    empty_ports = {
+def _empty_ports_map(ports: Sequence[int]) -> dict[str, dict[str, Any]]:
+    return {
         str(p): {
-            "role": V6_PORT_ROLES.get(p, "UNKNOWN"),
+            "role": V6_PORT_ROLES.get(int(p), "UNKNOWN"),
             "listening": False,
             "listenerCount": 0,
             "multipleListeners": False,
@@ -261,6 +198,17 @@ def inspect_port_owners(
         }
         for p in ports
     }
+
+
+def inspect_port_owners(
+    ports: tuple[int, ...] = V6_MONITORED_PORTS,
+    *,
+    port_inspector: Callable[[tuple[int, ...]], dict[Any, Any]] | None = None,
+    powershell_runner: Callable[[list[str]], tuple[int, str]] | None = None,
+    is_windows_override: bool | None = None,
+) -> dict[str, Any]:
+    """Inspect PIDs & redacted owner/executable hashes for ports 3711, 5717, and optional 8765."""
+    empty_ports = _empty_ports_map(ports)
 
     if port_inspector is not None:
         try:
@@ -282,7 +230,8 @@ def inspect_port_owners(
             }
         return {"status": "OBSERVED", "reason": "PORT_OWNERS_OBSERVED", "ports": redacted}
 
-    if os.name != "nt":
+    is_windows = (os.name == "nt") if is_windows_override is None else bool(is_windows_override)
+    if not is_windows:
         return {
             "status": "UNVERIFIED",
             "reason": "NON_WINDOWS_HOST_PORT_ATTESTATION_UNVERIFIED",
@@ -297,17 +246,27 @@ def inspect_port_owners(
         "  $arr = @(); "
         "  foreach ($c in $conns) { "
         "    $proc = Get-CimInstance Win32_Process -Filter \"ProcessId=$($c.OwningProcess)\" -ErrorAction SilentlyContinue; "
-        "    $owner = ''; try { $o = Invoke-CimMethod -InputObject $proc -MethodName GetOwner -ErrorAction SilentlyContinue; if ($o.User) { $owner = \"$($o.Domain)\\$($o.User)\" } } catch {}; "
+        "    $owner = ''; $sid = ''; "
+        "    try { $o = Invoke-CimMethod -InputObject $proc -MethodName GetOwner -ErrorAction SilentlyContinue; if ($o.User) { $owner = \"$($o.Domain)\\$($o.User)\" } } catch {}; "
+        "    try { $s = Invoke-CimMethod -InputObject $proc -MethodName GetOwnerSid -ErrorAction SilentlyContinue; if ($s.Sid) { $sid = [string]$s.Sid } } catch {}; "
         "    $exe = [string]$proc.ExecutablePath; "
         "    $exeHash = ''; if ($exe -and (Test-Path $exe)) { try { $exeHash = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash.ToLowerInvariant() } catch {} }; "
-        "    $arr += @{ pid = [int]$c.OwningProcess; owner = $owner; commandLine = [string]$proc.CommandLine; executablePath = $exe; executableSha256 = $exeHash } "
+        "    $arr += @{ pid = [int]$c.OwningProcess; owner = $owner; ownerSid = $sid; commandLine = [string]$proc.CommandLine; executablePath = $exe; executableSha256 = $exeHash } "
         "  }; "
         "  $out[\"$p\"] = $arr "
         "}; "
         "$out | ConvertTo-Json -Depth 5 -Compress"
     )
-    rc, stdout = _run_cmd(["powershell", "-NoProfile", "-Command", ps_script], timeout=10)
-    if rc != 0 or not stdout:
+    ps_argv = ["powershell", "-NoProfile", "-Command", ps_script]
+    if powershell_runner is not None:
+        try:
+            rc, stdout = powershell_runner(ps_argv)
+        except Exception:
+            return {"status": "UNVERIFIED", "reason": "WINDOWS_PORT_QUERY_UNAVAILABLE", "ports": empty_ports}
+    else:
+        rc, stdout = _run_cmd(ps_argv, timeout=10)
+
+    if rc != 0 or not str(stdout or "").strip():
         return {"status": "UNVERIFIED", "reason": "WINDOWS_PORT_QUERY_UNAVAILABLE", "ports": empty_ports}
     try:
         parsed = json.loads(stdout)
@@ -348,150 +307,165 @@ def inspect_readonly_arm_and_sizing_source(repo_root: Path) -> dict[str, Any]:
     }
 
 
+def _executable_matches(
+    listeners: list[dict[str, Any]],
+    expected_executable_sha256: str | None,
+) -> tuple[bool, bool]:
+    """Return (checked, matched) for a single listener against an expected executable SHA-256."""
+    if expected_executable_sha256 is None:
+        return False, False
+    if not _is_valid_sha256(expected_executable_sha256) or len(listeners) != 1:
+        return True, False
+    observed = listeners[0].get("executableSha256")
+    if not _is_valid_sha256(observed):
+        return True, False
+    return True, str(observed).lower() == expected_executable_sha256.lower()
+
+
 def collect_runtime_process_attestation(
     *,
     repo_root: Path,
     expected_release_sha: str,
     expected_release_manifest: dict[str, str] | None = None,
+    expected_executable_sha256: str | None = None,
     previous_gateway_pid: int | None = None,
     now_utc: int | None = None,
     cmd_runner: Callable[[list[str], Path], tuple[int, str]] | None = None,
     port_inspector: Callable[[tuple[int, ...]], dict[Any, Any]] | None = None,
+    powershell_runner: Callable[[list[str]], tuple[int, str]] | None = None,
+    is_windows_override: bool | None = None,
 ) -> dict[str, Any]:
-    """Collect redacted read-only runtime process/port/release attestation (#7 G4)."""
+    """Collect redacted read-only runtime process/port/release attestation (#7, #91).
+
+    Fail-closed invariants:
+    - Never claims ``gatewayProcessIdentified=True`` from port ownership alone.
+    - Never claims ``activeRuntimeReleaseVerified=True`` without independent process-to-release proof.
+    - Always keeps ``liveAuthorized=False``, ``secretsExposed=False``, ``orderSendCalled=False``.
+    """
     ts = int(time.time() if now_utc is None else now_utc)
-    expected_sha = str(expected_release_sha or "").strip()
+    expected_sha = str(expected_release_sha or "").strip().lower()
     git_state = inspect_working_tree_git_state(repo_root, cmd_runner=cmd_runner)
-    digests = inspect_redacted_module_digests(repo_root)
-    if expected_release_manifest is None:
-        # Git commit blobs are a local, source-only reference, not a signed
-        # external release attestation or proof of code loaded by a process.
-        manifest, manifest_reason = derive_local_git_commit_manifest(repo_root, expected_sha)
-        manifest_provenance = (
-            "LOCAL_GIT_COMMIT_OBJECT_UNTRUSTED" if manifest is not None else "UNAVAILABLE"
-        )
-    else:
-        manifest = expected_release_manifest
-        manifest_reason = "CALLER_SUPPLIED_MANIFEST_NOT_INDEPENDENT"
-        manifest_provenance = "CALLER_SUPPLIED_UNTRUSTED"
-    manifest_check = verify_release_manifest_digests(
-        digests,
-        manifest,
-        repo_root=repo_root,
-        allow_local_git_checkout_crlf=(
-            manifest_provenance == "LOCAL_GIT_COMMIT_OBJECT_UNTRUSTED"
-        ),
+    digests, crlf_files = _inspect_redacted_module_digests_with_crlf(repo_root)
+    manifest_check = verify_release_manifest_digests(digests, expected_release_manifest)
+    port_state = inspect_port_owners(
+        V6_MONITORED_PORTS,
+        port_inspector=port_inspector,
+        powershell_runner=powershell_runner,
+        is_windows_override=is_windows_override,
     )
-    port_state = inspect_port_owners(V6_MONITORED_PORTS, port_inspector=port_inspector)
     arm_sizing = inspect_readonly_arm_and_sizing_source(repo_root)
 
-    p3711 = port_state["ports"].get("3711", {})
-    p5717 = port_state["ports"].get("5717", {})
+    ports_map = port_state["ports"]
+    p3711 = ports_map.get("3711", {})
+    p5717 = ports_map.get("5717", {})
+    p8765 = ports_map.get("8765", {})
 
+    any_listener = any(entry.get("listening") for entry in ports_map.values())
+    any_multiple_listeners = any(entry.get("multipleListeners") for entry in ports_map.values())
     port_owner_observed = bool(
         port_state["status"] == "OBSERVED"
         and any(
             entry.get("listening") and any(l.get("ownerHash") for l in entry.get("listeners", []))
-            for entry in port_state["ports"].values()
+            for entry in ports_map.values()
         )
     )
 
-    api_listeners = p3711.get("listeners", [])
-    web_listeners = p5717.get("listeners", [])
-    api_single = len(api_listeners) == 1
-    web_single = len(web_listeners) == 1
-    same_pid = bool(
-        api_single and web_single
-        and api_listeners[0]["pid"] == web_listeners[0]["pid"]
+    # Evaluate primary observed candidate listener (8765 if present, else 3711/5717 for mismatch checks).
+    gw_listeners = p8765.get("listeners", [])
+    primary_listeners = (
+        gw_listeners
+        if len(gw_listeners) == 1
+        else (p3711.get("listeners", []) if len(p3711.get("listeners", [])) == 1 else p5717.get("listeners", []))
     )
-    gateway_pid = api_listeners[0]["pid"] if same_pid else None
+    exe_checked, exe_matched = _executable_matches(primary_listeners, expected_executable_sha256)
+    exe_mismatch = bool(exe_checked and not exe_matched and len(primary_listeners) == 1)
+
+    gw_pid = gw_listeners[0]["pid"] if len(gw_listeners) == 1 else None
     pid_changed = bool(
         isinstance(previous_gateway_pid, int)
         and not isinstance(previous_gateway_pid, bool)
         and previous_gateway_pid > 0
-        and gateway_pid is not None
-        and gateway_pid != previous_gateway_pid
-    )
-    same_owner = bool(
-        same_pid
-        and api_listeners[0].get("ownerHash") is not None
-        and api_listeners[0]["ownerHash"] == web_listeners[0].get("ownerHash")
-    )
-    same_executable = bool(
-        same_pid
-        and api_listeners[0].get("executableSha256") is not None
-        and api_listeners[0]["executableSha256"] == web_listeners[0].get("executableSha256")
-    )
-    standalone_candidate_observed = bool(
-        port_state["status"] == "OBSERVED"
-        and same_owner and same_executable
-        and not pid_changed
-        and not p3711.get("multipleListeners")
-        and not p5717.get("multipleListeners")
+        and gw_pid is not None
+        and gw_pid != previous_gateway_pid
     )
 
-    # Port/PID/executable evidence does not identify the loaded Node script or
-    # the Python MT5 subprocess. Never claim active gateway identity from it.
+    # Read-only port/PID observation NEVER proves independent process-to-release binding.
+    # Both flags remain strictly False until an independent host binding proof exists.
     gateway_process_identified = False
     active_runtime_release_verified = False
 
+    blocking_reasons: list[str] = []
+    if port_state["status"] != "OBSERVED":
+        blocking_reasons.append(port_state["reason"])
+    elif not any_listener:
+        blocking_reasons.append("NO_LISTENERS_OBSERVED")
+    if any_multiple_listeners:
+        blocking_reasons.append("MULTIPLE_PORT_LISTENERS_AMBIGUOUS")
+    if port_state["status"] == "OBSERVED" and any_listener and not p8765.get("listening"):
+        blocking_reasons.append("OPTIONAL_BRIDGE_PORT_8765_ABSENT")
+    if exe_mismatch:
+        blocking_reasons.append("GATEWAY_EXECUTABLE_MISMATCH")
+    if pid_changed:
+        blocking_reasons.append("GATEWAY_PID_CHANGED_REQUIRES_REATTESTATION")
+    if not git_state["workingTreeClean"]:
+        blocking_reasons.append("WORKING_TREE_DIRTY")
+    if not (_is_valid_git_sha40(expected_sha) and git_state["workingTreeHeadObserved"] == expected_sha):
+        blocking_reasons.append("RELEASE_SHA_MISMATCH")
     if not manifest_check["matched"]:
-        reason = manifest_check["reason"]
-    elif not (len(expected_sha) == 40 and git_state["workingTreeHeadObserved"] == expected_sha and git_state["workingTreeClean"]):
-        reason = "WORKING_TREE_SHA_OR_CLEANLINESS_UNVERIFIED"
-    elif p3711.get("multipleListeners") or p5717.get("multipleListeners"):
-        reason = "MULTIPLE_V6_DEFAULT_LISTENERS_AMBIGUOUS"
-    elif not p3711.get("listening") or not p5717.get("listening"):
-        reason = "V6_DEFAULT_API_OR_WEB_LISTENER_NOT_OBSERVED"
-    elif not same_pid:
-        reason = "V6_DEFAULT_API_WEB_PIDS_DIFFER_OR_UNVERIFIED"
-    elif pid_changed:
-        reason = "V6_STANDALONE_PID_CHANGED_REQUIRES_REATTESTATION"
-    elif not standalone_candidate_observed:
-        reason = "V6_STANDALONE_PROCESS_OWNER_OR_EXE_UNVERIFIED"
-    else:
-        reason = "READONLY_OBSERVATION_REQUIRES_INDEPENDENT_HOST_RUNTIME_ATTESTATION"
+        blocking_reasons.append(manifest_check["reason"])
+
+    if not blocking_reasons:
+        blocking_reasons.append("PROCESS_TO_RELEASE_BINDING_NOT_INDEPENDENTLY_PROVEN")
+
+    reason = blocking_reasons[0]
 
     body = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "scope": ATTESTATION_SCOPE,
         "generatedAtUtc": ts,
         "platform": platform.system(),
         "repoRootHash": _sha256_text(str(repo_root)),
-        "expectedReleaseSha": expected_sha or "UNVERIFIED",
+        "expectedReleaseSha": expected_sha if _is_valid_git_sha40(expected_sha) else "UNVERIFIED",
         "workingTreeHeadObserved": git_state["workingTreeHeadObserved"],
         "workingTreeClean": git_state["workingTreeClean"],
+        "gitStatusVerified": git_state["gitStatusVerified"],
         "moduleDigestsSha256": digests,
+        "crlfNormalizedModules": crlf_files,
+        "crlfEquivalenceApplied": len(crlf_files) > 0,
         "releaseManifestCheck": manifest_check,
-        "manifestProvenance": manifest_provenance,
-        "manifestDerivationReason": manifest_reason,
         "portAttestation": port_state,
         "portOwnerObserved": port_owner_observed,
-        "standaloneProcessCandidateObserved": standalone_candidate_observed,
-        "gatewayProcessIdentified": gateway_process_identified,
+        "executableDigestChecked": exe_checked,
+        "executableDigestMatched": exe_matched,
         "gatewayPidChanged": pid_changed,
-        "armAndSizingSource": arm_sizing,
+        "gatewayProcessIdentified": gateway_process_identified,
         "activeRuntimeReleaseVerified": active_runtime_release_verified,
+        "armAndSizingSource": arm_sizing,
+        "blockingReasons": blocking_reasons,
         "status": "UNVERIFIED",
         "reason": reason,
+        "processMutated": False,
+        "orderSendCalled": False,
         "liveAuthorized": False,
         "secretsExposed": False,
     }
-    canonical = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    canonical = json.dumps(body, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     body["reportSha256"] = _sha256_text(canonical)
     return body
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only V6 process/port/release attestation (NO-ORDER)")
     parser.add_argument("--repo-root", default=str(Path(__file__).resolve().parent.parent))
     parser.add_argument("--expected-release-sha", required=True)
-    args = parser.parse_args()
+    parser.add_argument("--expected-executable-sha256", default=None)
+    args = parser.parse_args(argv)
     report = collect_runtime_process_attestation(
         repo_root=Path(args.repo_root),
         expected_release_sha=args.expected_release_sha,
+        expected_executable_sha256=args.expected_executable_sha256,
     )
-    print(json.dumps(report, indent=2, ensure_ascii=False))
+    print(json.dumps(report, indent=2, ensure_ascii=True))
     return 0
 
 
