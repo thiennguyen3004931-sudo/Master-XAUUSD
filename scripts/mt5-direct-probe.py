@@ -71,6 +71,15 @@ except ImportError:
         read_bound_emergency_stop_latch as _read_bound_emergency_stop_latch,
     )
 
+try:
+    from scripts.v6_clear_cas_antireplay_and_broker_ack_reconciler import (
+        reconcile_broker_ack_and_fills as _reconcile_broker_ack_and_fills,
+    )
+except ImportError:
+    from v6_clear_cas_antireplay_and_broker_ack_reconciler import (
+        reconcile_broker_ack_and_fills as _reconcile_broker_ack_and_fills,
+    )
+
 
 def _strict_new_order_lock_held() -> bool:
     return bool(getattr(_ENTRY_LOCK_STATE, "held", False))
@@ -2112,6 +2121,16 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
             if result.get("uncertain"):
                 result["fillEvidence"] = _entry_fill_evidence(mt5, state[key])
                 return result
+            if result.get("brokerRejected"):
+                ack = _broker_rejection_ack_reconciliation(mt5, state[key], result.get("retcode"))
+                result = dict(result)
+                result["ackReconciliation"] = ack
+                if ack.get("outcome") != "CONFIRMED_NO_FILL_REJECTED":
+                    # Unknown/unsafe rejection: keep the durable freeze latched.
+                    result["uncertain"] = True
+                    result["status"] = "BLOCKED_REJECTION_EXPOSURE_UNVERIFIED"
+                    result["fillEvidence"] = _entry_fill_evidence(mt5, state[key])
+                    return result
             try:
                 state = _read_uncertain_entry_state()
                 state.pop(key, None)
@@ -2127,6 +2146,93 @@ def execute_order(mt5, active_symbol, order_cfg, comment_tag="XAUUSD_AI_MASTER_V
             "status": "BLOCKED_ENTRY_LOCK_UNAVAILABLE",
             "message": f"Cannot acquire new-order execution lock (fail-closed): {exc}",
         }
+
+
+def _broker_rejection_ack_reconciliation(mt5, intent, retcode):
+    """Classify an explicit broker rejection before releasing the in-flight freeze.
+
+    The freeze may be released only when the reconciler proves
+    CONFIRMED_NO_FILL_REJECTED: a known no-exposure retcode AND broker history
+    shows no opening deal AND no pending order carrying this intent's unique
+    broker comment. Any read failure or ambiguity keeps exposure UNKNOWN.
+    """
+    unknown = {"outcome": "AMBIGUOUS_EXPOSURE_UNKNOWN", "blockNewOrders": True,
+               "uncertainExposure": True, "liveAuthorized": False}
+    try:
+        if not isinstance(intent, dict) or not intent.get("brokerComment"):
+            return dict(unknown, reason="INTENT_UNVERIFIED")
+        comment = intent["brokerComment"]
+        login = int(intent.get("accountLogin") or 0)
+        server = str(intent.get("server") or "").strip()
+        symbol = str(intent.get("symbol") or "").strip()
+        side = str(intent.get("side") or "").strip().upper()
+        if side not in ("BUY", "SELL"):
+            return dict(unknown, reason="INTENT_SIDE_UNVERIFIED")
+        try:
+            requested = float(intent.get("requestedVolume"))
+        except (TypeError, ValueError):
+            return dict(unknown, reason="INTENT_VOLUME_UNVERIFIED")
+
+        start = datetime.datetime.fromtimestamp(int(intent["createdAtUtc"]) - 5, datetime.timezone.utc)
+        end = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=5)
+        deals = mt5.history_deals_get(start, end)
+        if not isinstance(deals, (list, tuple)):
+            return dict(unknown, reason="DEAL_HISTORY_UNAVAILABLE")
+        orders_fn = getattr(mt5, "orders_get", None)
+        if not callable(orders_fn):
+            return dict(unknown, reason="PENDING_ORDERS_UNAVAILABLE")
+        pending = orders_fn(symbol=symbol)
+        if not isinstance(pending, (list, tuple)):
+            return dict(unknown, reason="PENDING_ORDERS_UNAVAILABLE")
+
+        type_to_side = {0: "BUY", 1: "SELL"}
+        observed_deals = []
+        for d in deals:
+            if str(getattr(d, "comment", "") or "") != comment:
+                continue
+            observed_deals.append({
+                "entry": getattr(d, "entry", None),
+                "clientOrderId": comment,
+                "symbol": str(getattr(d, "symbol", "") or ""),
+                "direction": type_to_side.get(getattr(d, "type", None), "UNKNOWN"),
+                "server": server,
+                "accountLogin": login,
+                "volume": getattr(d, "volume", None),
+            })
+        observed_pending = []
+        for o in pending:
+            if str(getattr(o, "comment", "") or "") != comment:
+                continue
+            observed_pending.append({
+                "clientOrderId": comment,
+                "symbol": str(getattr(o, "symbol", "") or ""),
+                "server": server,
+                "accountLogin": login,
+            })
+
+        account = mt5.account_info()
+        if (account is None or int(getattr(account, "login", 0) or 0) != login
+                or str(getattr(account, "server", "") or "").strip() != server):
+            return dict(unknown, reason="ACCOUNT_BINDING_CHANGED")
+
+        report = _reconcile_broker_ack_and_fills(
+            intent={
+                "clientOrderId": comment,
+                "accountLogin": login,
+                "server": server,
+                "symbol": symbol,
+                "direction": side,
+                "requestedVolume": requested,
+                "stopActiveDuringSend": False,
+            },
+            broker_ack={"retcode": retcode if type(retcode) is int else None,
+                        "timedOut": False, "disconnected": False},
+            observed_deals=observed_deals,
+            observed_pending_orders=observed_pending,
+        )
+        return dict(report)
+    except Exception as exc:  # fail closed on any broker/read error
+        return dict(unknown, reason=f"RECONCILE_EXCEPTION:{type(exc).__name__}")
 
 
 def verify_last_moment_entry_margin(mt5, initial_account, order_type, symbol, volume, entry_price):
@@ -2788,6 +2894,8 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
         }
     return {
         "ok": False,
+        "submitted": True,
+        "brokerRejected": True,
         "retcode": retcode,
         "message": f"Sàn từ chối lệnh (Mã {retcode}: {getattr(res, 'comment', '')}). Kiểm tra nút Algo Trading trên MT5!"
     }
