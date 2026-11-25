@@ -10,9 +10,9 @@ Telegram message when the bot stops cycling.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -22,14 +22,25 @@ sys.path.insert(0, str(HERE))
 import v6_go_live_guard as guard
 
 
-# SHA-256 of the built-in fallback key in xauusd-standalone-server.mjs (AUDIT S-3).
-# That key is public in the repo, so a Telegram token "encrypted" with it is only
-# obfuscated. Only the digest is kept here so scanners do not flag a literal.
-PUBLIC_DEFAULT_TG_VAULT_KEY_SHA256 = "fed7319a6fdfb64dc4a0ae2cef1b23fe34453336aaf0e3a1dbf84d5133bc95e7"
+SERVER_SOURCE = HERE / "xauusd-standalone-server.mjs"
+
+
+def _public_default_vault_key() -> str | None:
+    """Built-in fallback key of the V6 server (AUDIT S-3), read from its source.
+
+    That key is public in the repo, so a Telegram token "encrypted" with it is only
+    obfuscated. It is read at runtime instead of being copied here.
+    """
+    try:
+        m = re.search(r'ZIQ_TG_MASTER_SECRET \|\| "([^"]+)"', SERVER_SOURCE.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return m.group(1) if m else None
 
 
 def _is_public_default(value: str) -> bool:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest() == PUBLIC_DEFAULT_TG_VAULT_KEY_SHA256
+    default = _public_default_vault_key()
+    return default is not None and value == default
 
 
 def config_warnings(env=None) -> list[str]:
