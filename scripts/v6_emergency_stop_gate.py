@@ -148,7 +148,7 @@ def _validate_uncertain_entry_record(raw_key, raw_record) -> tuple[int, str] | N
         return key_login, server_part
 
     return None
-        
+
 
 def _has_active_uncertain_entry(uncertain_entry_state, *, login: int, server: str) -> tuple[bool, str]:
     """Fail-closed validation of the entire uncertain-entry state dictionary."""

@@ -92,7 +92,7 @@ Trạng thái: **Đã sửa** (trong nhánh này) · **Giảm thiểu** (rủi r
 | ID | Vấn đề | Trạng thái |
 |---|---|---|
 | S-4 | gitleaks báo 11 "generic-api-key" trong test/fixture/docs: đều là khóa giả (`0123456789abcdef`), đọc biến môi trường hoặc chuỗi tài liệu. | Đã rà soát; allowlist theo đường dẫn trong `.gitleaks.toml`. |
-| Q-2 | Lint không áp dụng cho mã cũ. | CI lint cho các module mới; mở rộng dần. |
+| Q-2 | Lint không áp dụng cho mã cũ. | **Mở rộng một phần** (D-023): CI ruff nay gồm thêm `v6_emergency_stop_gate.py`, `xauusd_v6_trade_rules.py`, `v6_trading_sl_be_trailing_engine.py`, `tests/v6_offline_mt5_guard.py` (chỉ sửa định dạng/import, không đổi hành vi). `mt5-direct-probe.py` còn 46 cảnh báo (chủ yếu dòng dài; 5 biến không dùng; 2 B023 đã rà soát là dương tính giả vì hàm được gọi ngay trong cùng vòng lặp), chưa đưa vào CI. |
 | C-1 | Đồng hồ lệch: kiểm tra độ mới cho phép tick "trong tương lai" tới 10s. | **Đã sửa thêm**: guard chặn khi tick đi trước đồng hồ máy > 5s (`XAUUSD_MAX_CLOCK_SKEW_SEC`). |
 
 ---
