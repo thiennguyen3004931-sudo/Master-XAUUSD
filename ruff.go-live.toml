@@ -1,0 +1,19 @@
+# hardening/go-live: lint profile for the go-live guard modules (CI job "lint").
+# Legacy files are not linted here yet (see AUDIT.md Q-2).
+line-length = 160
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "B", "S", "UP"]
+ignore = [
+  "S110",  # logging/alerting must never raise (documented, intentional)
+  "S310",  # urlopen is only used with the fixed https://api.telegram.org host
+  "S603",  # subprocess with fixed argv (sys.executable + repo script)
+  "B008",
+  "E402",  # scripts dir is put on sys.path before local imports
+  "UP017",
+]
+
+[lint.per-file-ignores]
+"scripts/v6_offline_backtest.py" = ["S311"]
+"tests/*" = ["S101", "S108", "E731", "B011"]

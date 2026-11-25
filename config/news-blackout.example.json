@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to config/news-blackout.json and keep it current (weekly). Times MUST be UTC with Z. Verify every date against an official calendar (BLS for NFP/CPI, federalreserve.gov for FOMC). Entries below are format examples only.",
+  "validUntil": "2026-12-31T23:59:00Z",
+  "events": [
+    {"name": "US NFP (example)", "timeUtc": "2026-12-04T13:30:00Z"},
+    {"name": "FOMC decision (example)", "timeUtc": "2026-12-09T19:00:00Z", "beforeMin": 60, "afterMin": 90},
+    {"name": "US CPI (example)", "timeUtc": "2026-12-10T13:30:00Z"}
+  ]
+}
