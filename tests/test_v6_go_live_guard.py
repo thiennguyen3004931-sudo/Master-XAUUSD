@@ -130,6 +130,22 @@ class SizingTests(unittest.TestCase):
         self.assertEqual(guard.floor_to_step(3, 1), 3)
 
 
+class DeviationTests(unittest.TestCase):
+    def test_defaults_and_hard_caps(self):
+        s = guard.load_settings(clean_env())
+        self.assertEqual((s.entry_deviation_points, s.close_deviation_points), (50, 50))
+        s = guard.load_settings(clean_env(XAUUSD_ENTRY_DEVIATION_POINTS="5000", XAUUSD_CLOSE_DEVIATION_POINTS="5000"))
+        self.assertEqual(s.entry_deviation_points, guard.HARD_MAX_ENTRY_DEVIATION_POINTS)
+        self.assertEqual(s.close_deviation_points, guard.HARD_MAX_CLOSE_DEVIATION_POINTS)
+        s = guard.load_settings(clean_env(XAUUSD_ENTRY_DEVIATION_POINTS="0", XAUUSD_CLOSE_DEVIATION_POINTS="abc"))
+        self.assertEqual((s.entry_deviation_points, s.close_deviation_points), (1, 50))
+
+    def test_kind_selects_entry_or_close(self):
+        s = guard.load_settings(clean_env(XAUUSD_ENTRY_DEVIATION_POINTS="20", XAUUSD_CLOSE_DEVIATION_POINTS="120"))
+        self.assertEqual(guard.deviation_points("entry", s), 20)
+        self.assertEqual(guard.deviation_points("close", s), 120)
+
+
 class ExposureSpreadClockTests(unittest.TestCase):
     def setUp(self):
         self.s = guard.load_settings({"XAUUSD_MAX_OPEN_POSITIONS": "2", "XAUUSD_MAX_TOTAL_VOLUME_LOTS": "0.10"})
@@ -396,6 +412,23 @@ class GatewayIntegrationTests(unittest.TestCase):
         self.assertEqual(len(mt5.sent), 1)
         self.assertEqual(mt5.sent[0]["volume"], 0.05)   # reduced from 0.10 to the 1% cap
         self.assertTrue(mt5.sent[0]["sl"] > 0)
+        self.assertEqual(mt5.sent[0]["deviation"], 50)
+
+    def test_entry_deviation_from_env_is_used(self):
+        mt5 = self.broker()
+
+        def send_and_fill(req):
+            mt5.sent.append(req)
+            mt5.positions.append(SimpleNamespace(
+                ticket=993, identifier=993, symbol=req["symbol"], type=req["type"], volume=req["volume"],
+                price_open=req["price"], price_current=req["price"], sl=req["sl"], tp=req["tp"],
+                magic=270715, comment=req["comment"]))
+            return SimpleNamespace(retcode=10009, order=993, deal=994, volume=req["volume"], price=req["price"])
+        mt5.order_send = send_and_fill
+        with mock.patch.dict(os.environ, self.env(XAUUSD_DRY_RUN="false", XAUUSD_ENTRY_DEVIATION_POINTS="20"), clear=True):
+            res = self.order(mt5)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(mt5.sent[0]["deviation"], 20)
 
     def test_real_account_needs_live_and_confirm(self):
         mt5 = self.broker(trade_mode=2)

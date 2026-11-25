@@ -66,6 +66,7 @@ Get-Content .runtime\logs\v6-guard.jsonl -Tail 20
 | `BLOCKED_EMERGENCY_STOP_LATCH` | Đã bấm Emergency Stop trên web (latch `OPERATOR_EMERGENCY_STOP` và/hoặc `.runtime\v6-stop-intent.flag`), hoặc latch hỏng/sai tài khoản. | Đối chiếu vị thế trên MT5, rồi chạy `python scripts\v6_emergency_stop_release.py status/release ...` (mục 5b). Latch hỏng/sai tài khoản: kiểm tra file rồi chuyển sang chỗ khác bằng tay. |
 | `BLOCKED_NEWS_CALENDAR_UNAVAILABLE` / `_EXPIRED` | Thiếu/hết hạn `config/news-blackout.json`. | Cập nhật lịch tin. |
 | `BLOCKED_NEWS_BLACKOUT` / `BLOCKED_LOW_LIQUIDITY` | Đang trong cửa sổ tin / rollover / cuối tuần. | Chờ. |
+| Lệnh bị broker từ chối `REQUOTE`/`PRICE_CHANGED` liên tục | Deviation quá chặt khi thị trường chạy nhanh. | Tăng `XAUUSD_ENTRY_DEVIATION_POINTS` (tối đa 100) hoặc `XAUUSD_CLOSE_DEVIATION_POINTS` (tối đa 300); khởi động lại. |
 | `BLOCKED_SPREAD_TOO_WIDE` | Spread > `XAUUSD_MAX_SPREAD_USD` (0.50) hoặc > `maxSpreadPoints`. | Chờ; kiểm tra broker. |
 | `BLOCKED_RISK_PER_TRADE` | Lot tối thiểu vẫn vượt 1% với SL hiện tại (vốn nhỏ) hoặc FIXED_LOT quá lớn. | Giảm lot / tăng vốn / dùng `RISK_PERCENT`. |
 | `BLOCKED_PORTFOLIO_RISK_LIMIT`, `BLOCKED_MAX_OPEN_POSITIONS`, `BLOCKED_MAX_TOTAL_VOLUME` | Chạm giới hạn danh mục. | Chủ ý. |

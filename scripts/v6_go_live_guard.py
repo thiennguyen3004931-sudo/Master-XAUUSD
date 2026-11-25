@@ -175,10 +175,16 @@ class GuardSettings:
     kill_switch_file: Path = DEFAULT_KILL_SWITCH_FILE
     max_clock_skew_sec: float = 5.0
     log_file: Path = DEFAULT_LOG_FILE
+    entry_deviation_points: int = 50
+    close_deviation_points: int = 50
 
     @property
     def live_confirmed(self) -> bool:
         return self.live_flag and self.confirm_live
+
+
+HARD_MAX_ENTRY_DEVIATION_POINTS = 100
+HARD_MAX_CLOSE_DEVIATION_POINTS = 300
 
 
 def parse_windows(raw: str) -> tuple[tuple[int, int], ...]:
@@ -228,7 +234,26 @@ def load_settings(env: Mapping[str, str] | None = None) -> GuardSettings:
         kill_switch_file=Path(e.get("XAUUSD_KILL_SWITCH_FILE") or DEFAULT_KILL_SWITCH_FILE),
         max_clock_skew_sec=max(0.0, _float(e, "XAUUSD_MAX_CLOCK_SKEW_SEC", 5.0)),
         log_file=Path(e.get("XAUUSD_GUARD_LOG_FILE") or DEFAULT_LOG_FILE),
+        entry_deviation_points=_clamp_int(e, "XAUUSD_ENTRY_DEVIATION_POINTS", 50, 1, HARD_MAX_ENTRY_DEVIATION_POINTS),
+        close_deviation_points=_clamp_int(e, "XAUUSD_CLOSE_DEVIATION_POINTS", 50, 1, HARD_MAX_CLOSE_DEVIATION_POINTS),
     )
+
+
+def _clamp_int(e: Mapping[str, str], key: str, default: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, _int(e, key, default)))
+
+
+def deviation_points(kind: str, settings: GuardSettings | None = None) -> int:
+    """Max price deviation (MT5 points) for an entry or a close request (AUDIT E-1, D-019).
+
+    Entries are capped tighter (slippage on new risk); closes may use a wider value so
+    risk reduction is not rejected in fast markets. Any read error falls back to 50.
+    """
+    try:
+        s = settings or load_settings()
+        return int(s.close_deviation_points if str(kind).lower() == "close" else s.entry_deviation_points)
+    except Exception:
+        return 50
 
 
 # ---------------------------------------------------------------------------
