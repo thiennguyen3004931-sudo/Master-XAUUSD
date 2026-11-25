@@ -16,6 +16,7 @@ except ImportError:  # discover -s tests imports modules top-level
     from v6_test_tempdir import robust_tempdir
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -594,9 +595,20 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
             "side": "BUY", "volume": 0.06, "slDistance": 6.8, "tpDistance": 16.0,
             "maxRiskPercent": 1.0,
         })
-        self.assertTrue(res_single["ok"])
-        self.assertEqual(res_single["volume"], 0.06)
-        self.assertTrue(any("WARNING_PER_TRADE_RISK" in w for w in res_single.get("riskWarnings", [])))
+        # hardening/go-live (DECISIONS.md D-003): 1.0%/1.5% are now HARD caps.
+        # FIXED_LOT 0.06 @ SL 6.8 on 4000 equity = ~1.07% -> blocked, never sent.
+        self.assertFalse(res_single["ok"])
+        self.assertEqual(res_single["status"], "BLOCKED_RISK_PER_TRADE")
+        self.assertEqual(mt5.sent, [])
+        # RISK_PERCENT sizing reduces (never increases) the lot to the 1% cap.
+        with mock.patch.dict(os.environ, {"XAUUSD_SIZING_MODE": "RISK_PERCENT"}):
+            res_sized = engine.execute_order(mt5, "XAUUSD.G", {
+                "side": "BUY", "volume": 0.06, "slDistance": 6.8, "tpDistance": 16.0,
+                "maxRiskPercent": 1.0,
+            })
+        self.assertTrue(res_sized["ok"], res_sized)
+        self.assertEqual(res_sized["volume"], 0.05)
+        self.assertLessEqual(res_sized["riskMetrics"]["perTradeRiskPct"], 1.0)
 
         mt5.positions = [
             SimpleNamespace(ticket=901, symbol="XAUUSD.G", type=0, volume=0.05, price_open=4000.0, sl=3993.2, tp=4016.0)
@@ -608,8 +620,9 @@ class MandatoryT01ToT31Suite(unittest.TestCase):
             "side": "BUY", "volume": 0.02, "slDistance": 6.8, "tpDistance": 16.0,
             "maxPortfolioRiskPercent": 1.5,
         })
-        self.assertTrue(res_port["ok"])
-        self.assertTrue(any("WARNING_PORTFOLIO_RISK" in w for w in res_port.get("riskWarnings", [])))
+        # open 0.05 + pending 0.02 + new 0.02 at SL 6.8 = ~1.6% > 1.5% hard cap.
+        self.assertFalse(res_port["ok"])
+        self.assertEqual(res_port["status"], "BLOCKED_PORTFOLIO_RISK_LIMIT")
 
     def test_T17_mt5_disconnected_blocks_new_orders(self):
         """T17: MT5 mất kết nối -> Chặn lệnh mới."""

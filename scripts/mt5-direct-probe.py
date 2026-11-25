@@ -81,6 +81,27 @@ except ImportError:
     )
 
 
+try:
+    import scripts.v6_go_live_guard as _go_live_guard
+except ImportError:
+    import v6_go_live_guard as _go_live_guard
+
+
+def _weekly_deals_or_none(mt5, now_sec, broker_offset_hours):
+    """Read-only MT5 deal history for the current broker week (None = unverified)."""
+    fn = getattr(mt5, "history_deals_get", None)
+    if not callable(fn) or broker_offset_hours is None:
+        return None
+    start = _go_live_guard.week_start_utc(now_sec, broker_offset_hours)
+    try:
+        deals = fn(start - 86400.0, now_sec + 86400.0)
+    except Exception:
+        return None
+    if deals is None:
+        return None
+    return list(deals)
+
+
 def _strict_new_order_lock_held() -> bool:
     return bool(getattr(_ENTRY_LOCK_STATE, "held", False))
 
@@ -2591,6 +2612,58 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
                 "message": "Broker account balance/equity invalid"}
     new_risk = max(0.0, -expected_at_sl) * 1.05
 
+    # Gate 4b (hardening/go-live): operator go-live guard. Additive only:
+    # DRY_RUN / LIVE+CONFIRM_LIVE, kill switch, clock skew, spread ceiling,
+    # news + low-liquidity windows, hard per-trade risk sizing (lot is only
+    # ever reduced), max open positions and max total volume.
+    guard_settings = _go_live_guard.load_settings()
+    guard_positions, guard_positions_ok, _ = _safe_read_positions(mt5)
+    if not guard_positions_ok:
+        return {"ok": False, "submitted": False, "status": "BLOCKED_PORTFOLIO_RISK_UNVERIFIED",
+                "message": "Cannot verify broker portfolio positions; new order blocked"}
+    guard_now = time.time()
+    guard_result = _go_live_guard.evaluate_pre_trade(
+        _go_live_guard.PreTradeInput(
+            real_account=(trade_mode == real_mode_const),
+            equity=equity,
+            requested_volume=volume,
+            loss_per_lot_usd=(new_risk / volume) if volume > 0 else 0.0,
+            volume_min=vol_min,
+            volume_step=volume_step,
+            volume_max=volume_max,
+            bid=float(tick.bid),
+            ask=float(tick.ask),
+            open_positions=list(guard_positions),
+            now_utc=guard_now,
+            tick_utc=float(getattr(tick, "time", 0) or 0) - broker_offset_hours * 3600.0,
+        ),
+        guard_settings,
+    )
+    if not guard_result.get("ok"):
+        _go_live_guard.log_event("ENTRY_BLOCKED_BY_GO_LIVE_GUARD", {
+            "status": guard_result.get("status"), "message": guard_result.get("message"),
+            "side": side, "requestedVolume": volume,
+        }, settings=guard_settings)
+        return {**guard_result, "ok": False, "submitted": False}
+    if guard_result["volume"] < volume - 1e-9:
+        volume = float(guard_result["volume"])
+        try:
+            expected_at_sl = float(calc(order_type, active_symbol, volume, price, sl))
+        except Exception:
+            return {"ok": False, "submitted": False, "status": "BLOCKED_SL_RISK_UNVERIFIED",
+                    "message": "Broker cannot recalculate risk for the risk-sized lot"}
+        if not isfinite(expected_at_sl) or expected_at_sl >= 0:
+            return {"ok": False, "submitted": False, "status": "BLOCKED_SL_RISK_UNVERIFIED",
+                    "message": "Broker returned invalid risk for the risk-sized lot"}
+        new_risk = max(0.0, -expected_at_sl) * 1.05
+    if new_risk > equity * guard_settings.risk_per_trade_pct / 100.0 + 1e-6:
+        return {"ok": False, "submitted": False, "status": "BLOCKED_RISK_PER_TRADE",
+                "message": "Per-trade risk exceeds the hard cap after sizing"}
+    cfg_o["maxDailyLossPercent"] = min(
+        float(cfg_o.get("maxDailyLossPercent") or DEFAULT_MAX_DAILY_LOSS_PCT),
+        guard_settings.max_daily_loss_pct,
+    )
+
     # Section VII: FIXED_LOT + Risk Monitoring as WARNINGS ONLY (never auto-block on 1%/1.5%/3%/6% equity thresholds)
     risk_warnings = []
     warn_per_trade_pct = float(cfg_o.get("maxRiskPercent", HARD_MAX_RISK_PER_TRADE_PCT))
@@ -2728,14 +2801,38 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
             "dailyRiskState": daily_check,
         }
     if daily_check.get("dailyLimitBreached") or daily_check.get("wouldExceedWithNewOrder"):
+        if daily_check.get("dailyLimitBreached"):
+            _go_live_guard.send_alert("DAILY_LOSS_LIMIT", "Daily loss limit reached; new entries stopped", dedupe_key="daily-loss")
         return {
             "ok": False, "submitted": False, "status": "BLOCKED_DAILY_LOSS_LIMIT",
             "message": "Daily loss limit breached or projected risk exceeds remaining budget",
             "dailyRiskState": daily_check,
         }
 
+    if total_portfolio_risk_usd > equity * guard_settings.max_portfolio_risk_pct / 100.0 + 1e-6:
+        return {
+            "ok": False, "submitted": False, "status": "BLOCKED_PORTFOLIO_RISK_LIMIT",
+            "message": f"Total portfolio risk {total_portfolio_risk_pct:.2f}% exceeds hard cap {guard_settings.max_portfolio_risk_pct:.2f}%",
+        }
+    weekly_check = _go_live_guard.check_weekly_loss(
+        deals=_weekly_deals_or_none(mt5, guard_now, broker_offset_hours),
+        balance=balance,
+        equity=equity,
+        now_utc=guard_now,
+        broker_offset_hours=broker_offset_hours,
+        settings=guard_settings,
+        new_order_risk_usd=new_risk,
+    )
+    if not weekly_check.get("ok"):
+        _go_live_guard.log_event("WEEKLY_LOSS_GATE_BLOCK", weekly_check, settings=guard_settings)
+        if weekly_check.get("status") == "BLOCKED_WEEKLY_LOSS_LIMIT":
+            _go_live_guard.send_alert("WEEKLY_LOSS_LIMIT", weekly_check.get("message", ""), dedupe_key="weekly-loss")
+        return {**weekly_check, "ok": False, "submitted": False}
+
     risk_metrics = {
-        "sizingMode": "FIXED_LOT",
+        "sizingMode": guard_settings.sizing_mode,
+        "weeklyRiskState": weekly_check,
+        "volumeReducedToRiskCap": bool(guard_result.get("volumeReducedToRiskCap")),
         "fixedLot": volume,
         "perTradeRiskUsd": round(new_risk, 2),
         "perTradeRiskPct": new_risk_pct,
@@ -3170,7 +3267,7 @@ def evaluate_and_execute_positive_dca(mt5, active_symbol, pos_list, live_analysi
 
     mgr_state = _load_manager_state()
     account_dca = mt5.account_info() if callable(getattr(mt5, "account_info", None)) else None
-    dca_login = int(getattr(account_dca, "login", 0) or dca_cfg.get("accountLogin") or dca_cfg.get("login") or 5201362)
+    dca_login = int(getattr(account_dca, "login", 0) or dca_cfg.get("accountLogin") or dca_cfg.get("login") or 0)
     dca_server = str(getattr(account_dca, "server", "") or dca_cfg.get("server") or "DBGMarkets-Live").strip()
     if any(k in dca_cfg for k in ("login", "expectedLogin", "server", "expectedServer", "accountMode", "expectedAccountMode")) and account_dca is not None:
         ok_bind, bind_err = verify_mt5_account_binding(mt5, dca_cfg, account=account_dca)
@@ -5231,8 +5328,19 @@ def main():
         }, ensure_ascii=False) + "\n")
         return
 
-    ok_conn, conn_err = connect_mt5(mt5, cfg)
+    # hardening/go-live: bounded reconnect with exponential backoff (read-only
+    # initialize/login only; order_send is never retried). Stays well inside
+    # the server's 15s probe timeout.
+    ok_conn, conn_err = _go_live_guard.retry_with_backoff(
+        lambda: connect_mt5(mt5, cfg),
+        attempts=max(1, min(4, _go_live_guard._int(os.environ, "XAUUSD_CONNECT_ATTEMPTS", 3))),
+        base_delay=1.0,
+        max_delay=4.0,
+        is_success=lambda r: bool(r and r[0]),
+    )
     if not ok_conn:
+        _go_live_guard.log_event("MT5_CONNECT_FAILED", {"error": conn_err})
+        _go_live_guard.send_alert("MT5_CONNECT_FAILED", str(conn_err or ""), dedupe_key="mt5-connect")
         sys.stdout.write(json.dumps({
             "connected": False,
             "errorCode": "MT5_TERMINAL_OR_LOGIN_FAILED",
@@ -5351,7 +5459,40 @@ def main():
     ok_bind_now, _ = verify_mt5_account_binding(mt5, cfg, account=account, terminal=terminal)
     protective_mgmt_allowed = is_demo_account or (real_account and (live_permission or ok_bind_now))
 
-    if action in ("order", "dca_plus", "manage_positions", "breakeven", "close") and not (
+    guard_settings = _go_live_guard.load_settings()
+    guard_mode_block = _go_live_guard.execution_mode_block(action, real_account=real_account, settings=guard_settings)
+    if guard_mode_block is None and action in ("order", "dca_plus"):
+        ks_active, ks_reason = _go_live_guard.kill_switch_active(guard_settings)
+        if ks_active:
+            guard_mode_block = {"ok": False, "submitted": False, "status": "BLOCKED_KILL_SWITCH", "message": ks_reason}
+    if guard_mode_block is not None:
+        action_result = guard_mode_block
+        _go_live_guard.log_event("ACTION_BLOCKED_BY_EXECUTION_MODE", {"action": action, **guard_mode_block}, settings=guard_settings)
+    elif action == _go_live_guard.OPERATOR_FLATTEN_ACTION:
+        if not (is_demo_account or (real_account and protective_mgmt_allowed)):
+            action_result = {"ok": False, "message": "Flatten blocked: account binding unverified"}
+        elif cfg.get("confirmFlatten") is not True:
+            action_result = {"ok": False, "message": "Flatten requires confirmFlatten=true"}
+        else:
+            _go_live_guard.activate_kill_switch(guard_settings, "kill_switch_flatten", flatten=True)
+            results = []
+            for p in list(raw_positions or []):
+                sym = str(getattr(p, "symbol", "") or "")
+                if not sym.upper().startswith(("XAUUSD", "GOLD")):
+                    continue
+                results.append({"ticket": str(getattr(p, "ticket", "")), **close_position_by_ticket(mt5, getattr(p, "ticket", None))})
+            remaining = [p for p in (mt5.positions_get() or []) if str(getattr(p, "symbol", "")).upper().startswith(("XAUUSD", "GOLD"))]
+            action_result = {
+                "ok": len(remaining) == 0,
+                "status": "KILL_SWITCH_FLATTENED" if not remaining else "KILL_SWITCH_FLATTEN_INCOMPLETE",
+                "closed": results,
+                "remainingGoldPositions": len(remaining),
+                "killSwitchActive": True,
+            }
+            _go_live_guard.log_event("KILL_SWITCH_FLATTEN", action_result, settings=guard_settings)
+            _go_live_guard.send_alert("KILL_SWITCH_FLATTEN", f"Kill switch flatten: {action_result['status']} (remaining={len(remaining)})", dedupe_window_sec=0)
+            raw_positions = mt5.positions_get() or []
+    elif action in ("order", "dca_plus", "manage_positions", "breakeven", "close") and not (
         is_demo_account or (real_account and (live_permission if action in ("order", "dca_plus") else protective_mgmt_allowed))
     ):
         action_result = {"ok": False, "message": "Broker mutation blocked: verified DEMO account or explicit REAL ARM authorization required"}
@@ -5586,6 +5727,24 @@ def main():
     except Exception:
         pass
 
+    try:
+        if action in ("order", "dca_plus") and isinstance(action_result, dict):
+            if action_result.get("uncertain"):
+                _go_live_guard.send_alert("ORDER_UNCERTAIN", str(action_result.get("message") or ""), dedupe_window_sec=0)
+            elif action_result.get("ok") and action_result.get("submitted", True):
+                _go_live_guard.send_alert("ORDER_FILLED", f"{action} {cfg.get('side', '')} ok", dedupe_window_sec=0)
+            _go_live_guard.log_event("ACTION_RESULT", {"action": action, "ok": action_result.get("ok"),
+                                     "status": action_result.get("status"), "message": action_result.get("message")},
+                                     settings=guard_settings)
+        ks_on, _ = _go_live_guard.kill_switch_active(guard_settings)
+        _go_live_guard.write_heartbeat({
+            "connected": True, "action": action, "dryRun": guard_settings.dry_run,
+            "liveConfirmed": guard_settings.live_confirmed, "killSwitchActive": ks_on,
+            "accountMode": "LIVE" if real_account else "DEMO",
+        })
+    except Exception:
+        pass
+
     term_trade_ok = bool(getattr(terminal, "trade_allowed", False))
     exp_trade_ok = bool(getattr(account, "trade_expert", False))
     trade_mode = int(getattr(account, "trade_mode", 0))
@@ -5608,6 +5767,11 @@ def main():
         "accountName": str(getattr(account, "name", "")),
         "accountMode": account_mode_str,
         "liveAuthorized": live_permission,
+        "goLiveGuard": {
+            "dryRun": guard_settings.dry_run,
+            "liveConfirmed": guard_settings.live_confirmed,
+            "killSwitchActive": _go_live_guard.kill_switch_active(guard_settings)[0],
+        },
         "server": str(account.server),
         "currency": str(getattr(account, "currency", "USD")),
         "balance": round(float(getattr(account, "balance", 0.0)), 2),
