@@ -1,6 +1,6 @@
 # GO_LIVE_CHECKLIST.md — Các bước BẠN tự làm để bật live
 
-Làm tuần tự. Không bỏ bước. Mỗi bước có tiêu chí "xong khi".
+Chạy demo hay live là **quyết định của chủ repo** (DECISIONS D-021). Mục A (bảo mật) là bắt buộc. Mục E và F là **khuyến nghị**: thời lượng demo chỉ là gợi ý, không phải điều kiện để bật live. Phần code chỉ cần hai cờ `XAUUSD_LIVE=true` + `XAUUSD_CONFIRM_LIVE=yes` (mục G).
 
 ## A. Dọn sự cố bảo mật (bắt buộc, làm trước tiên)
 
@@ -29,19 +29,19 @@ Làm tuần tự. Không bỏ bước. Mỗi bước có tiêu chí "xong khi".
 - [x] D1. Đã mở khóa theo quyết định của chủ repo: thiếu latch hoặc latch `AUTHORIZED_CLEAR` thì cho vào lệnh; Emergency Stop trên web vẫn chặn cho tới khi gỡ bằng `scripts/v6_emergency_stop_release.py` (RUNBOOK §5b).
 - [ ] D2. Trên DEMO: bấm Emergency Stop trên web, xác nhận lệnh mới bị chặn, rồi gỡ bằng `release` và xác nhận bot vào lệnh lại.
 
-## E. DRY_RUN trên tài khoản DEMO (≥ 3 ngày giao dịch)
+## E. (Khuyến nghị) DRY_RUN trên tài khoản DEMO — gợi ý vài ngày giao dịch
 
 - [ ] E1. Đăng nhập terminal bằng tài khoản **DEMO**, `XAUUSD_DRY_RUN=true`, bật Auto trên web.
 - [ ] E2. Mỗi ngày đọc `.runtime\logs\v6-guard.jsonl`: các tín hiệu xuất hiện, lý do bị chặn hợp lý (tin, rollover, spread…), không có lỗi lặp lại.
 - [ ] E3. Thử kill switch: `on` → web báo chặn; `off`; thử `/kill` từ Telegram.
 
-## F. Chạy DEMO thật (≥ 20 ngày giao dịch hoặc ≥ 30 lệnh)
+## F. (Khuyến nghị) Chạy DEMO thật — gợi ý ≥ 20 ngày giao dịch hoặc ≥ 30 lệnh
 
 - [ ] F1. `XAUUSD_DRY_RUN=false` (vẫn DEMO). `XAUUSD_SIZING_MODE=RISK_PERCENT`, `XAUUSD_RISK_PER_TRADE_PCT=0.5` trong 1 tuần đầu.
 - [ ] F2. Kiểm tra mỗi lệnh: có SL trên broker, lot ≤ mức 1%, cảnh báo Telegram khi khớp lệnh.
 - [ ] F3. Diễn tập: tắt mạng 2 phút → bot tự kết nối lại, không gửi trùng; khởi động lại VPS khi có lệnh mở → state đồng bộ, SL giữ nguyên; `--flatten --confirm-flatten` đóng hết vị thế demo.
 - [ ] F4. Cố ý chạm giới hạn: đặt tạm `XAUUSD_MAX_DAILY_LOSS_PCT=0.5` trên demo → xác nhận bot ngừng vào lệnh + có cảnh báo; trả lại 3.0.
-- [ ] F5. So sánh kết quả demo với backtest cùng giai đoạn (win rate, PF, trượt giá thực tế). Chênh lệch lớn ⇒ dừng, tìm nguyên nhân.
+- [ ] F5. So sánh kết quả demo với backtest cùng giai đoạn (win rate, PF, trượt giá thực tế). Chênh lệch lớn thì nên tìm nguyên nhân trước khi tăng khối lượng.
 
 ## G. Bật LIVE với khối lượng nhỏ nhất
 

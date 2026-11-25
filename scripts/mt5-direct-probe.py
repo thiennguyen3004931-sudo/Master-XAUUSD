@@ -3641,6 +3641,49 @@ def Boolean(val):
     return bool(val)
 
 
+def _is_gold_symbol(sym) -> bool:
+    return str(sym or "").upper().startswith(("XAUUSD", "GOLD"))
+
+
+def _flatten_gold_exposure(mt5, raw_positions):
+    """Kill-switch flatten: close every gold position, then report what is left.
+
+    V6 only sends market orders, so it never cancels pending orders (no extra
+    order_send site, AUDIT E-2). Pending gold orders placed by hand are listed so
+    the operator can delete them in the terminal; an unreadable order book counts
+    as unverified (fail-closed, status INCOMPLETE).
+    """
+    results = []
+    for p in list(raw_positions or []):
+        if not _is_gold_symbol(getattr(p, "symbol", "")):
+            continue
+        results.append({"ticket": str(getattr(p, "ticket", "")), **close_position_by_ticket(mt5, getattr(p, "ticket", None))})
+    remaining = [p for p in (mt5.positions_get() or []) if _is_gold_symbol(getattr(p, "symbol", ""))]
+    pending_tickets, pending_verified = [], False
+    orders_fn = getattr(mt5, "orders_get", None)
+    if callable(orders_fn):
+        try:
+            orders = orders_fn()
+            if orders is not None:
+                pending_tickets = [str(getattr(o, "ticket", "")) for o in orders if _is_gold_symbol(getattr(o, "symbol", ""))]
+                pending_verified = True
+        except Exception:
+            pending_verified = False
+    clean = not remaining and not pending_tickets and pending_verified
+    return {
+        "ok": clean,
+        "status": "KILL_SWITCH_FLATTENED" if clean else "KILL_SWITCH_FLATTEN_INCOMPLETE",
+        "closed": results,
+        "remainingGoldPositions": len(remaining),
+        "remainingGoldPendingOrders": len(pending_tickets),
+        "pendingOrderTickets": pending_tickets,
+        "pendingOrdersVerified": pending_verified,
+        "operatorAction": ("Delete the listed pending gold orders in the MT5 terminal." if pending_tickets
+                           else "Pending orders could not be read; check the MT5 terminal." if not pending_verified else ""),
+        "killSwitchActive": True,
+    }
+
+
 def close_position_by_ticket(mt5, ticket_id):
     """Explicit-ticket gold close only; fail closed on ambiguous tickets and readback."""
     if (isinstance(ticket_id, bool) or
@@ -5495,22 +5538,13 @@ def main():
             action_result = {"ok": False, "message": "Flatten requires confirmFlatten=true"}
         else:
             _go_live_guard.activate_kill_switch(guard_settings, "kill_switch_flatten", flatten=True)
-            results = []
-            for p in list(raw_positions or []):
-                sym = str(getattr(p, "symbol", "") or "")
-                if not sym.upper().startswith(("XAUUSD", "GOLD")):
-                    continue
-                results.append({"ticket": str(getattr(p, "ticket", "")), **close_position_by_ticket(mt5, getattr(p, "ticket", None))})
-            remaining = [p for p in (mt5.positions_get() or []) if str(getattr(p, "symbol", "")).upper().startswith(("XAUUSD", "GOLD"))]
-            action_result = {
-                "ok": len(remaining) == 0,
-                "status": "KILL_SWITCH_FLATTENED" if not remaining else "KILL_SWITCH_FLATTEN_INCOMPLETE",
-                "closed": results,
-                "remainingGoldPositions": len(remaining),
-                "killSwitchActive": True,
-            }
+            action_result = _flatten_gold_exposure(mt5, raw_positions)
             _go_live_guard.log_event("KILL_SWITCH_FLATTEN", action_result, settings=guard_settings)
-            _go_live_guard.send_alert("KILL_SWITCH_FLATTEN", f"Kill switch flatten: {action_result['status']} (remaining={len(remaining)})", dedupe_window_sec=0)
+            _go_live_guard.send_alert(
+                "KILL_SWITCH_FLATTEN",
+                f"Kill switch flatten: {action_result['status']} (positions={action_result['remainingGoldPositions']}, "
+                f"pending={action_result['remainingGoldPendingOrders']})",
+                dedupe_window_sec=0)
             raw_positions = mt5.positions_get() or []
     elif action in ("order", "dca_plus", "manage_positions", "breakeven", "close") and not (
         is_demo_account or (real_account and (live_permission if action in ("order", "dca_plus") else protective_mgmt_allowed))

@@ -707,7 +707,7 @@ def evaluate_entry(
     Step 5: Select the single highest-scoring valid signal or return NO_TRADE / WAIT_PULLBACK with explicit reason.
     """
     mode = str(mode or "AUTO_REGIME").upper()
-    wait = lambda reason, status="NO_TRADE", extra=None: {
+    wait = lambda reason, status="NO_TRADE", extra=None: {  # noqa: E731 (kept as-is: strategy file, D-023)
         "allowed": False,
         "status": status,
         "strategyMode": mode,
@@ -931,7 +931,7 @@ def evaluate_entry(
                 "h4Bias": h4bias,
                 "h1Bias": h1bias,
                 "m15Bias": m15bias,
-                "waitReasonVi": "NO_TRADE (Xung đột tín hiệu): Cả chiều BUY và SELL cùng xuất hiện hoặc xung đột cấu trúc trên cùng nến đóng — đứng ngoài an toàn.",
+                "waitReasonVi": "NO_TRADE (Xung đột tín hiệu): Cả chiều BUY và SELL cùng xuất hiện hoặc xung đột cấu trúc trên cùng nến đóng — đứng ngoài an toàn.",  # noqa: E501
                 "closedM15Time": int(candle_ts),
             },
         )
