@@ -4,3 +4,16 @@ packages:
 
 ignoredBuiltDependencies:
   - esbuild
+
+# Security overrides (hardening/go-live). Patched transitive versions for
+# advisories reported by `pnpm audit`. See AUDIT.md / DECISIONS.md D-008.
+overrides:
+  proxy-addr: ">=2.0.8 <3"
+  body-parser@1: ">=1.20.9 <2"
+  qs: ">=6.16.1 <7"
+  follow-redirects: ">=1.16.2 <2"
+  nanoid@3: ">=3.3.18 <4"
+  source-map-js: ">=1.2.2 <2"
+  brace-expansion@5: ">=5.0.12 <6"
+  minimatch@10: ">=11.0.1"
+  zod@4: ">=4.6.6 <5"

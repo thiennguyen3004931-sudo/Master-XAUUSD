@@ -4127,9 +4127,9 @@ Branch : main
     renderProposalsPage();
     renderStrategyApprovalQueue();
 
-    const DEFAULT_TG_CHAT_ID = "1629602548";
-    const _TG_VAULT_KEY = "V6_AES_VAULT_5201362";
-    const _TG_CIPHER_BYTES = [110,15,106,118,125,103,110,100,121,102,118,21,30,114,97,64,0,120,83,80,31,15,30,57,48,106,24,99,15,120,56,5,21,93,74,29,8,5,15,92,47,119,21,19,12,2];
+    const DEFAULT_TG_CHAT_ID = ""; // hardening/go-live: no embedded chat id
+    const _TG_VAULT_KEY = "local-browser-obfuscation-only"; // NOT a secret; obfuscation only
+    const _TG_CIPHER_BYTES = []; // hardening/go-live: embedded bot token removed (was leaked; must be revoked)
 
     function encryptBrowserTgToken(plain) {
       const s = String(plain || "").trim();
@@ -4158,7 +4158,7 @@ Branch : main
         const encSaved = localStorage.getItem("xauusd_tg_token_enc");
         if (encSaved) return decryptBrowserTgToken(encSaved);
       } catch (e) {}
-      return _TG_CIPHER_BYTES.map((b, i) => String.fromCharCode(b ^ _TG_VAULT_KEY.charCodeAt(i % _TG_VAULT_KEY.length))).join("");
+      return ""; // no embedded fallback token
     }
 
     function toggleTgTokenVisibility() {
