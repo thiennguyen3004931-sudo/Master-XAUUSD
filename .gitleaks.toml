@@ -1,0 +1,20 @@
+# hardening/go-live: gitleaks config. Default rules + reviewed false positives.
+# Every allowlisted path was reviewed manually (see AUDIT.md, finding S-4):
+# they contain fixed test keys (e.g. "0123456789abcdef"), env-var reads or
+# documentation strings, never real credentials.
+title = "Master-XAUUSD gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Reviewed test fixtures / docs"
+paths = [
+  '''^tests/''',
+  '''^packages/mt5-broker/bridge/tests/''',
+  '''^packages/mt5-broker/tests/fixtures\.ts$''',
+  '''^scripts/phase7c-recommendation-intelligence\.test\.ts$''',
+  '''^scripts/verify-phase7c-broker-clock-local\.mjs$''',
+  '''^docs/superpowers/plans/2026-09-15-public-private-repository-split\.md$''',
+  '''^security/credential-remediation\.json$''',
+]

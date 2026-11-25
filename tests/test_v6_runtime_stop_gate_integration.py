@@ -72,8 +72,8 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
             with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
                 probe, "STOP_INTENT_FILE", intent_file
             ):
-                blocked_missing = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
-                self.assertTrue(blocked_missing["blockNewOrders"])
+                # hardening/go-live D-011: no stop ever recorded -> not blocked.
+                self.assertIsNone(probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo"))
 
                 stop_state = persist_operator_emergency_stop(
                     latch_file,
@@ -109,11 +109,18 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
                     expected_stop_revision=stop_state["stopRevision"],
                     now_utc=1700000010,
                 )
-                blocked_clear = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
-                self.assertTrue(blocked_clear["blockNewOrders"])
-                self.assertEqual(blocked_clear["reason"], "STOP_RELEASE_HOST_AUTH_UNVERIFIED")
+                # hardening/go-live D-011: an operator-authorized CAS release
+                # (AUTHORIZED_CLEAR) lifts the latch for new entries.
+                self.assertIsNone(probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo"))
 
-    def test_spoofed_windows_acl_and_valid_hmac_never_authorize_runtime_entry(self):
+                # A different account/server is still blocked by the bound latch.
+                other = probe._check_runtime_emergency_stop_latch(2002, "Broker-Demo")
+                self.assertTrue(other["blockNewOrders"])
+                self.assertEqual(other["reason"], "STOP_LATCH_ACCOUNT_SERVER_MISMATCH")
+
+    def test_host_acl_and_hmac_proofs_are_not_the_release_authority(self):
+        """hardening/go-live D-011: only the CAS release record decides; extra
+        host ACL / HMAC fields neither authorize nor block by themselves."""
         probe = _load_probe_module()
         with robust_tempdir() as folder:
             latch_file = Path(folder) / "v6-emergency-stop-latch.json"
@@ -158,25 +165,20 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
             with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
                 probe, "STOP_INTENT_FILE", intent_file
             ):
-                self.assertIsNotNone(
-                    probe._check_runtime_emergency_stop_latch(
-                        1001, "Broker-Demo", now_utc=released_at + 5, host_acl_checker=acl_bad
+                for checker in (acl_bad, acl_ok):
+                    self.assertIsNone(
+                        probe._check_runtime_emergency_stop_latch(
+                            1001, "Broker-Demo", now_utc=released_at + 5, host_acl_checker=checker
+                        )
                     )
-                )
-                forged = probe._check_runtime_emergency_stop_latch(
-                    1001, "Broker-Demo", now_utc=released_at + 5, host_acl_checker=acl_ok
-                )
-                self.assertIsNotNone(forged)
-                self.assertTrue(forged["blockNewOrders"])
-                self.assertFalse(forged["liveAuthorized"])
-                self.assertEqual(forged["reason"], "STOP_RELEASE_HOST_AUTH_UNVERIFIED")
-                self.assertIsNotNone(
-                    probe._check_runtime_emergency_stop_latch(
-                        1001, "Broker-Demo", now_utc=released_at + 999, host_acl_checker=acl_ok
-                    )
-                )
+                # Tampering the clear record back into an incomplete state blocks again.
+                tampered = dict(raw)
+                tampered.pop("releasedBy", None)
+                latch_file.write_text(json.dumps(tampered), encoding="utf-8")
+                blocked = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo", host_acl_checker=acl_ok)
+                self.assertTrue(blocked["blockNewOrders"])
 
-    def test_missing_corrupt_and_reader_failure_always_denied_without_order(self):
+    def test_corrupt_and_reader_failure_always_denied_without_order(self):
         probe = _load_probe_module()
         with robust_tempdir() as folder:
             latch_file = Path(folder) / "unavailable-stop.json"
@@ -184,9 +186,8 @@ class RuntimeEmergencyStopGateIntegrationTests(unittest.TestCase):
             with patch.object(probe, "EMERGENCY_STOP_LATCH_FILE", latch_file), patch.object(
                 probe, "STOP_INTENT_FILE", intent_file
             ):
-                missing = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
-                self.assertTrue(missing["blockNewOrders"])
-                self.assertEqual(missing["reason"], "STOP_LATCH_MISSING_UNVERIFIED")
+                # hardening/go-live D-011: missing latch = no stop recorded.
+                self.assertIsNone(probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo"))
                 latch_file.write_text("bad-json", encoding="utf-8")
                 bad = probe._check_runtime_emergency_stop_latch(1001, "Broker-Demo")
                 self.assertTrue(bad["blockNewOrders"])

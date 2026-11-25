@@ -104,3 +104,6 @@ coverage/
 __pycache__/
 *.pyc
 .runtime/
+
+# hardening/go-live: operator-maintained news calendar (local)
+/config/news-blackout.json
