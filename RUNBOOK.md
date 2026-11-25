@@ -82,6 +82,7 @@ Get-Content .runtime\logs\v6-guard.jsonl -Tail 20
 
 1. Chặn lệnh mới ngay: `python scripts\v6_kill_switch.py on --reason "<lý do>"` (hoặc tạo file `.runtime\KILL_SWITCH`, hoặc `XAUUSD_KILL_SWITCH=1`, hoặc Telegram `/kill`). Quản lý SL/BE của lệnh đang mở vẫn hoạt động (khi không DRY_RUN).
 2. Đóng toàn bộ vị thế vàng: `python scripts\v6_kill_switch.py on --flatten --confirm-flatten --broker-symbol XAUUSD.G` (hoặc Telegram `/kill_flatten <PIN>`). Kết quả `KILL_SWITCH_FLATTENED` hoặc `KILL_SWITCH_FLATTEN_INCOMPLETE` (còn vị thế ⇒ đóng tay trong MT5). Flatten **không** hủy lệnh chờ (V6 chỉ dùng lệnh market) — kiểm tra tab Trade.
+   Kết quả liệt kê `remainingGoldPendingOrders` / `pendingOrderTickets`: bot chỉ dùng lệnh market nên không tự hủy lệnh chờ. Nếu có lệnh chờ vàng (đặt tay), xóa chúng trong terminal MT5. Không đọc được sổ lệnh (`pendingOrdersVerified=false`) cũng tính là chưa xong.
 3. Phương án cuối: tắt nút *Algo Trading* trên MT5 hoặc đóng terminal (SL đã nằm trên server broker).
 4. Mở lại: `python scripts\v6_kill_switch.py off` (không tự gỡ latch emergency-stop riêng của V6).
 

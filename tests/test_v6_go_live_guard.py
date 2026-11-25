@@ -521,5 +521,52 @@ class GatewayIntegrationTests(unittest.TestCase):
         self.assertEqual(captured["pct"], 3.0)
 
 
+
+class FlattenReportTests(unittest.TestCase):
+    """Kill-switch flatten reports leftover gold exposure (AUDIT E-2)."""
+
+    class Broker:
+        def __init__(self, positions, orders):
+            self.positions, self.orders = positions, orders
+
+        def positions_get(self):
+            return list(self.positions)
+
+        def orders_get(self):
+            if isinstance(self.orders, Exception):
+                raise self.orders
+            return self.orders
+
+    def run_flatten(self, positions, orders):
+        mt5 = self.Broker(positions, orders)
+
+        def close(_mt5, ticket):
+            mt5.positions = [p for p in mt5.positions if p.ticket != ticket]
+            return {"ok": True}
+        with mock.patch.object(engine, "close_position_by_ticket", side_effect=close):
+            return engine._flatten_gold_exposure(mt5, list(positions))
+
+    def pos(self, ticket, symbol="XAUUSD.G"):
+        return SimpleNamespace(ticket=ticket, symbol=symbol)
+
+    def test_clean_when_no_gold_left(self):
+        res = self.run_flatten([self.pos(1), self.pos(2, "EURUSD")], [SimpleNamespace(ticket=9, symbol="EURUSD")])
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["status"], "KILL_SWITCH_FLATTENED")
+        self.assertEqual(len(res["closed"]), 1)
+
+    def test_pending_gold_orders_are_reported(self):
+        res = self.run_flatten([self.pos(1)], [SimpleNamespace(ticket=7, symbol="XAUUSD.G")])
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["status"], "KILL_SWITCH_FLATTEN_INCOMPLETE")
+        self.assertEqual(res["pendingOrderTickets"], ["7"])
+        self.assertTrue(res["operatorAction"])
+
+    def test_unreadable_order_book_is_incomplete(self):
+        for orders in (None, RuntimeError("terminal")):
+            res = self.run_flatten([self.pos(1)], orders)
+            self.assertFalse(res["ok"])
+            self.assertFalse(res["pendingOrdersVerified"])
+
 if __name__ == "__main__":
     unittest.main()
