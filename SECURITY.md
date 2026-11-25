@@ -62,7 +62,7 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 ## 6. Viết lại lịch sử git (không thể đảo ngược)
 
-**Chủ repo đã chọn không viết lại lịch sử (DECISIONS D-009, 2026-11-25).** Token Telegram cũ và thông tin tài khoản cũ vẫn còn trong lịch sử public, nên thu hồi token và đổi mật khẩu MT5 (mục 1) là bắt buộc. Lệnh dưới đây chỉ để tham khảo nếu sau này đổi ý.
+**Chủ repo đã chọn không viết lại lịch sử (DECISIONS D-009, 2026-11-25).** Token Telegram cũ (chủ repo đã thu hồi ngày 2026-11-25) và số login/server LIVE, URL tunnel, chat ID vẫn còn trong lịch sử public. Lịch sử **không** chứa mật khẩu MT5 (đã quét: trường `password` trong `.runtime` luôn rỗng). Đổi mật khẩu MT5 và bật 2FA vẫn được khuyến nghị vì login/server đã công khai. Lệnh dưới đây chỉ để tham khảo nếu sau này đổi ý.
 
 Chỉ làm **sau khi** đã thu hồi token. Lệnh đã chuẩn bị (chạy trên bản clone mirror mới, thông báo cho mọi người đang clone repo):
 

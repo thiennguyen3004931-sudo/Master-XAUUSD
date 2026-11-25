@@ -4,10 +4,10 @@ Làm tuần tự. Không bỏ bước. Mỗi bước có tiêu chí "xong khi".
 
 ## A. Dọn sự cố bảo mật (bắt buộc, làm trước tiên)
 
-- [ ] A1. @BotFather → `/revoke` token bot cũ; tạo token mới. *Xong khi:* token cũ báo `401 Unauthorized`.
+- [x] A1. @BotFather → `/revoke` token bot cũ; tạo token mới. *Xong khi:* token cũ báo `401 Unauthorized`. **Chủ repo báo đã thu hồi (2026-11-25).**
 - [ ] A2. Đổi mật khẩu master + investor của tài khoản MT5 LIVE cũ; bật 2FA client portal broker; kiểm tra lịch sử đăng nhập lạ. Cân nhắc dùng tài khoản LIVE **mới** cho bot.
 - [ ] A3. Đảm bảo không còn tunnel công khai nào tới bảng điều khiển.
-- [x] A4. Viết lại lịch sử git: chủ repo chọn **không** (DECISIONS D-009). Vì vậy A1 và A2 là bắt buộc. Cân nhắc chuyển repo sang **private**.
+- [x] A4. Viết lại lịch sử git: chủ repo chọn **không** (DECISIONS D-009). Vì vậy A1 và A2 là bắt buộc. Lịch sử **không** chứa mật khẩu MT5 (chỉ có login, server, URL tunnel, chat ID); A2 là biện pháp phòng ngừa vì login/server đã công khai. Cân nhắc chuyển repo sang **private**.
 - [ ] A5. Review và merge PR `hardening/go-live` sau khi CI xanh.
 
 ## B. Chuẩn bị VPS
