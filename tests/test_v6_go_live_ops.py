@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -113,7 +114,9 @@ class OpsTests(unittest.TestCase):
 
 class HealthcheckWarningTests(unittest.TestCase):
     def test_default_or_missing_vault_key_warns(self):
-        for env in ({}, {"ZIQ_TG_MASTER_SECRET": health.PUBLIC_DEFAULT_TG_VAULT_KEY}):
+        server_src = (ROOT / "scripts" / "xauusd-standalone-server.mjs").read_text(encoding="utf-8")
+        default_key = re.search(r'ZIQ_TG_MASTER_SECRET \|\| "([^"]+)"', server_src).group(1)
+        for env in ({}, {"ZIQ_TG_MASTER_SECRET": default_key}):
             self.assertTrue(health.config_warnings(env)[0].startswith("TELEGRAM_VAULT_KEY_DEFAULT"))
         self.assertTrue(health.config_warnings({"ZIQ_TG_MASTER_SECRET": "short"})[0].startswith("TELEGRAM_VAULT_KEY_SHORT"))
         self.assertEqual(health.config_warnings({"ZIQ_TG_MASTER_SECRET": "x" * 32}), [])
