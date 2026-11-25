@@ -38,7 +38,7 @@ Yêu cầu: Windows Server 2019+/Windows 10+, ≥ 2 vCPU, 4 GB RAM, IP tĩnh, đ
 | Dừng mềm (chặn lệnh mới, vẫn quản lý SL) | `python scripts\v6_kill_switch.py on --reason "dung"` |
 | Dừng hẳn tiến trình | Đóng cửa sổ console, hoặc: `Get-NetTCPConnection -LocalPort 5717,3711 -State Listen \| % { Stop-Process -Id $_.OwningProcess -Force }` |
 | Chạy như dịch vụ | Task Scheduler: tác vụ "At startup", user `xauusd-bot`, action `C:\xauusd\CHAY_NHANH_1_CHAM.bat`, "Restart on failure every 1 minute". (Hoặc NSSM: `nssm install xauusd-v6 C:\Program Files\nodejs\node.exe C:\xauusd\scripts\xauusd-standalone-server.mjs`.) MT5 terminal phải chạy trong cùng phiên user. |
-| Health check | Task Scheduler mỗi 5 phút: `python C:\xauusd\scripts\v6_healthcheck.py --max-age 600 --alert` (exit 1 = heartbeat cũ ⇒ cảnh báo Telegram). Heartbeat chỉ được ghi khi có chu kỳ probe (bot đang chạy). |
+| Health check | Task Scheduler mỗi 5 phút: `python C:\xauusd\scripts\v6_healthcheck.py --max-age 600 --alert` (exit 1 = heartbeat cũ ⇒ cảnh báo Telegram). Heartbeat chỉ được ghi khi có chu kỳ probe (bot đang chạy). Trường `warnings` liệt kê cấu hình yếu (VD `TELEGRAM_VAULT_KEY_DEFAULT`) nhưng không đổi exit code. |
 | Lệnh Telegram (tùy chọn) | Task "At startup": `python C:\xauusd\scripts\v6_telegram_kill_listener.py` → `/status`, `/kill`, `/kill_flatten <PIN>`, `/resume <PIN>` (PIN = `XAUUSD_TELEGRAM_FLATTEN_PIN`; không đặt PIN ⇒ flatten/resume qua Telegram bị tắt). |
 
 ## 3. Đọc log

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -20,13 +21,31 @@ sys.path.insert(0, str(HERE))
 import v6_go_live_guard as guard
 
 
+# Built-in fallback of xauusd-standalone-server.mjs (AUDIT S-3). Public in the repo,
+# so a Telegram token "encrypted" with it is only obfuscated.
+PUBLIC_DEFAULT_TG_VAULT_KEY = "XAUUSD_V6_MASTER_VAULT_KEY_2026"
+
+
+def config_warnings(env=None) -> list[str]:
+    """Non-fatal configuration warnings (do not change the exit code)."""
+    e = os.environ if env is None else env
+    out = []
+    vault = str(e.get("ZIQ_TG_MASTER_SECRET") or "").strip()
+    if not vault or vault == PUBLIC_DEFAULT_TG_VAULT_KEY:
+        out.append("TELEGRAM_VAULT_KEY_DEFAULT: set ZIQ_TG_MASTER_SECRET to a long random value (SECURITY.md)")
+    elif len(vault) < 32:
+        out.append("TELEGRAM_VAULT_KEY_SHORT: ZIQ_TG_MASTER_SECRET should be at least 32 characters")
+    return out
+
+
 def evaluate(max_age: float, heartbeat: Path = guard.DEFAULT_HEARTBEAT_FILE, now: float | None = None,
-             settings: guard.GuardSettings | None = None) -> tuple[int, dict]:
+             settings: guard.GuardSettings | None = None, env=None) -> tuple[int, dict]:
     s = settings or guard.load_settings()
     age = guard.heartbeat_age_sec(heartbeat, now=now)
     ks, why = guard.kill_switch_active(s)
     report = {"heartbeatAgeSec": None if age is None else round(age, 1), "maxAgeSec": max_age,
-              "killSwitchActive": ks, "killSwitchReason": why, "dryRun": s.dry_run}
+              "killSwitchActive": ks, "killSwitchReason": why, "dryRun": s.dry_run,
+              "warnings": config_warnings(env)}
     if age is None or age > max_age:
         return 1, {**report, "status": "STALE_OR_MISSING_HEARTBEAT"}
     if ks:

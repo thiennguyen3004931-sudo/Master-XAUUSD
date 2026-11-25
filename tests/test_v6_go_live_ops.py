@@ -111,6 +111,23 @@ class OpsTests(unittest.TestCase):
 
 
 
+class HealthcheckWarningTests(unittest.TestCase):
+    def test_default_or_missing_vault_key_warns(self):
+        for env in ({}, {"ZIQ_TG_MASTER_SECRET": health.PUBLIC_DEFAULT_TG_VAULT_KEY}):
+            self.assertTrue(health.config_warnings(env)[0].startswith("TELEGRAM_VAULT_KEY_DEFAULT"))
+        self.assertTrue(health.config_warnings({"ZIQ_TG_MASTER_SECRET": "short"})[0].startswith("TELEGRAM_VAULT_KEY_SHORT"))
+        self.assertEqual(health.config_warnings({"ZIQ_TG_MASTER_SECRET": "x" * 32}), [])
+
+    def test_warning_does_not_change_exit_code(self):
+        with tempfile.TemporaryDirectory() as d:
+            hb = Path(d) / "hb.json"
+            hb.write_text(json.dumps({"tsUtc": 1000}), encoding="utf-8")
+            s = guard.load_settings({"XAUUSD_KILL_SWITCH_FILE": str(Path(d) / "K")})
+            code, rep = health.evaluate(60, hb, now=1010, settings=s, env={})
+        self.assertEqual(code, 0)
+        self.assertEqual(len(rep["warnings"]), 1)
+
+
 class EmergencyStopReleaseTests(unittest.TestCase):
     LOGIN, SERVER = 123456, "Broker-Demo"
 
