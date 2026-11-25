@@ -7,7 +7,7 @@ Làm tuần tự. Không bỏ bước. Mỗi bước có tiêu chí "xong khi".
 - [ ] A1. @BotFather → `/revoke` token bot cũ; tạo token mới. *Xong khi:* token cũ báo `401 Unauthorized`.
 - [ ] A2. Đổi mật khẩu master + investor của tài khoản MT5 LIVE cũ; bật 2FA client portal broker; kiểm tra lịch sử đăng nhập lạ. Cân nhắc dùng tài khoản LIVE **mới** cho bot.
 - [ ] A3. Đảm bảo không còn tunnel công khai nào tới bảng điều khiển.
-- [ ] A4. Quyết định có viết lại lịch sử git không (SECURITY.md §6, DECISIONS D-009). Cân nhắc chuyển repo sang **private**.
+- [x] A4. Viết lại lịch sử git: chủ repo chọn **không** (DECISIONS D-009). Vì vậy A1 và A2 là bắt buộc. Cân nhắc chuyển repo sang **private**.
 - [ ] A5. Review và merge PR `hardening/go-live` sau khi CI xanh.
 
 ## B. Chuẩn bị VPS
@@ -26,7 +26,8 @@ Làm tuần tự. Không bỏ bước. Mỗi bước có tiêu chí "xong khi".
 
 ## D. Quyết định về latch emergency-stop (AUDIT B-1, DECISIONS D-011)
 
-- [ ] D1. Hiện tại main chặn **mọi lệnh mới** bằng latch quarantine. Quyết định cơ chế release bạn chấp nhận (và nhờ thực hiện trong một PR riêng), nếu không bot chỉ quản lý lệnh mở tay.
+- [x] D1. Đã mở khóa theo quyết định của chủ repo: thiếu latch hoặc latch `AUTHORIZED_CLEAR` thì cho vào lệnh; Emergency Stop trên web vẫn chặn cho tới khi gỡ bằng `scripts/v6_emergency_stop_release.py` (RUNBOOK §5b).
+- [ ] D2. Trên DEMO: bấm Emergency Stop trên web, xác nhận lệnh mới bị chặn, rồi gỡ bằng `release` và xác nhận bot vào lệnh lại.
 
 ## E. DRY_RUN trên tài khoản DEMO (≥ 3 ngày giao dịch)
 

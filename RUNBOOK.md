@@ -63,7 +63,7 @@ Get-Content .runtime\logs\v6-guard.jsonl -Tail 20
 |---|---|---|
 | `DRY_RUN_NO_BROKER_MUTATION` | Đang DRY_RUN (mặc định). | Chủ ý. Muốn chạy demo thật: `XAUUSD_DRY_RUN=false` (GO_LIVE_CHECKLIST). |
 | `BLOCKED_LIVE_NOT_CONFIRMED` | Tài khoản REAL nhưng thiếu `XAUUSD_LIVE=true` hoặc `XAUUSD_CONFIRM_LIVE=yes`. | Chỉ bật khi đã qua checklist. |
-| `BLOCKED_EMERGENCY_STOP_LATCH` (`STOP_RELEASE_HOST_AUTH_UNVERIFIED`) | Latch quarantine có sẵn trên main luôn chặn lệnh mới (AUDIT B-1). | Cần quyết định của chủ repo (DECISIONS D-011). |
+| `BLOCKED_EMERGENCY_STOP_LATCH` | Đã bấm Emergency Stop trên web (latch `OPERATOR_EMERGENCY_STOP` và/hoặc `.runtime\v6-stop-intent.flag`), hoặc latch hỏng/sai tài khoản. | Đối chiếu vị thế trên MT5, rồi chạy `python scripts\v6_emergency_stop_release.py status/release ...` (mục 5b). Latch hỏng/sai tài khoản: kiểm tra file rồi chuyển sang chỗ khác bằng tay. |
 | `BLOCKED_NEWS_CALENDAR_UNAVAILABLE` / `_EXPIRED` | Thiếu/hết hạn `config/news-blackout.json`. | Cập nhật lịch tin. |
 | `BLOCKED_NEWS_BLACKOUT` / `BLOCKED_LOW_LIQUIDITY` | Đang trong cửa sổ tin / rollover / cuối tuần. | Chờ. |
 | `BLOCKED_SPREAD_TOO_WIDE` | Spread > `XAUUSD_MAX_SPREAD_USD` (0.50) hoặc > `maxSpreadPoints`. | Chờ; kiểm tra broker. |
@@ -82,6 +82,17 @@ Get-Content .runtime\logs\v6-guard.jsonl -Tail 20
 2. Đóng toàn bộ vị thế vàng: `python scripts\v6_kill_switch.py on --flatten --confirm-flatten --broker-symbol XAUUSD.G` (hoặc Telegram `/kill_flatten <PIN>`). Kết quả `KILL_SWITCH_FLATTENED` hoặc `KILL_SWITCH_FLATTEN_INCOMPLETE` (còn vị thế ⇒ đóng tay trong MT5). Flatten **không** hủy lệnh chờ (V6 chỉ dùng lệnh market) — kiểm tra tab Trade.
 3. Phương án cuối: tắt nút *Algo Trading* trên MT5 hoặc đóng terminal (SL đã nằm trên server broker).
 4. Mở lại: `python scripts\v6_kill_switch.py off` (không tự gỡ latch emergency-stop riêng của V6).
+
+## 5b. Gỡ Emergency Stop của web (D-011)
+
+Nút Emergency Stop trên web ghi latch và cờ stop-intent; cả hai chặn lệnh mới cho tới khi bạn gỡ trên máy chạy bot:
+
+```powershell
+python scripts\v6_emergency_stop_release.py status  --login <LOGIN> --server <SERVER>
+python scripts\v6_emergency_stop_release.py release --login <LOGIN> --server <SERVER> --operator "<tên bạn>" --reason "đã đối chiếu vị thế" --confirm
+```
+
+Lệnh `release` từ chối nếu còn lệnh uncertain bị đóng băng cho tài khoản (đối chiếu trên MT5 trước), nếu latch thuộc tài khoản khác, hoặc nếu latch hỏng. Mỗi lần gỡ ghi sự kiện `EMERGENCY_STOP_RELEASED` vào `v6-guard.jsonl`. Mở khóa này **không** bật live: vẫn cần `XAUUSD_DRY_RUN=false`, `XAUUSD_LIVE=true` và `XAUUSD_CONFIRM_LIVE=yes`.
 
 ## 6. Rollback
 

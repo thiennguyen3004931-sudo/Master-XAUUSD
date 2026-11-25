@@ -31,6 +31,7 @@ jobs:
           ruff check --config ruff.go-live.toml
           scripts/v6_go_live_guard.py scripts/v6_kill_switch.py scripts/v6_healthcheck.py
           scripts/v6_telegram_kill_listener.py scripts/v6_offline_backtest.py scripts/v6_export_mt5_history.py
+          scripts/v6_emergency_stop_release.py
           tests/test_v6_go_live_guard.py tests/test_v6_go_live_ops.py
       - name: Byte-compile all V6 runtime Python
         run: python -m compileall -q scripts tests packages/mt5-broker/bridge/mt5_bridge

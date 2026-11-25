@@ -17,6 +17,8 @@ import v6_go_live_guard as guard
 import v6_healthcheck as health
 import v6_kill_switch as kill
 import v6_offline_backtest as obt
+import v6_emergency_stop_gate as gate
+import v6_emergency_stop_release as release_cli
 import v6_telegram_kill_listener as listener
 
 
@@ -107,6 +109,49 @@ class OpsTests(unittest.TestCase):
         guard.activate_kill_switch(self.s, "t")
         self.assertEqual(health.evaluate(60, hb, now=1030, settings=self.s)[0], 2)
 
+
+
+class EmergencyStopReleaseTests(unittest.TestCase):
+    LOGIN, SERVER = 123456, "Broker-Demo"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.rt = Path(self.tmp.name)
+        self.latch, self.intent, self.uncertain = release_cli.paths(self.rt)
+        gate.persist_operator_emergency_stop(self.latch, account_login=self.LOGIN, server=self.SERVER, operator_id="web")
+        self.intent.write_text("stop", encoding="utf-8")
+        self.log = mock.patch.dict(os.environ, {"XAUUSD_GUARD_LOG_FILE": str(self.rt / "g.jsonl")})
+        self.log.start()
+
+    def tearDown(self):
+        self.log.stop()
+        self.tmp.cleanup()
+
+    def test_release_clears_latch_and_intent(self):
+        out = release_cli.release(self.rt, self.LOGIN, self.SERVER, "op", "reconciled")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(out["stopCategory"], "AUTHORIZED_CLEAR")
+        self.assertFalse(out["blockNewOrders"])
+        self.assertFalse(self.intent.exists())
+
+    def test_release_refused_while_uncertain_entry_frozen(self):
+        self.uncertain.write_text(json.dumps({f"{self.LOGIN}|{self.SERVER}": {
+            "accountLogin": self.LOGIN, "server": self.SERVER, "status": "PENDING_SEND",
+            "createdAtUtc": 1700000000, "requestId": "r1"}}), encoding="utf-8")
+        out = release_cli.release(self.rt, self.LOGIN, self.SERVER, "op", "reconciled")
+        self.assertFalse(out["ok"])
+        self.assertTrue(self.intent.exists())
+
+    def test_release_refused_for_other_account(self):
+        out = release_cli.release(self.rt, 999999, self.SERVER, "op", "reconciled")
+        self.assertFalse(out["ok"])
+        self.assertTrue(self.intent.exists())
+
+    def test_cli_requires_confirm_operator_and_reason(self):
+        rc = release_cli.main(["release", "--login", str(self.LOGIN), "--server", self.SERVER,
+                               "--runtime-dir", str(self.rt), "--operator", "op", "--reason", "x"])
+        self.assertEqual(rc, 2)
+        self.assertTrue(self.intent.exists())
 
 if __name__ == "__main__":
     unittest.main()

@@ -113,7 +113,10 @@ def _check_runtime_emergency_stop_latch(
     now_utc: int | None = None,
     host_acl_checker=None,
 ) -> dict:
-    """P0 fail-closed quarantine for all new orders until real host acceptance.
+    """Fail-closed emergency-stop latch check for new orders (None = not blocked).
+
+    Historical note (pre hardening/go-live): this returned a block for every
+    state, quarantining all new orders until real host acceptance.
 
     No caller-supplied ACL checker, local HMAC key, or syntactically valid
     AUTHORIZED_CLEAR record can prove trusted Windows operator identity and
@@ -158,12 +161,28 @@ def _check_runtime_emergency_stop_latch(
             "reason": "STOP_LATCH_RESULT_UNVERIFIED",
             "liveAuthorized": False,
         }
+    # hardening/go-live (DECISIONS.md D-011, owner decision 2026-11-25): the
+    # previous unconditional quarantine is lifted. New entries are allowed
+    # only when (a) no emergency stop was ever recorded for this exact
+    # account/server (latch file absent) or (b) the latch holds a complete
+    # AUTHORIZED_CLEAR record produced by the CAS release flow. Every other
+    # state (active stop, corrupt file, schema/account mismatch, stop intent)
+    # still blocks. Entry authority stays with the go-live guard (DRY_RUN
+    # default, LIVE + CONFIRM_LIVE), the ARM gates and the risk gates.
+    if latch.get("reason") == "STOP_LATCH_MISSING_UNVERIFIED" and latch.get("stopCategory") == "FAIL_CLOSED_STARTUP":
+        return None
+    if (
+        latch.get("emergencyStopActive") is False
+        and latch.get("blockNewOrders") is False
+        and latch.get("stopCategory") == "AUTHORIZED_CLEAR"
+    ):
+        return None
     if latch.get("emergencyStopActive") is True or latch.get("blockNewOrders") is True:
         return latch
     return {
         "emergencyStopActive": True,
         "blockNewOrders": True,
-        "reason": "STOP_RELEASE_HOST_AUTH_UNVERIFIED",
+        "reason": "STOP_LATCH_RESULT_UNVERIFIED",
         "liveAuthorized": False,
         "stopCategory": latch.get("stopCategory", "UNVERIFIED"),
     }

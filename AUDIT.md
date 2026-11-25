@@ -77,7 +77,7 @@ Trạng thái: **Đã sửa** (trong nhánh này) · **Giảm thiểu** (rủi r
 
 | ID | Vấn đề | Trạng thái |
 |---|---|---|
-| B-1 | **Lệnh mới hiện bị chặn vĩnh viễn trên main**: `_check_runtime_emergency_stop_latch()` luôn trả về trạng thái chặn (`STOP_RELEASE_HOST_AUTH_UNVERIFIED`) cho tới khi có "host acceptance" chưa được hiện thực. Bot hiện chỉ quản lý vị thế, không vào lệnh mới. Đây là thiết kế an toàn có chủ đích của tác giả trước. | **Còn mở — cần bạn quyết định** (D-011). Nhánh này không gỡ cơ chế này. |
+| B-1 | Lệnh mới từng bị chặn vĩnh viễn trên main: `_check_runtime_emergency_stop_latch()` luôn trả về `STOP_RELEASE_HOST_AUTH_UNVERIFIED`, nên bot chỉ quản lý vị thế. | **Đã sửa theo quyết định của chủ repo** (D-011): thiếu latch hoặc latch `AUTHORIZED_CLEAR` đúng tài khoản thì cho phép; Emergency Stop, stop-intent, latch hỏng/sai tài khoản vẫn chặn. Gỡ Emergency Stop bằng `scripts/v6_emergency_stop_release.py`. |
 | A-1 | Hai runtime đặt lệnh song song (V6 và Phase7C bridge) tăng nguy cơ chạy nhầm / chạy đồng thời. | **Giảm thiểu**: bridge Phase7C mặc định tắt giao dịch; RUNBOOK chỉ hướng dẫn V6. Khuyến nghị lưu trữ (archive) một trong hai. |
 | S-3 | `ZIQ_TG_MASTER_SECRET` có giá trị mặc định hard-code trong `xauusd-standalone-server.mjs` và salt chứa số login → "mã hóa AES" token Telegram trên đĩa chỉ là che giấu nếu không đặt biến môi trường. Giao diện HTML lưu token trong `localStorage` trình duyệt (XOR). | **Giảm thiểu**: SECURITY.md yêu cầu đặt `ZIQ_TG_MASTER_SECRET`; alert mới chỉ đọc token từ `.env`. Không đổi salt để không làm hỏng token đã lưu (D-017). |
 | S-7 | Hồ sơ mặc định của server V6 là tài khoản LIVE của chủ repo (login/server hard-code). | **Giảm thiểu** bằng DRY_RUN + LIVE/CONFIRM_LIVE + ARM. Không đổi vì 3 test hồi quy mã hóa hành vi này (D-010). |
@@ -110,4 +110,4 @@ Trạng thái: **Đã sửa** (trong nhánh này) · **Giảm thiểu** (rủi r
 
 ## 4. Kết luận
 
-Không còn phát hiện mức **Nghiêm trọng/Cao** nào ở trạng thái "Còn mở" trong mã nguồn. Hai mục Nghiêm trọng S-1/S-2 đã được xử lý trong HEAD nhưng **đòi hỏi bạn hành động** (thu hồi token, đổi mật khẩu, quyết định viết lại lịch sử git) vì đó là các bước không thể làm thay và/hoặc không thể đảo ngược. Mục B-1 quyết định việc bot có được vào lệnh mới hay không.
+Không còn phát hiện mức **Nghiêm trọng/Cao** nào ở trạng thái "Còn mở" trong mã nguồn. Hai mục Nghiêm trọng S-1/S-2 đã được xử lý trong HEAD nhưng **đòi hỏi bạn hành động** (thu hồi token, đổi mật khẩu) vì đó là các bước không thể làm thay. Chủ repo đã chọn không viết lại lịch sử git (D-009), nên hai bước đó là bắt buộc. Mục B-1 đã được mở khóa theo quyết định của chủ repo (D-011): bot được vào lệnh mới trên demo hoặc live, vẫn sau cổng 2 cờ và mọi giới hạn rủi ro.

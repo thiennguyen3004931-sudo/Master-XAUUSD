@@ -60,7 +60,9 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 - `.gitignore` chặn `.env`, `.env.*`, `.runtime/`, `data/`, `config/news-blackout.json`.
 - Trước khi commit: `gitleaks git . -c .gitleaks.toml --redact --log-opts="origin/main..HEAD"`.
 
-## 6. **[BẠN QUYẾT ĐỊNH]** Viết lại lịch sử git (không thể đảo ngược)
+## 6. Viết lại lịch sử git (không thể đảo ngược)
+
+**Chủ repo đã chọn không viết lại lịch sử (DECISIONS D-009, 2026-11-25).** Token Telegram cũ và thông tin tài khoản cũ vẫn còn trong lịch sử public, nên thu hồi token và đổi mật khẩu MT5 (mục 1) là bắt buộc. Lệnh dưới đây chỉ để tham khảo nếu sau này đổi ý.
 
 Chỉ làm **sau khi** đã thu hồi token. Lệnh đã chuẩn bị (chạy trên bản clone mirror mới, thông báo cho mọi người đang clone repo):
 
