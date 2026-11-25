@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import math
 import os
 import re
 import time
@@ -177,6 +178,7 @@ class GuardSettings:
     log_file: Path = DEFAULT_LOG_FILE
     entry_deviation_points: int = 50
     close_deviation_points: int = 50
+    max_slippage_usd: float = 0.50
 
     @property
     def live_confirmed(self) -> bool:
@@ -235,12 +237,30 @@ def load_settings(env: Mapping[str, str] | None = None) -> GuardSettings:
         max_clock_skew_sec=max(0.0, _float(e, "XAUUSD_MAX_CLOCK_SKEW_SEC", 5.0)),
         log_file=Path(e.get("XAUUSD_GUARD_LOG_FILE") or DEFAULT_LOG_FILE),
         entry_deviation_points=_clamp_int(e, "XAUUSD_ENTRY_DEVIATION_POINTS", 50, 1, HARD_MAX_ENTRY_DEVIATION_POINTS),
+        max_slippage_usd=max(0.0, _float(e, "XAUUSD_MAX_SLIPPAGE_USD", 0.50)),
         close_deviation_points=_clamp_int(e, "XAUUSD_CLOSE_DEVIATION_POINTS", 50, 1, HARD_MAX_CLOSE_DEVIATION_POINTS),
     )
 
 
 def _clamp_int(e: Mapping[str, str], key: str, default: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, _int(e, key, default)))
+
+
+def check_slippage(requested_price, fill_price, settings: GuardSettings) -> dict:
+    """Post-fill slippage measurement (observational only; never alters an order).
+
+    Returns ``{"slippageUsd": float|None, "exceeded": bool, "limitUsd": float}``.
+    ``slippageUsd`` is None when either price is missing or invalid.
+    """
+    limit = float(settings.max_slippage_usd)
+    try:
+        req, fill = float(requested_price), float(fill_price)
+    except (TypeError, ValueError):
+        return {"slippageUsd": None, "exceeded": False, "limitUsd": limit}
+    if not (math.isfinite(req) and math.isfinite(fill)) or req <= 0 or fill <= 0:
+        return {"slippageUsd": None, "exceeded": False, "limitUsd": limit}
+    slip = round(abs(fill - req), 2)
+    return {"slippageUsd": slip, "exceeded": limit > 0 and slip > limit + 1e-9, "limitUsd": limit}
 
 
 def deviation_points(kind: str, settings: GuardSettings | None = None) -> int:

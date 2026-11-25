@@ -3052,6 +3052,7 @@ def _execute_order_serialized(mt5, active_symbol, order_cfg, comment_tag="XAUUSD
             "side": pos_side,
             "volume": broker_vol,
             "fillPrice": broker_entry,
+            "requestedPrice": price,
             "sl": broker_sl,
             "tp": broker_tp,
             "slDistance": sl_dist_actual,
@@ -5751,7 +5752,15 @@ def main():
             if action_result.get("uncertain"):
                 _go_live_guard.send_alert("ORDER_UNCERTAIN", str(action_result.get("message") or ""), dedupe_window_sec=0)
             elif action_result.get("ok") and action_result.get("submitted", True):
-                _go_live_guard.send_alert("ORDER_FILLED", f"{action} {cfg.get('side', '')} ok", dedupe_window_sec=0)
+                slip = _go_live_guard.check_slippage(action_result.get("requestedPrice"), action_result.get("fillPrice"),
+                                                     guard_settings)
+                action_result["slippageCheck"] = slip
+                slip_txt = "" if slip["slippageUsd"] is None else f" slippage={slip['slippageUsd']:.2f} USD"
+                _go_live_guard.send_alert("ORDER_FILLED", f"{action} {cfg.get('side', '')} ok{slip_txt}", dedupe_window_sec=0)
+                if slip["exceeded"]:
+                    _go_live_guard.log_event("SLIPPAGE_HIGH", slip, settings=guard_settings)
+                    _go_live_guard.send_alert("SLIPPAGE_HIGH", f"Slippage {slip['slippageUsd']:.2f} USD > {slip['limitUsd']:.2f} USD",
+                                              dedupe_key="slippage-high")
             _go_live_guard.log_event("ACTION_RESULT", {"action": action, "ok": action_result.get("ok"),
                                      "status": action_result.get("status"), "message": action_result.get("message")},
                                      settings=guard_settings)

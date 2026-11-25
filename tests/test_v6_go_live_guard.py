@@ -146,6 +146,20 @@ class DeviationTests(unittest.TestCase):
         self.assertEqual(guard.deviation_points("close", s), 120)
 
 
+class SlippageTests(unittest.TestCase):
+    def test_measures_and_flags_above_limit(self):
+        s = guard.load_settings(clean_env(XAUUSD_MAX_SLIPPAGE_USD="0.30"))
+        self.assertEqual(guard.check_slippage(2650.00, 2650.20, s), {"slippageUsd": 0.2, "exceeded": False, "limitUsd": 0.3})
+        self.assertTrue(guard.check_slippage(2650.00, 2649.55, s)["exceeded"])
+
+    def test_missing_prices_are_not_flagged(self):
+        s = guard.load_settings(clean_env())
+        for req, fill in ((None, 2650.0), (2650.0, 0), ("x", 1), (float("nan"), 2650.0)):
+            res = guard.check_slippage(req, fill, s)
+            self.assertIsNone(res["slippageUsd"])
+            self.assertFalse(res["exceeded"])
+
+
 class ExposureSpreadClockTests(unittest.TestCase):
     def setUp(self):
         self.s = guard.load_settings({"XAUUSD_MAX_OPEN_POSITIONS": "2", "XAUUSD_MAX_TOTAL_VOLUME_LOTS": "0.10"})
@@ -413,6 +427,8 @@ class GatewayIntegrationTests(unittest.TestCase):
         self.assertEqual(mt5.sent[0]["volume"], 0.05)   # reduced from 0.10 to the 1% cap
         self.assertTrue(mt5.sent[0]["sl"] > 0)
         self.assertEqual(mt5.sent[0]["deviation"], 50)
+        self.assertEqual(res["requestedPrice"], mt5.sent[0]["price"])
+        self.assertEqual(res["fillPrice"], mt5.sent[0]["price"])
 
     def test_entry_deviation_from_env_is_used(self):
         mt5 = self.broker()

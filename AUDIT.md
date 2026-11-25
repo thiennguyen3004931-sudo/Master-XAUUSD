@@ -83,7 +83,7 @@ Trạng thái: **Đã sửa** (trong nhánh này) · **Giảm thiểu** (rủi r
 | S-7 | Hồ sơ mặc định của server V6 là tài khoản LIVE của chủ repo (login/server hard-code). | **Giảm thiểu** bằng DRY_RUN + LIVE/CONFIRM_LIVE + ARM. Không đổi vì 3 test hồi quy mã hóa hành vi này (D-010). |
 | D-2 | Lỗ hổng chỉ ở dev-dependency: `vitest` 2.x / `vite` 6 / `tinypool` (critical), `esbuild`. Không được đóng gói vào runtime. | **Còn mở** (nâng vitest 2→4 là thay đổi major trên ~20 package). |
 | T-1 | Không có dữ liệu lịch sử thật trong repo; báo cáo `.xlsx` sẵn có gộp Thắng + BE thành "win rate" 77% và không ghi nguồn/khoảng thời gian. | **Giảm thiểu**: thêm runner backtest offline dùng đúng engine live + script xuất dữ liệu MT5 chỉ-đọc. Kết quả hiện tại chỉ trên dữ liệu tổng hợp (BACKTEST_REPORT.md). |
-| E-1 | `deviation` (50 point = 0.50 USD) và `magic` hard-code trong V6; trượt giá chỉ bị chặn bởi deviation của broker. | **Đã sửa** (D-019): `XAUUSD_ENTRY_DEVIATION_POINTS` (mặc định 50, tối đa 100) và `XAUUSD_CLOSE_DEVIATION_POINTS` (mặc định 50, tối đa 300). `magic` 270715 giữ cố định vì đối soát vị thế dựa vào nó. |
+| E-1 | `deviation` (50 point = 0.50 USD) và `magic` hard-code trong V6; trượt giá chỉ bị chặn bởi deviation của broker. | **Đã sửa** (D-019): `XAUUSD_ENTRY_DEVIATION_POINTS` (mặc định 50, tối đa 100) và `XAUUSD_CLOSE_DEVIATION_POINTS` (mặc định 50, tối đa 300). `magic` 270715 giữ cố định vì đối soát vị thế dựa vào nó. Trượt giá thực tế được đo và cảnh báo (D-020). |
 | E-2 | Kill-switch flatten chỉ đóng vị thế, không hủy lệnh chờ (V6 chỉ dùng lệnh market). | Ghi chú trong RUNBOOK. |
 | Q-1 | Độ phức tạp vận hành rất cao: 158 workflow, 322 script PowerShell, hàng chục tài liệu phase. | Còn mở (khuyến nghị dọn dẹp sau go-live). |
 
