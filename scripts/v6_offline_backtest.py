@@ -57,7 +57,8 @@ def read_csv(path: Path) -> list[list[float]]:
     rows = []
     with open(path, newline="", encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
-            rows.append([float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"]), _ts(r["time"])])
+            stamp = r.get("time") or r.get("datetime") or r.get("timestamp") or ""
+            rows.append([float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"]), _ts(stamp)])
     rows.sort(key=lambda b: b[4])
     return rows
 

@@ -1,6 +1,6 @@
 # BACKTEST_REPORT.md
 
-> **Kết luận ngắn:** Chưa có bằng chứng backtest trên **dữ liệu thật** cho chiến lược V6 trong nhánh này. Môi trường làm việc không tải được dữ liệu intraday vàng (các nguồn Dukascopy/Yahoo/Stooq bị chặn) và repo không chứa dữ liệu lịch sử. Các số liệu dưới đây chạy **đúng engine backtest của bot** nhưng trên **dữ liệu tổng hợp** (random walk có chuyển chế độ), nên chỉ chứng minh rằng phần tính chi phí và báo cáo hoạt động đúng, **không** chứng minh chiến lược có lợi thế. Bạn cần chạy lại bằng dữ liệu MT5 thật (mục 4) trước khi chạy live.
+> **Kết luận ngắn (cập nhật 2026-11-25):** Đã chạy engine backtest của bot trên **6 tháng dữ liệu M5 thật** (XAUUSD, 26/03/2026 → 25/09/2026, 35.954 nến, mục 2b). **Kết quả âm ở mọi chế độ** (PF 0.61–0.85 kể cả khi gần như không phí; AUTO_REGIME PF 0.79, win rate 22.6%, expectancy −0.09R). Theo dữ liệu này, chiến lược V6 **chưa có lợi thế** trong giai đoạn đó. Không đổi logic chiến lược (quy tắc dự án), chỉ báo cáo. Phần dữ liệu tổng hợp (mục 2) chỉ chứng minh phần tính chi phí hoạt động đúng.
 
 ## 1. Phương pháp
 
@@ -45,11 +45,33 @@ Chi phí giao dịch ăn **≈ 59%** lợi nhuận gộp ở kịch bản này. 
 - Điều kiểm chứng được: chi phí luôn làm kết quả xấu đi (có test `test_synthetic_backtest_reports_required_metrics_with_costs`), báo cáo có đủ lợi nhuận, max drawdown, win rate, profit factor, số lệnh, và engine chạy được ngoài MT5 (CI chạy smoke test mỗi PR).
 - Báo cáo `Bao_Cao_Backtest_Va_Danh_Gia_Bot_XAUUSD_V6_3.xlsx` có sẵn trong repo (48 lệnh AUTO_REGIME, PF 2.68, "Thắng + BE" 77.1%, DD 3.15%) không ghi nguồn dữ liệu/khoảng thời gian và gộp BE vào tỷ lệ thắng, nên không dùng làm bằng chứng. 48 lệnh là quá ít để kết luận.
 
+## 2b. Kết quả trên dữ liệu THẬT (6 tháng M5)
+
+- Nguồn: mẫu miễn phí `XAUUSD_5m.csv` của getdata.finance (repo GitHub `getdata-finance/xauusd-5m-ohlcv-metals-historical-data`, giấy phép MIT), 35.954 nến M5, giờ UTC, 2026-03-26 → 2026-09-25. Đây không phải dữ liệu từ broker của bạn: spread/giờ máy chủ có thể khác, nên vẫn nên chạy lại bằng dữ liệu MT5 của bạn (mục 4).
+- Cấu hình: như mục 1 (lot 0.02, vốn 4.000 USD, minConfidence 85).
+
+| Chế độ | Chi phí | Số lệnh | Win rate | PF | Expectancy (R) | Lãi ròng (USD) | Max DD |
+|---|---|---|---|---|---|---|---|
+| AUTO_REGIME | gần như không phí (spread 0.05) | 173 | 22.5% | 0.85 | −0.064 | −147.40 | 9.35% |
+| AUTO_REGIME | thực tế (0.25 / 0.07 / 0.10) | 164 | 22.6% | 0.79 | −0.094 | −208.30 | 9.34% |
+| AUTO_REGIME | stress (0.40 / 0.07 / 0.20) | 162 | 22.2% | 0.70 | −0.140 | −310.10 | 10.75% |
+| BOT_1_TREND | thực tế | 116 | 23.3% | 0.80 | −0.091 | −126.30 | 7.11% |
+| BOT_2_SIDEWAY | thực tế | 156 | 23.1% | 0.80 | −0.094 | −186.82 | 8.41% |
+| BOT_3_SWEEP | thực tế | 43 | 16.3% | 0.61 | −0.207 | −111.06 | 4.01% |
+
+Chia 3 giai đoạn (AUTO_REGIME, chi phí thực tế): PF 0.66 (03–05/2026), 0.38 (05–07/2026), 1.36 (07–09/2026). Chuỗi thua dài nhất 10.
+
+Đánh giá theo tiêu chí mục 4: **không đạt** (PF < 1.3, có giai đoạn PF < 0.9). Lệnh tái tạo:
+
+```bash
+python scripts/v6_offline_backtest.py --csv XAUUSD_5m.csv --mode AUTO_REGIME --spread 0.25 --commission 0.07 --slippage 0.10 --out bt_real.json
+```
+
 ## 3. Ảnh hưởng của thay đổi quản trị rủi ro tới backtest
 
 Nhánh này **không** đổi logic tín hiệu, điểm vào, SL hay TP. Trần cứng 1%/lệnh chỉ thay đổi **khối lượng** (lot bị giảm khi vượt trần), nên các chỉ số tính bằng giá (netPts, PF, win rate, số lệnh) không đổi; lãi/lỗ USD và DD% co lại tương ứng với lot. Bộ lọc tin/thanh khoản/spread có thể **bỏ bớt** lệnh khi chạy live; backtest hiện chưa mô phỏng bộ lọc lịch tin (không có lịch tin lịch sử).
 
-## 4. Cách chạy lại trên dữ liệu thật (bắt buộc trước khi live)
+## 4. Cách chạy lại trên dữ liệu MT5 của bạn (khuyến nghị trước khi live)
 
 Trên máy Windows có MT5 (chỉ đọc, không đặt lệnh):
 

@@ -29,6 +29,15 @@ class OfflineBacktestTests(unittest.TestCase):
         m15 = obt.resample(m5, 15)
         self.assertEqual(m15, [[1, 3, 0.5, 2.2, 0], [2.2, 2.3, 2, 2.1, 900_000]])
 
+    def test_read_csv_accepts_datetime_column(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "m5.csv"
+            f.write_text("datetime,open,high,low,close,volume\n2026-03-26T02:35:00+00:00,2,3,1,2.5,9\n"
+                         "2026-03-26T02:30:00+00:00,1,2,0.5,1.5,5\n", encoding="utf-8")
+            rows = obt.read_csv(f)
+        self.assertEqual([r[4] for r in rows], [1774492200000, 1774492500000])
+        self.assertEqual(rows[0][:4], [1.0, 2.0, 0.5, 1.5])
+
     def test_synthetic_backtest_reports_required_metrics_with_costs(self):
         args = obt.argparse.Namespace(mode="AUTO_REGIME", min_confidence=85, spread=0.25, commission=0.07,
                                       slippage=0.10, swap=0.0, lot=0.02, balance=4000.0)
